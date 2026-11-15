@@ -85,6 +85,14 @@ export interface CanvasController {
   /** Bring canvas x into view on the left, never scrolling past the origin. */
   panTo: (x: number) => void;
   onBackgroundDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  /**
+   * A wheel that reaches the canvas some other way than over it (a frame on the canvas hands its
+   * wheel on), moved in the compositor and adopted at rest like the canvas's own; while it lasts a
+   * `holdLayer` canvas's layer lets the pointer through, so the next tick reaches the canvas itself.
+   */
+  wheelGlide: CanvasGlide;
+  /** A drag that reaches the canvas some other way than over it: the same, without the hold. */
+  dragGlide: CanvasGlide;
   /** True between a drag passing the dead zone and the tick after the pointer goes up. */
   moved: RefObject<boolean>;
   panning: boolean;
@@ -101,6 +109,13 @@ const WHEEL_SETTLE_MS = 120;
 const VIEW_EPSILON = 0.001;
 const GRID_PX = 22;
 
+/**
+ * The canvas's zoom as its layer carries it, set every frame of a gesture as the layer moves: a
+ * mark drawn against the zoom (a caption that keeps its size on screen) reads it, so it follows the
+ * canvas in the same frame rather than when React next renders.
+ */
+export const CANVAS_ZOOM_PROPERTY = "--canvas-zoom";
+
 /** Equivalent cameras do not schedule another React render. */
 export function sameCanvasView(a: CanvasView, b: CanvasView): boolean {
   return (
@@ -112,7 +127,9 @@ export function sameCanvasView(a: CanvasView, b: CanvasView): boolean {
  * The canvas's own state. `onPan` fires once a drag starts, which is how the timeline stops
  * following the live round the moment the user takes the canvas somewhere themselves.
  */
-export function useCanvasView(options: { initial?: CanvasView; onPan?: () => void } = {}): CanvasController {
+export function useCanvasView(
+  options: { initial?: CanvasView; onPan?: () => void; holdLayer?: boolean } = {},
+): CanvasController {
   const [view, setView] = useState<CanvasView>(options.initial ?? { k: INITIAL_ZOOM, tx: 0, ty: 0 });
   const viewport = useRef<HTMLDivElement>(null);
   const viewRef = useRef<CanvasView>(view);
@@ -151,7 +168,12 @@ export function useCanvasView(options: { initial?: CanvasView; onPan?: () => voi
     [apply],
   );
 
-  useWheelZoom(viewport, viewRef, gesture.move, gesture.finish);
+  const holdLayer = options.holdLayer === true;
+  const wheelGlide = useCanvasGlide(gesture, (held) => {
+    if (holdLayer && layer.current) layer.current.style.pointerEvents = held ? "none" : "";
+  });
+  const dragGlide = useCanvasGlide(gesture, null);
+  useWheelZoom(viewport, viewRef, wheelGlide.move);
 
   const zoomBy = useCallback(
     (factor: number): void => {
@@ -179,9 +201,33 @@ export function useCanvasView(options: { initial?: CanvasView; onPan?: () => voi
     zoomBy,
     panTo,
     onBackgroundDown,
+    wheelGlide,
+    dragGlide,
     moved,
     panning: pan.current !== null,
   };
+}
+
+/** A glide over the canvas's gesture: `hold` (null for none) says when the layer lets the pointer through. */
+function useCanvasGlide(
+  gesture: { move: (view: CanvasView) => void; finish: () => void },
+  hold: ((held: boolean) => void) | null,
+): CanvasGlide {
+  const holds = useRef(hold);
+  holds.current = hold;
+  const { move, finish } = gesture;
+  const glide = useMemo(
+    () =>
+      createCanvasGlide({
+        gesture: { move, finish },
+        hold: (held) => holds.current?.(held),
+        wait: (settle) => setTimeout(settle, WHEEL_SETTLE_MS),
+        stop: (timer) => clearTimeout(timer),
+      }),
+    [move, finish],
+  );
+  useEffect(() => () => glide.dispose(), [glide]);
+  return glide;
 }
 
 /** How many canvases' cameras outlive their tab; the oldest is forgotten past this. */
@@ -217,21 +263,22 @@ export function useOnWheel(viewport: RefObject<HTMLDivElement | null>, onWheel: 
   }, [viewport, onWheel]);
 }
 
-/** Wheel zoom about the cursor, on a non-passive listener so the page never scrolls under a pinch. */
+/**
+ * Wheel zoom about the cursor, on a non-passive listener so the page never scrolls under a pinch.
+ * `glide` moves the camera and adopts it at rest; the viewport's box is read once per gesture.
+ */
 function useWheelZoom(
   viewport: RefObject<HTMLDivElement | null>,
   viewRef: RefObject<CanvasView>,
-  move: (view: CanvasView) => void,
-  finish: () => void,
+  glide: (view: CanvasView) => void,
 ): void {
   useEffect(() => {
     const element = viewport.current;
     if (!element) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let box: DOMRect | null = null;
-    const settle = () => {
+    const forget = () => {
       box = null;
-      finish();
     };
     const onWheel = (event: WheelEvent): void => {
       event.preventDefault();
@@ -240,16 +287,16 @@ function useWheelZoom(
       box ??= element.getBoundingClientRect();
       const next = zoomAt(current, Math.exp(-event.deltaY * rate), event.clientX - box.left, event.clientY - box.top);
       if (next === current) return;
-      move(next);
+      glide(next);
       clearTimeout(timer);
-      timer = setTimeout(settle, WHEEL_SETTLE_MS);
+      timer = setTimeout(forget, WHEEL_SETTLE_MS);
     };
     element.addEventListener("wheel", onWheel, { passive: false });
     return () => {
       clearTimeout(timer);
       element.removeEventListener("wheel", onWheel);
     };
-  }, [viewport, viewRef, move, finish]);
+  }, [viewport, viewRef, glide]);
 }
 
 type PanState = { startX: number; startY: number; tx: number; ty: number; moved: boolean };
@@ -329,6 +376,7 @@ function useCanvasGesture(
     content.style.transition = "none";
     content.style.willChange = "transform";
     content.style.transform = `translate(${next.tx}px, ${next.ty}px) scale(${next.k})`;
+    content.style.setProperty(CANVAS_ZOOM_PROPERTY, String(next.k));
     if (grid.current) {
       const tile = grid.current;
       let basis = Number(tile.dataset.gridScale) || next.k;
@@ -418,6 +466,61 @@ export function createCanvasGesture(options: {
       cancel(frame);
       frame = 0;
       changed = false;
+    },
+  };
+}
+
+/** A point of the canvas in the viewport under a camera at `view`: the inverse of reading one there. */
+export function viewportPoint(view: CanvasView, point: { x: number; y: number }): { x: number; y: number } {
+  return { x: view.tx + point.x * view.k, y: view.ty + point.y * view.k };
+}
+
+/** A gesture's moves, held while they come and adopted once they stop (`createCanvasGlide`). */
+export interface CanvasGlide {
+  move: (next: CanvasView) => void;
+  /** The gesture ended for sure (a drag let go): adopt the camera now. */
+  end: () => void;
+  dispose: () => void;
+}
+
+/**
+ * A gesture whose ticks arrive as messages, with no event that says it stopped (a wheel), or one
+ * that may never come (a frame unloaded mid-drag): each tick moves the camera through `gesture`
+ * (painted once per frame), `hold` is on from the first tick to the last, and the camera is adopted
+ * once the ticks stop for a moment (`wait`), or at `end`.
+ */
+export function createCanvasGlide(options: {
+  gesture: { move: (view: CanvasView) => void; finish: () => void };
+  hold: (held: boolean) => void;
+  wait: (settle: () => void) => ReturnType<typeof setTimeout>;
+  stop: (timer: ReturnType<typeof setTimeout>) => void;
+}): CanvasGlide {
+  const { gesture, hold, wait, stop } = options;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const release = (): boolean => {
+    if (timer === null) return false;
+    stop(timer);
+    timer = null;
+    hold(false);
+    return true;
+  };
+  const settle = (): void => {
+    timer = null;
+    hold(false);
+    gesture.finish();
+  };
+  return {
+    move(next) {
+      gesture.move(next);
+      if (timer === null) hold(true);
+      else stop(timer);
+      timer = wait(settle);
+    },
+    end() {
+      if (release()) gesture.finish();
+    },
+    dispose() {
+      release();
     },
   };
 }

@@ -9,6 +9,16 @@
 const GOAL_BOUNDS =
   "That goal is all of this Loop's work: add none the person didn't ask for, and finish once it is reached.";
 
+/**
+ * The plan the chat named as it started the Loop, as the lead reads it: the person watches it on the
+ * Building card ("Step 2 of 4 · …"), where each save point ticks the next step. Nothing without one.
+ */
+function planLine(steps: readonly string[]): string {
+  if (!steps.length) return "";
+  const listed = steps.map((step, at) => `${at + 1}. ${step}`).join("\n");
+  return `\nIts plan, as the person sees it on the Building card:\n${listed}\nMake one save point as each step is done, in this order: each one ticks the next step for the person. If the plan changes, name the whole plan again in save_point's steps, done steps included.`;
+}
+
 /** What Genex tells a Loop's lead. */
 export const LOOP_WORDS = {
   /**
@@ -23,10 +33,11 @@ export const LOOP_WORDS = {
    * the goal bounds the work. A Loop started to go on with a blockout and pick Fab assets drove on
    * toward a shipped build (DeathWish).
    */
-  started: (goal: string) => `The Loop started. Its goal: ${goal}\n${GOAL_BOUNDS}`,
+  started: (goal: string, steps: readonly string[] = []) =>
+    `The Loop started. Its goal: ${goal}\n${GOAL_BOUNDS}${planLine(steps)}`,
   /** A resumed Loop's first line. */
-  resumed: (goal: string) =>
-    `The Loop resumed after a pause; workers from before it no longer run. Its goal: ${goal}\n${GOAL_BOUNDS}`,
+  resumed: (goal: string, steps: readonly string[] = []) =>
+    `The Loop resumed after a pause; workers from before it no longer run. Its goal: ${goal}\n${GOAL_BOUNDS}${planLine(steps)}`,
   /** The wrap-up turn the person's Finish starts. */
   finishAsked: "The person asked the Loop to finish: it closes when this turn ends.",
   /** The wrap-up turn a failed turn starts. */

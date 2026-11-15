@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
+  buildVersion,
+  inGameVersion,
   RunSummaryAccumulator,
   summarizeRun,
   summaryOutcome,
@@ -369,4 +371,123 @@ test("incremental summaries match the full fold after every append without recou
     assert.deepEqual(accumulator.summary(), expected);
     assert.deepEqual(accumulator.summary(), expected, "reading twice cannot count attempts twice");
   }
+});
+
+/** A run's own record, as the log keeps it. */
+function runEvent(id: string, at: string, eventType: string, payload: Record<string, unknown>): EventEnvelope {
+  return {
+    thread_id: "t1",
+    session_id: null,
+    turn_id: null,
+    id,
+    created_at: at,
+    data: { type: "custom", event_type: eventType, payload: { runId: "run_village", ...payload } },
+  };
+}
+
+/** The lead's own words in the log: a delegated builder's assistant text. */
+function leadSaid(id: string, at: string, text: string, extra: Record<string, unknown> = {}): EventEnvelope {
+  return runEvent(id, at, "delegated.claude-code", {
+    kind: "assistant",
+    role: "planner",
+    data: { role: "assistant", parts: [{ type: "text", text }] },
+    ...extra,
+  });
+}
+
+test("the lead's own words and its plan are the summary's, newest last; a worker's or a reviewer's words are not the lead's", () => {
+  const said = [
+    runEvent("plan", "2026-09-17T10:00:00Z", "autopilot_decision", {
+      decision: "dispatch: 3 workers",
+      plain: "I'm painting the three places first, then the light.",
+    }),
+    leadSaid("a", "2026-09-17T10:01:00Z", "Рисую три места."),
+    leadSaid("w", "2026-09-17T10:02:00Z", "worker chatter", { workerId: "places" }),
+    leadSaid("j", "2026-09-17T10:02:30Z", "a reviewer's take", { role: "judge" }),
+    leadSaid("b", "2026-09-17T10:03:00Z", "  Код игры написан.\n\nСейчас запускаю её.  "),
+    leadSaid("empty", "2026-09-17T10:04:00Z", "   "),
+  ];
+  const lead = summarize([...events, ...said]).lead;
+  assert.equal(lead?.plan, "I'm painting the three places first, then the light.");
+  assert.deepEqual(lead?.said, [
+    { at: "2026-09-17T10:01:00Z", text: "Рисую три места." },
+    { at: "2026-09-17T10:03:00Z", text: "Код игры написан. Сейчас запускаю её." },
+  ]);
+});
+
+test("the lead keeps only its latest few lines, each cut to one readable length", () => {
+  const many = Array.from({ length: 12 }, (_, i) =>
+    leadSaid(`l${i}`, `2026-09-17T10:${String(10 + i).padStart(2, "0")}:00Z`, `line ${i} ${"x".repeat(400)}`),
+  );
+  const said = summarize([...events, ...many]).lead?.said ?? [];
+  assert.equal(said.length, 5);
+  assert.match(said.at(-1)?.text ?? "", /^line 11 /);
+  assert.ok(said.every((line) => line.text.length <= 241));
+});
+
+test("the lead's plan steps come with the run's start, a save point may name them again, and junk is dropped", () => {
+  const started = runEvent("reg", "2026-09-17T09:59:00Z", "run_registered", {
+    steps: ["Три места", "  Люди и звуки ", 7, "", "Код игры", "Свет и чудеса"],
+  });
+  assert.deepEqual(summarize([...events, started]).steps, ["Три места", "Люди и звуки", "Код игры", "Свет и чудеса"]);
+  const replanned = runEvent("sp", "2026-09-17T10:30:00Z", "facet_iteration", {
+    facetId: "lead",
+    iteration: 1,
+    label: "Три места",
+    steps: ["Три места", "Код игры", "Свет"],
+  });
+  assert.deepEqual(summarize([...events, started, replanned]).steps, ["Три места", "Код игры", "Свет"]);
+  assert.equal(summarize().steps, undefined, "a run whose lead named no plan has none");
+});
+
+test("the build's title comes with its registration, cleaned to one short line", () => {
+  const registered = runEvent("reg-t", "2026-09-17T09:59:00Z", "run_registered", {
+    title: ' "Три места,\n свет и чудеса" ',
+  });
+  assert.equal(summarize([...events, registered]).title, "Три места, свет и чудеса");
+  assert.equal(summarize().title, undefined);
+});
+
+test("a build that reached the game is a version, numbered by the game's builds that did before it", () => {
+  const finished = (id: string, at: string, runId: string, landed: boolean, project = "fixture-village") =>
+    ({
+      thread_id: "t1",
+      session_id: null,
+      turn_id: null,
+      id,
+      created_at: at,
+      data: { type: "custom", event_type: "run_finished", payload: { runId, project, landed } },
+    }) as EventEnvelope;
+  const log = [
+    finished("f1", "2026-09-17T10:00:00Z", "run_a", true),
+    finished("f2", "2026-09-17T11:00:00Z", "run_b", false),
+    finished("f3", "2026-09-17T12:00:00Z", "run_other_game", true, "another"),
+    finished("f4", "2026-09-17T13:00:00Z", "run_c", true),
+    finished("f4b", "2026-09-17T13:05:00Z", "run_c", true),
+  ];
+  assert.equal(buildVersion(log, "fixture-village", "run_a"), 1);
+  assert.equal(
+    buildVersion(log, "fixture-village", "run_c"),
+    2,
+    "a run that did not land and another game's are no versions",
+  );
+  assert.equal(buildVersion(log, "fixture-village", "run_b"), null);
+  assert.equal(buildVersion(log, "fixture-village", "run_new"), null);
+  const relanded = [...log, finished("f5", "2026-09-17T14:00:00Z", "run_a", true)];
+  assert.equal(buildVersion(relanded, "fixture-village", "run_a"), 3, "landed again later, it is the newest version");
+  assert.equal(buildVersion(relanded, "fixture-village", "run_c"), 2, "an earlier number never moves");
+});
+
+test("a finished build says its version only once it is in the game with no failed check", () => {
+  const clean = {
+    ...summarize(),
+    execution: "completed",
+    landed: true,
+    profile: "open",
+    evidence: [],
+    version: 2,
+  } as RunSummary;
+  assert.equal(inGameVersion(clean), 2);
+  assert.equal(inGameVersion({ ...clean, landed: false }), null);
+  assert.equal(inGameVersion({ ...clean, version: undefined }), null);
 });

@@ -209,7 +209,8 @@ function AnimationRow({
 
 /**
  * One tile alone keeps a modest width; several share a two-column grid. Tiles keep a fixed height
- * (the picture crops to fit) so narrowing the chat does not change how tall they stand.
+ * (an opaque picture crops to fit, a sprite or a model keeps its shape; `thumbnail-fit.ts`) so
+ * narrowing the chat does not change how tall they stand.
  */
 function TileGroup({ tiles, render }: { tiles: ProjectAsset[]; render: (asset: ProjectAsset) => JSX.Element }) {
   const [only] = tiles;

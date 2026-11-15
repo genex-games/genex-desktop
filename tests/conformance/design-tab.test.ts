@@ -11,7 +11,6 @@ import {
   boardLayout,
   boardStack,
   changedFiles,
-  displayName,
   heldAfter,
   heldFrames,
   MODELS_TURNED_MAX,
@@ -31,6 +30,7 @@ import {
   DESIGN_MESSAGE_SOURCE,
   designPageFile,
   DesignSignal,
+  displayName,
   readDesignSignal,
 } from "../../src/shared/design-board.ts";
 import { ObserverLive, PREVIEW_OBSERVER } from "../../src/shared/observers.ts";

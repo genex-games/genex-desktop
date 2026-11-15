@@ -650,6 +650,7 @@ export class StudioCore {
   /** The same port the registry reads, kept so a plugin server's `secret:<name>` can be resolved. */
   #mcpSecrets: SecretPort | null = null;
   #started = false;
+  #agentsStarting: Promise<void> | null = null;
   #settings: StudioSettings = {
     learning: false,
     buildersMax: DEFAULT_BUILDERS,
@@ -850,6 +851,9 @@ export class StudioCore {
       },
       get started() {
         return core.#started;
+      },
+      get agentsStarting() {
+        return core.#agentsStarting;
       },
       get toolRegistryRevision() {
         return core.#connections.revision;
@@ -1782,6 +1786,22 @@ export class StudioCore {
    * recover — the shipped seed is copied over the harness before it boots.
    */
   async start(bootReason: BootReason = BootReason.ColdStart, options: { resetHarness?: boolean } = {}): Promise<void> {
+    // A message sent while this runs waits for it (`ConversationService`): on Windows the sandbox
+    // starts behind the open window and can take minutes.
+    const run = this.#start(bootReason, options);
+    const settled = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.#agentsStarting = settled;
+    try {
+      await run;
+    } finally {
+      if (this.#agentsStarting === settled) this.#agentsStarting = null;
+    }
+  }
+
+  async #start(bootReason: BootReason, options: { resetHarness?: boolean }): Promise<void> {
     const mark = (step: string): void => this.options.markBoot?.(`core:start-${step}`);
     await this.snapshots.init();
     mark("snapshots");

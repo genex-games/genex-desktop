@@ -16,7 +16,7 @@ function rememberCapture(path: string, value: string): void {
 
 /** The frame's classes: compact is the finished build card's picture, the size of the running card's. */
 function frameClass(compact: boolean, failed: boolean): string {
-  if (!compact) return "relative m-0 aspect-[16/10] w-full overflow-hidden rounded-control bg-inset";
+  if (!compact) return "relative m-0 aspect-video w-full overflow-hidden rounded-control bg-inset";
   return `relative m-0 h-[55px] w-[88px] shrink-0 overflow-hidden rounded-[10px] ${failed ? "hatch" : "bg-inset"}`;
 }
 
@@ -85,14 +85,14 @@ export function RunCapture({ path, compact = false }: { path: string; compact?: 
     },
     [path, visible, attempt],
   );
-  const fit = compact ? "object-cover" : "object-contain";
   return (
     <figure ref={host} data-run-capture className={frameClass(compact, failed)}>
       {src && (
         <img
           src={src}
           alt={t("Recorded build capture")}
-          className={`absolute inset-0 h-full w-full ${fit} ${fresh ? "asset-thumbnail" : ""}`}
+          // A capture is the game's opaque frame: it fills its frame, so no band of the frame shows.
+          className={`absolute inset-0 h-full w-full object-cover ${fresh ? "asset-thumbnail" : ""}`}
           onError={() => {
             captures.delete(path);
             setSrc(null);

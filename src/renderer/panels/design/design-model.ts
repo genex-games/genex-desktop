@@ -3,9 +3,9 @@
  * says, whether the board holds something the person has not seen, and which page the tab was
  * asked to bring into view. `DesignStage.tsx` draws them.
  */
-import { DesignItemKind } from "../../../shared/design-board.ts";
+import { DesignItemKind, displayName } from "../../../shared/design-board.ts";
 import { MINUTE_MS } from "../../../shared/duration.ts";
-import type { CanvasBounds } from "../../canvas-view.ts";
+import { CANVAS_ZOOM_PROPERTY, type CanvasBounds } from "../../canvas-view.ts";
 
 /** A page's sheet before it says what it holds: a landscape page that reads at a glance. */
 export const PAGE_WIDTH = 1200;
@@ -120,18 +120,17 @@ export function boardLayout(items: ReadonlyArray<PageSize & { file: string; sect
   return { frames, labels, bounds: { x: 0, y: 0, w: wide, h: row.top + CAPTION_HEIGHT + row.height } };
 }
 
-/**
- * A file's or a section's name as the person reads it: its dashes and underscores as spaces, the
- * number that only orders it gone, and a capital first: `01-the-warden` is "The warden".
- */
-export function displayName(name: string): string {
-  const words = name
-    .replace(/^\d+[-_. ]+/, "")
-    .replace(/[-_]+/g, " ")
-    .trim();
-  const shown = words || name;
-  return shown.charAt(0).toUpperCase() + shown.slice(1);
-}
+/** The canvas's zoom as a mark drawn against it reads it, from the canvas's layer, in the same frame as the canvas. */
+const ZOOM = `var(${CANVAS_ZOOM_PROPERTY})`;
+
+/** The transform that undoes the canvas's zoom: what it is drawn on keeps its size on screen. */
+export const UNZOOMED = `scale(calc(1 / ${ZOOM}))`;
+
+/** A canvas width as wide as it shows on screen: the room an unzoomed caption has over an artboard. */
+export const zoomedWidth = (width: number): string => `calc(${width}px * ${ZOOM})`;
+
+/** A length that stays `px` on screen whatever the zoom, for what cannot be unzoomed by a transform (a ring). */
+export const screenPx = (px: number): string => `calc(${px}px / ${ZOOM})`;
 
 /** An artboard's caption: the title its frame says, else the one its file gives, else its file's name as it reads. */
 export function pageCaption(page: { name: string; title?: string }, told: string | undefined): string {

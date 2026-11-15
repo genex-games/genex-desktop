@@ -122,8 +122,10 @@ export function buildCaption(
   if (first)
     return t("{count, plural, other {{task} and # more · working}}", { task: first.title, count: running.length - 1 });
   const work = currentWork(activity, run, finishing, items, planState);
-  if (work.betweenParts) return CHAT_WORDS.planningNextStep;
+  // What the lead last said in its own words beats a word of ours that names nothing.
+  const said = run?.lead?.said.at(-1)?.text;
+  if (work.betweenParts) return said ?? CHAT_WORDS.planningNextStep;
   // A label that names no tool: the lead is working on the build.
-  if (GENERIC_TOOL_LABELS.has(work.label)) return t("Working on the build");
+  if (GENERIC_TOOL_LABELS.has(work.label)) return said ?? t("Working on the build");
   return work.label;
 }

@@ -339,11 +339,20 @@ it("the contained reader refuses everything that is not an image inside the game
   const resized = await readContainedImage(root, `assets/genex/${JOB_A}/a.png`, {
     resize: async (data) => {
       asked.push(data.length);
-      return Buffer.from("jpeg-bytes");
+      return Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(16)]);
     },
   });
   assert.deepEqual(asked, [PNG.length]);
   assert.equal(resized?.mimeType, "image/jpeg");
+  // The resized bytes name their own type: a see-through picture comes back a PNG, never called a JPEG.
+  const kept = await readContainedImage(root, `assets/genex/${JOB_A}/a.png`, { resize: async () => PNG });
+  assert.equal(kept?.mimeType, "image/png");
+  // A resize that answers no picture at all is a failed one: the original bytes stand.
+  const garbled = await readContainedImage(root, `assets/genex/${JOB_A}/a.png`, {
+    resize: async () => Buffer.from("not a picture"),
+  });
+  assert.equal(garbled?.mimeType, "image/png");
+  assert.equal(Buffer.from(garbled?.data ?? "", "base64").length, PNG.length);
   const fell = await readContainedImage(root, `assets/genex/${JOB_A}/a.png`, {
     resize: async () => {
       throw new Error("no preview");

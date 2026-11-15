@@ -2385,12 +2385,19 @@ export const BUILD_CHECKLIST_WORDS = {
   caption: (done: number, working: number) =>
     working ? t("{done} done · {working} working", { done, working }) : t("{done} done", { done }),
   finishing: (working: number) => (working ? t("Finishing up · {working} working", { working }) : t("Finishing up")),
+  /** Where the lead is in its plan: "Step 3 of 4 · Game code". */
+  step: (n: number, total: number, name: string) => t("Step {n} of {total} · {name}", { n, total, name }),
   /** The row of a long list that stands for its earlier steps: pressing it shows them. */
   earlier: (count: number) => t("{count, plural, one {# earlier step} other {# earlier steps}}", { count }),
   /** The card's toggle, as a screen reader names it. */
   toggle: t("Building: show or hide its parts"),
   /** The list's own name, for a screen reader. */
   list: t("Parts of the build"),
+} as const;
+
+/** A finished build's one line in the chat and on Builds: which version of the game it is now. */
+export const OUTCOME_WORDS = {
+  inGame: (version: number) => t("Version {version} is in your game", { version }),
 } as const;
 
 /** The status line's rest while a Loop's workers work: "3 workers on it". */
@@ -6474,14 +6481,8 @@ export const CHECK_WORDS = {
     unknown: t("Not measured"),
     incomplete: t("Incomplete"),
   } satisfies Record<RunEvidence["status"], string>,
-  thisBuild: t("This build"),
-  earlierBuilds: t("Earlier builds"),
   reviewer: t("Reviewer"),
   recorded: t("Recorded check"),
-  routeTitle: t("Replayed the judge's route"),
-  routeHeld: t("The judge's moves were replayed on this build, and the goal held."),
-  showAll: t("Show all"),
-  showLess: t("Show less"),
 } as const;
 
 /**

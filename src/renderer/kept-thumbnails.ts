@@ -4,8 +4,29 @@
  * or a write that fails never costs the card its picture.
  */
 
+import { assetPreviewMode } from "../shared/asset-preview.ts";
+import type { ProjectAsset } from "../shared/game-assets.ts";
+
 /** What stands between a data URL's type and its base64 bytes. */
 const BASE64_MARK = ";base64,";
+/**
+ * The version of a picture's thumbnail: earlier ones were JPEGs, a sprite's transparency painted
+ * black, so a key without it is never read back for a picture.
+ */
+const PICTURE_THUMBNAIL_VERSION = "see-through-1";
+
+/**
+ * The identity a card's thumbnail is kept and cached under: one version of one file of one game.
+ * A picture's key carries its thumbnail version; a model's render kept earlier stands.
+ */
+export function thumbnailKey(
+  project: string,
+  asset: Pick<ProjectAsset, "file" | "assetRef" | "mtime" | "bytes" | "render">,
+): string {
+  const identity = [project, asset.assetRef ?? asset.file, asset.mtime, asset.bytes, asset.render];
+  const picture = !asset.render && assetPreviewMode(asset.file) === "image";
+  return JSON.stringify(picture ? [...identity, PICTURE_THUMBNAIL_VERSION] : identity);
+}
 
 /** A kept picture as the store answers it. */
 export interface KeptPicture {

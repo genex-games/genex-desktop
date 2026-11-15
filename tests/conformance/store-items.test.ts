@@ -33,7 +33,7 @@ describe("a launch names what the user sells for Nex", () => {
   it("start_autopilot carries store_items onto its run, as a list or as JSON text", async () => {
     const ctx = { engine: "vendor" };
     for (const store_items of [[ROD], JSON.stringify([ROD])]) {
-      const args = { goal: ASK, direction: "cozy lake", store_items };
+      const args = { goal: ASK, title: "Fisher", direction: "cozy lake", store_items };
       assert.deepEqual(argumentProblems(startAutopilot.parameters as never, args), [], "the launch is not refused");
       const result = (await startAutopilot.execute(args, ctx as never)) as {
         details?: { run?: Record<string, unknown> };

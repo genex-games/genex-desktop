@@ -12,8 +12,9 @@ the person agrees to.
 - **The canvas.** Every artboard of the board, section under section: a section's name stands
   above its first artboard, each artboard under its caption. Wheel zooms about the cursor, a drag
   of the bare canvas pans, the zoom control fits everything, and a press on a caption brings that
-  artboard into view, as on Builds and Assets. The canvas stays fitted until the person moves it; a
-  moved canvas comes back as they left it.
+  artboard into view, as on Builds and Assets. A wheel or drag over a page moves the canvas the
+  same way. The canvas stays fitted until the person moves it; a moved canvas comes back as they
+  left it.
 - **Moving artboards.** A drag of an artboard's caption, or of a picture itself, moves it anywhere
   on the canvas, and it stays there. The artboards the person has not moved keep their rows, as if
   the moved one were not on the board. **Tidy up**, beside the zoom once anything was moved, puts
@@ -42,7 +43,8 @@ the person agrees to.
   it, Escape drops it). A note pressed on an artboard is pinned to it and goes where it goes; one
   on the bare canvas stays on the canvas. A note is dragged to move, pressed twice to reword, and
   removed with its ×. It says **Not sent yet** until the agent was told, then **Sent to Genex**; a
-  reworded note is new again.
+  reworded note is new again. New notes and picks go with the person's next message in the game's
+  chat: the agent reads them after the words, the chat shows the words alone, and they are told.
 - **Picks.** Only the artboards the agent offers to pick among (`show_design`'s `choose`) wear
   **Use this** and **Not this**, under the pointer; no other artboard does. The one to go with
   wears a ring and **Chosen**; one set aside fades under **Not this**. Pressing the pick it has
@@ -56,9 +58,9 @@ the person agrees to.
   the artboard when its file arrives; a list the agent never made good on goes after 15 minutes.
   The Design tab opens when the agent says what it is making, so the person watches it appear.
 - **Tell Genex.** Bottom right, while there are new notes or picks: how many, and **Tell Genex**,
-  which sends them as the person's own message in the game's chat. Each note names its artboard by
-  title and file and where on it the note is (percent across and down); each pick names the
-  artboard to use or to drop. They count as told once the chat has really sent them.
+  which sends them now, as the person's own message in the game's chat, rather than with their
+  next one. Each note names its artboard by title and file and where on it the note is (percent
+  across and down); each pick names the artboard to use or to drop. They count as told as it sends.
 - **The block in the chat.** Where the agent showed an artboard (`show_design`), the chat holds
   one block: a small stack of the board's artboards with the shown one on top (pictures as
   themselves, pages as a sheet's shape, never as text), a **Game design** tag, the artboard's title
@@ -133,7 +135,7 @@ holds now, the person's pictures apart. Called with an artboard and a `note` it 
 records `design_shown` (`{project, file, title, note}`, host-written only): the block. It writes no
 file, so Plan mode lets it run.
 
-Not yet: the person cannot move artboards, write on the canvas or leave notes; a build's lead has
+Not yet: a build's lead has
 no `show_design` (it works in its build's own folder, which the board does not read); a local
 model's turn has none either; a chat in Plan mode cannot write an artboard before its plan is
 approved.
@@ -149,10 +151,17 @@ saved is what a read would take. `core.design.marks` reads it (the file itself, 
 `core.design.saveMarks` writes it in the board's own folder, reached by no link. `core.design.offer`
 replaces the choices and leaves the rest as it is.
 
-The agent never reads this file. Notes and picks reach it as the person's message (Tell Genex), and
-the guide `show_design` answers says what they are: a note names its artboard and the spot on it, a
-note on one of the person's own pictures says what that reference is for, and a pick is the
-artboard to go with or to drop.
+The agent never reads this file. Notes and picks reach it with the person's next message in the
+game's chat: as main sends it, `core.design.news` phrases the untold ones on artboards the board
+holds (`shared/design-tell.ts`, one phrasing with Tell Genex; the heading in
+`shared/design-tell-prompts.ts`) after the person's words and their tags' lines, and once it is sent
+`core.design.markTold` marks them told and tells the canvas (`design.told`). A message Genex
+writes itself carries none. A note on an artboard keeps where on it it is as shares of its width
+and height (`fx`, `fy`), which is how main says the spot without the artboard's size. A save from
+the canvas never makes a told note or pick new again unless its words or the pick changed
+(`keepTold`). The guide `show_design` answers says what they are: a note names its artboard and the
+spot on it, a note on one of the person's own pictures says what that reference is for, and a pick
+is the artboard to go with or to drop.
 
 ## Where to work
 
@@ -173,9 +182,13 @@ artboard to go with or to drop.
   `use-board-marks.ts` and `use-artboard-drag.ts`, `design-frames.tsx`,
   `design-boards.ts` (every reader's board) and `design-asks.ts` (the tab's mark, and asking for
   an artboard); the block in `chat/DesignPageCard.tsx` (on `chat/BuildCard.tsx`, loaded with the
-  first block a chat shows).
+  first block a chat shows). The canvas moves in the compositor during a wheel or a drag, a page's
+  handed-on ones included (`wheelGlide`, `dragGlide` in `canvas-view.ts`), and React adopts the
+  camera at rest; captions, notes and picks keep their size on screen from the layer's
+  `--canvas-zoom`, so they follow in the same frame, and a camera move renders no artboard.
 - Tests: `design-pages`, `design-bridge`, `design-tab`, `design-tool`, `design-marks`,
-  `design-notes`, `design-agent` and `design-card` conformance. The `design-board` fixture's agent
-  offers three places, announces two artboards and points at a spot once the window is up.
+  `design-notes`, `design-news-send`, `design-agent`, `design-card` and `canvas-gesture`
+  conformance. The `design-board` fixture's agent offers three places, announces two artboards and
+  points at a spot once the window is up.
 - See it: `npm run studio:dev -- start --profile design --fixture design-board`
   (`STUDIO_FIXTURE_INTERACTIVE=1` for a visible window).

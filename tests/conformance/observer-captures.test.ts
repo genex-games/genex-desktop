@@ -458,7 +458,7 @@ describe("a game's observers inside a run", () => {
     skew += PERSON_FIRST_FRESH_MS;
     await hk.script({ shot: STILLS });
     const asked: number[] = [];
-    const small = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
+    const small = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(12, 1)]);
     resizing = async (_data, maxPx) => {
       asked.push(maxPx);
       return small;

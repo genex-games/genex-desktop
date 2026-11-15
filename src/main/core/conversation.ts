@@ -35,7 +35,8 @@ import {
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { NEW_CHAT_TITLE, NEW_GAME_TITLE } from "./game-threads.ts";
-import { SECOND_MS } from "../../shared/duration.ts";
+import type { DesignNews } from "./design-board.ts";
+import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { settleWithin } from "../app-lifecycle.ts";
 import { threadOr } from "./main-thread.ts";
 import { isQueueMessageId } from "./rewind.ts";
@@ -74,6 +75,11 @@ const STOP_DISPATCH_TIMEOUT_MS = 5 * SECOND_MS;
  * reach the chat's queue. A harness that takes neither must not keep Stop from aborting its work.
  */
 const STOP_SEND_WAIT_MS = 5 * SECOND_MS;
+/**
+ * How long a message sent while the agents start waits for them before it is refused: a Windows
+ * sandbox came up three minutes after the window in the field.
+ */
+const SEND_WAITS_FOR_START_MS = 5 * MINUTE_MS;
 
 /** A plan review in one of these states still owns the thread's next message. */
 const OPEN_PLAN_REVIEW: readonly string[] = [
@@ -240,6 +246,9 @@ export class ConversationService {
   }
 
   async #send(text: string, options: ComposerSendOptions): Promise<void> {
+    // The composer shows it as sending meanwhile; a start that fails leaves it refused below.
+    const starting = this.#x.agentsStarting;
+    if (starting) await settleWithin(starting, SEND_WAITS_FOR_START_MS, undefined);
     const sentAt = Date.now();
     if (await this.#requestPlanReview(text, options, sentAt)) return;
     const target = await this.#messageTarget(text, options);
@@ -256,8 +265,10 @@ export class ConversationService {
       this.#core.emit(UiEvent.GameChanged, { project: target.project });
     }
     const pictures = await this.#savePictures(target.project, sendOptions);
-    // The agent reads the tags' lines after the person's words; the chat shows the words alone.
-    const action = this.#userMessageAction(text + tags.context, target, sendOptions, {
+    const board = await this.#boardNews(target, options);
+    // The agent reads the tags' lines, then the Design board's news, after the person's words; the
+    // chat shows the words alone.
+    const action = this.#userMessageAction(text + tags.context + (board?.context ?? ""), target, sendOptions, {
       resume,
       extraReads,
       stills,
@@ -299,6 +310,17 @@ export class ConversationService {
       thread: threadId,
       origin: MessageOrigin.TagRetry,
     });
+  }
+
+  /**
+   * The notes and picks the person left on their game's Design board since they last wrote, which
+   * go with their own message in the game's chat, told as they are taken; none with a message Genex writes itself, outside
+   * a game's chat, or when the board cannot be read (the message goes anyway).
+   */
+  async #boardNews(target: MessageTarget, options: ComposerSendOptions): Promise<DesignNews | null> {
+    if (!target.project || target.studioThread || options.origin) return null;
+    // Taken as told before the send: a second send racing this one finds nothing left to carry.
+    return this.#core.design.takeNews(target.project).catch(() => null);
   }
 
   /** The message's @ tags made real for its game; none outside a game's chat. */

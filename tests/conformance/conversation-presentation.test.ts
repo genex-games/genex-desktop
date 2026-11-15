@@ -136,3 +136,20 @@ test("the build card says one thing at a time: the part at work, else what the l
   assert.equal(buildCaption({ phase: "tool", label: "Generating the sky" }, none, false), "Generating the sky");
   assert.equal(buildCaption({ phase: "thinking", label: "Thinking" }, one, true), "Finishing up");
 });
+
+test("between parts, and on a tool with no name, the build card says what the lead last said in its own words", () => {
+  type Run = Parameters<typeof buildCaption>[1];
+  const said = {
+    tasks: [{ title: "Gnarled mossy trees", state: "done" }],
+    lead: {
+      plan: null,
+      said: [
+        { at: "t1", text: "Рисую три места." },
+        { at: "t2", text: "Код игры написан." },
+      ],
+    },
+  } as Run;
+  assert.equal(buildCaption({ phase: "thinking", label: "Thinking" }, said, false), "Код игры написан.");
+  assert.equal(buildCaption({ phase: "tool", label: "Running a tool" }, said, false), "Код игры написан.");
+  assert.equal(buildCaption({ phase: "tool", label: "Generating the sky" }, said, false), "Generating the sky");
+});

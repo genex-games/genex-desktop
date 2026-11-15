@@ -9,7 +9,7 @@ import type { DesignItem, DesignSpot } from "../../../shared/design-board.ts";
 import { SECOND_MS } from "../../../shared/duration.ts";
 import { BOARD_WORDS } from "./board-words.ts";
 import { DESIGN_MAKING_EVENT, makingOn } from "./design-asks.ts";
-import { CAPTION_HEIGHT, makingNow, type WallFrame } from "./design-model.ts";
+import { CAPTION_HEIGHT, makingNow, UNZOOMED, type WallFrame, zoomedWidth } from "./design-model.ts";
 
 /** The ring the agent draws around a spot, across, in screen pixels. */
 const RING_PX = 40;
@@ -31,22 +31,12 @@ function GenexTag({ words }: { words: string }): JSX.Element {
 }
 
 /** Where the agent points on an artboard: a ring at the spot, and its words beside it. */
-export function AgentPointer({
-  frame,
-  spot,
-  note,
-  zoom,
-}: {
-  frame: WallFrame;
-  spot: DesignSpot;
-  note: string;
-  zoom: number;
-}): JSX.Element {
+export function AgentPointer({ frame, spot, note }: { frame: WallFrame; spot: DesignSpot; note: string }): JSX.Element {
   const left = frame.x + (frame.width * spot.x) / 100;
   const top = frame.y + (frame.height * spot.y) / 100;
   return (
     <div data-design-pointer="" className="pointer-events-none absolute z-30" style={{ left, top }}>
-      <div style={{ transform: `scale(${1 / zoom})`, transformOrigin: "left top" }}>
+      <div style={{ transform: UNZOOMED, transformOrigin: "left top" }}>
         <span
           aria-hidden="true"
           className="absolute rounded-full"
@@ -73,14 +63,12 @@ export function MakingSheet({
   frame,
   caption,
   section,
-  zoom,
   drawing,
 }: {
   frame: WallFrame;
   caption: string;
   /** Its section's name, when it is the first artboard of one. */
   section: string | null;
-  zoom: number;
   /** The one being drawn now; the others wait. */
   drawing: boolean;
 }): JSX.Element {
@@ -94,7 +82,7 @@ export function MakingSheet({
       <div className="flex items-end" style={{ height: CAPTION_HEIGHT }}>
         <div
           className="flex flex-col items-start"
-          style={{ maxWidth: frame.width * zoom, transform: `scale(${1 / zoom})`, transformOrigin: "left bottom" }}
+          style={{ maxWidth: zoomedWidth(frame.width), transform: UNZOOMED, transformOrigin: "left bottom" }}
         >
           {section ? (
             <span className="whitespace-nowrap pb-1.5 font-medium text-[15px] text-ink leading-[22px]">{section}</span>
@@ -116,7 +104,7 @@ export function MakingSheet({
         {drawing ? (
           <span
             className="pointer-events-none absolute top-full left-full z-10"
-            style={{ transform: `translate(-28px, -28px) scale(${1 / zoom})`, transformOrigin: "left top" }}
+            style={{ transform: `translate(-28px, -28px) ${UNZOOMED}`, transformOrigin: "left top" }}
           >
             <GenexTag words={BOARD_WORDS.drawing(caption)} />
           </span>

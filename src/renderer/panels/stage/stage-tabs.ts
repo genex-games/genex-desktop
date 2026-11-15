@@ -35,6 +35,24 @@ const PLAIN_VIEWS: readonly StageView[] = [
   StageView.File,
 ];
 
+/**
+ * The panels the stage keeps once opened, hidden while another view is on show (`PreviewPanel`), so
+ * going back to one draws it at once instead of loading it again. Live is the game's own view and a
+ * file beside closes with its tab.
+ */
+const KEPT_VIEWS: ReadonlySet<StageView> = new Set([
+  StageView.Builds,
+  StageView.Design,
+  StageView.Shop,
+  StageView.Assets,
+]);
+
+/** The views kept after `shown` is on show: `kept` itself when that adds nothing, so nothing draws again. */
+export function keptViews(kept: readonly StageView[], shown: StageView): readonly StageView[] {
+  if (!KEPT_VIEWS.has(shown) || kept.includes(shown)) return kept;
+  return [...kept, shown];
+}
+
 /** A tab's key, also its `data-stage-action`: a stage view, or a Live view other than the default. */
 export type StageTabKey =
   | StageView

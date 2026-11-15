@@ -324,15 +324,23 @@ function replaysSomething(setup: PreviewSetup): boolean {
   return Array.isArray(setup.actions) && setup.actions.length > 0;
 }
 
-/** A still resized to `maxPx` on its long side as JPEG, or null when the preview cannot. */
+/**
+ * A still resized to `maxPx` on its long side (a JPEG, or a PNG when it is see-through), or null
+ * when the preview cannot or answers no picture.
+ */
 async function resizedStill(preview: PreviewPort | null, data: Buffer, maxPx: number): Promise<Buffer | null> {
   if (!preview?.resizeImage) return null;
   try {
-    return await preview.resizeImage(data, maxPx, DEFAULT_STILL_QUALITY);
+    const resized = await preview.resizeImage(data, maxPx, DEFAULT_STILL_QUALITY);
+    return sniffImage(resized) ? resized : null;
   } catch {
     return null;
   }
 }
+
+/** The type a resized still's bytes are, or null when there is none. */
+const mimeTypeOf = (resized: Buffer | null): string | null =>
+  resized ? (sniffImage(resized)?.mimeType ?? null) : null;
 
 /** Whether two paths name one folder once links are resolved; false when either cannot be read. */
 async function sameRealPath(a: string, b: string): Promise<boolean> {
@@ -1153,7 +1161,7 @@ export class PreviewService {
     const resized = await resizedStill(preview, data, maxPx);
     return {
       label: name.replace(/\.[^.]+$/, ""),
-      mimeType: resized ? "image/jpeg" : sniffed.mimeType,
+      mimeType: mimeTypeOf(resized) ?? sniffed.mimeType,
       data: (resized ?? data).toString("base64"),
     };
   }
@@ -1238,7 +1246,7 @@ export class PreviewService {
     return readContainedImage(path.join(dir, "output"), output.file, { prefixes: [], ...resize });
   }
 
-  /** A picture made at most `maxPx` on its longest side (a JPEG), or null when nothing here can resize it. */
+  /** A picture made at most `maxPx` on its longest side (a JPEG, or a PNG when see-through), or null when nothing here can resize it. */
   resizeStill(data: Buffer, maxPx: number): Promise<Buffer | null> {
     return resizedStill(this.#optionalPreview(), data, maxPx);
   }
@@ -1263,7 +1271,7 @@ export class PreviewService {
     const resized = maxPx ? await resizedStill(this.#optionalPreview(), data, maxPx) : null;
     const output = resized ?? data;
     if (output.length > REFERENCE_MAX_BYTES) return null;
-    return { mimeType: resized ? "image/jpeg" : sniffed.mimeType, data: output.toString("base64") };
+    return { mimeType: mimeTypeOf(resized) ?? sniffed.mimeType, data: output.toString("base64") };
   }
 
   /**

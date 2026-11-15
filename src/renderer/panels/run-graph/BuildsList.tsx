@@ -4,10 +4,11 @@
  * (`builds-list.ts`). It fills the panel edge to edge and scrolls; there is no canvas to pan. A row is
  * its mark, its name, when it ended and what it made or how it stands, and on its right what it left
  * to look at: each thing it made, else its own picture; a row at work shows its agent's screen.
- * Pressing a row opens its card in its place.
+ * Pressing a row opens it in place: its header stays where it was and its card's body opens under it,
+ * pushing the rows below down.
  */
-import type { JSX, ReactNode } from "react";
-import { useState } from "react";
+import type { JSX, ReactNode, Ref } from "react";
+import { useEffect, useRef, useState } from "react";
 import { assetKind } from "../../../shared/game-assets.ts";
 import { t } from "../../../shared/i18n.ts";
 import { StepMark } from "../../chat/StepMark.tsx";
@@ -24,8 +25,10 @@ import {
 } from "../../run-steps.ts";
 import { useStill } from "../../stills.ts";
 import { Icon } from "../../ui/icons.tsx";
+import { OUTCOME_WORDS } from "../../words.ts";
 import { AssetThumbnail } from "../AssetThumbnail.tsx";
 import { DeliveredPicture } from "../inspector/AssetsPanel.tsx";
+import { OPEN_EDGE, UnderRowHeader } from "../inspector/chrome.tsx";
 import { formatTime } from "../inspector/format.ts";
 import { IMAGE_OUTLINE } from "../inspector/pictures.tsx";
 import { ScreenWords, useFrameSrc, usePartFrame } from "../inspector/screen.tsx";
@@ -39,6 +42,7 @@ const MESSAGE = {
   changed: t("What changed"),
   yourBuild: t("Your build"),
   leftOut: (count: number) => t("{count, plural, other {# left out}}", { count }),
+  close: t("Close (Esc)"),
 } as const;
 
 /** How many pictures a row shows before it counts the rest. */
@@ -59,12 +63,13 @@ interface Props {
   runId: string;
   active: boolean;
   /** the run's build once it is over: its words and picture; null while it runs */
-  result: { status: ResultStatus; src: string | null } | null;
+  /** the run's build once it is over: how it stands, which version of the game it is, when it ended */
+  result: { status: ResultStatus; version: number | null; endedAt: string | null } | null;
   selected: string | null;
   onSelect: (id: string) => void;
   /** close the open row's card */
   onClose: () => void;
-  /** the open row's card, drawn in its place */
+  /** the open row's card, drawn under its row's header */
   card: ReactNode;
 }
 
@@ -229,29 +234,51 @@ function metaWords(row: ListRow): string {
 }
 
 /** What every row is drawn with, besides itself. */
-type RowProps = Pick<Props, "project" | "runId" | "active" | "assetJobs" | "onSelect">;
+type RowProps = Pick<Props, "project" | "runId" | "active" | "assetJobs" | "onSelect" | "onClose">;
 
-/** One row of the list: pressing it opens its card in its place. */
-function Row({ row, project, runId, active, assetJobs, onSelect }: RowProps & { row: ListRow }): JSX.Element {
+/** What a row's header shows on its right: what it left to look at, or, while it is open, that it closes. */
+function RowPictures({ row, project, runId, active, assetJobs }: RowProps & { row: ListRow }): JSX.Element {
+  return (
+    <span className="flex items-center gap-2">
+      {row.step ? <StepPictures step={row.step} project={project} runId={runId} active={active} /> : null}
+      {row.build ? <BuildPicture build={row.build} /> : null}
+      {row.id === GraphSelection.Assets ? <AssetsPictures jobs={assetJobs} project={project} /> : null}
+    </span>
+  );
+}
+
+/**
+ * One row of the list: pressing it opens it, pressing it again closes it. Open or closed its header
+ * is drawn the same, so it never moves; open, its pictures give way to the card's under it.
+ */
+function Row({
+  row,
+  open = false,
+  header,
+  ...props
+}: RowProps & { row: ListRow; open?: boolean; header?: Ref<HTMLButtonElement> }): JSX.Element {
+  const { project, runId, active, onSelect, onClose } = props;
   const working = row.mark === RowMark.Working;
   const muted = row.mark === RowMark.Out || row.mark === RowMark.Waiting;
   const meta = metaWords(row);
   return (
     <button
+      ref={header}
       type="button"
       data-graph-node={row.id}
       data-working={working || undefined}
-      aria-expanded={false}
+      aria-expanded={open}
+      title={open ? MESSAGE.close : undefined}
       // A step is named by the build, from the person's request.
       data-analytics-mask
-      onClick={() => onSelect(row.id)}
+      onClick={() => (open ? onClose() : onSelect(row.id))}
       className="-mx-3 grid min-h-[68px] w-[calc(100%+24px)] cursor-pointer grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-x-3 rounded-[12px] px-3 py-1 text-left hover:bg-control-hover focus-visible:outline-2 focus-visible:outline-accent"
     >
       <Mark mark={row.mark} />
       <span className="flex min-w-0 flex-col gap-0.5">
         <span className={`truncate text-chat ${muted ? "text-ink-3" : "text-ink"}`}>{row.title}</span>
         {working && row.step ? (
-          <span className="truncate text-status text-ink-3">
+          <span className="chat-status-shimmer truncate text-status text-ink-3">
             <StepDoing step={row.step} detail={row.detail} project={project} runId={runId} active={active} />
           </span>
         ) : null}
@@ -261,25 +288,59 @@ function Row({ row, project, runId, active, assetJobs, onSelect }: RowProps & { 
           </span>
         ) : null}
         {working && !row.step && row.detail ? (
-          <span className="truncate text-status text-ink-3">{row.detail}</span>
+          <span className="chat-status-shimmer truncate text-status text-ink-3">{row.detail}</span>
         ) : null}
       </span>
-      <span className="flex items-center gap-2">
-        {row.step ? <StepPictures step={row.step} project={project} runId={runId} active={active} /> : null}
-        {row.build ? <BuildPicture build={row.build} /> : null}
-        {row.id === GraphSelection.Assets ? <AssetsPictures jobs={assetJobs} project={project} /> : null}
-      </span>
+      {open ? (
+        <span aria-hidden="true" className="flex size-7 items-center justify-center text-ink-3">
+          <Icon name="caret-up" size={15} />
+        </span>
+      ) : (
+        <RowPictures row={row} {...props} />
+      )}
     </button>
   );
 }
 
-/** Rows of the list, the open one as its card. */
-function Rows({ rows, props }: { rows: ListRow[]; props: Omit<Props, "list" | "result"> }): JSX.Element {
+/** What the rows of a section are drawn with. */
+type RowsProps = Omit<Props, "list" | "result">;
+
+/**
+ * A row in its slot, open or closed: the same header button either way, so pressing it to close
+ * keeps the focus on it. Open, its card's body follows the header inside one soft line that takes up
+ * no room. Opened from elsewhere (an arrow, the chat's Building card) the header is brought into view
+ * if it is not; one already in view stays exactly where it is, and showing the tab again moves nothing.
+ */
+function RowSlot({ row, props }: { row: ListRow; props: RowsProps }): JSX.Element {
+  const open = props.selected === row.id;
+  const header = useRef<HTMLButtonElement>(null);
+  const shownOpen = useRef(false);
+  useEffect(() => {
+    if (open && !shownOpen.current) header.current?.scrollIntoView({ block: "nearest" });
+    shownOpen.current = open;
+  }, [open]);
+  return (
+    <div data-builds-open={open ? row.id : undefined} className="relative flex flex-col">
+      {open ? (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 -inset-x-3 rounded-[12px]"
+          style={{ boxShadow: OPEN_EDGE }}
+        />
+      ) : null}
+      <Row row={row} open={open} header={header} {...props} />
+      {open ? <UnderRowHeader.Provider value>{props.card}</UnderRowHeader.Provider> : null}
+    </div>
+  );
+}
+
+/** Rows of the list, the open one with its card under it. */
+function Rows({ rows, props }: { rows: ListRow[]; props: RowsProps }): JSX.Element {
   return (
     <>
-      {rows.map((row) =>
-        props.selected === row.id ? <div key={row.id}>{props.card}</div> : <Row key={row.id} row={row} {...props} />,
-      )}
+      {rows.map((row) => (
+        <RowSlot key={row.id} row={row} props={props} />
+      ))}
     </>
   );
 }
@@ -289,7 +350,7 @@ function Rows({ rows, props }: { rows: ListRow[]; props: Omit<Props, "list" | "r
  * them is (pressed on the chat's Building card, or walked to with an arrow); closing it closes that
  * card too.
  */
-function LeftOut({ rows, props }: { rows: ListRow[]; props: Omit<Props, "list" | "result"> }): JSX.Element | null {
+function LeftOut({ rows, props }: { rows: ListRow[]; props: RowsProps }): JSX.Element | null {
   const [pressed, setPressed] = useState(false);
   const holdsOpen = rows.some((row) => row.id === props.selected);
   const open = pressed || holdsOpen;
@@ -326,7 +387,7 @@ function Section({
 }: {
   label: string;
   rows: ListRow[];
-  props: Omit<Props, "list" | "result">;
+  props: RowsProps;
   /** the steps left out of the build, under one row after the rest */
   leftOut?: ListRow[];
 }): JSX.Element | null {
@@ -345,7 +406,10 @@ function Section({
   );
 }
 
-/** The run's build once it is over: its picture beside what became of it; pressing it opens its card. */
+/**
+ * The run's build once it is over, in one line above what changed: which version of the game it is
+ * now and when it ended, else how it stands. Pressing it opens its card.
+ */
 function YourBuild({
   result,
   onSelect,
@@ -353,36 +417,27 @@ function YourBuild({
   result: NonNullable<Props["result"]>;
   onSelect: (id: string) => void;
 }): JSX.Element {
+  const word = result.version ? OUTCOME_WORDS.inGame(result.version) : result.status.word;
+  const time = result.endedAt ? formatTime(result.endedAt) : null;
   return (
     <button
       type="button"
       data-graph-node={GraphSelection.Final}
       aria-expanded={false}
-      aria-label={t("{name}: {status}", { name: MESSAGE.yourBuild, status: result.status.word })}
+      aria-label={t("{name}: {status}", { name: MESSAGE.yourBuild, status: word })}
       onClick={() => onSelect(GraphSelection.Final)}
-      className="-m-3 flex cursor-pointer flex-wrap items-center gap-x-6 gap-y-4 rounded-card p-3 text-left hover:bg-control-hover focus-visible:outline-2 focus-visible:outline-accent"
+      className="-mx-3 -my-2 flex min-w-0 cursor-pointer items-baseline gap-2 rounded-card px-3 py-2 text-left text-chat-sub hover:bg-control-hover focus-visible:outline-2 focus-visible:outline-accent"
     >
-      {result.src ? (
-        <span
-          className="relative block aspect-video w-full max-w-[480px] min-w-[240px] flex-1 overflow-hidden rounded-card bg-inset"
-          style={{ boxShadow: IMAGE_OUTLINE }}
-        >
-          <img
-            src={result.src}
-            decoding="async"
-            alt=""
-            draggable={false}
-            className="absolute inset-0 size-full object-cover"
-          />
+      {result.version ? (
+        // A version in the game is a bare check, as the chat's line wears it.
+        <span aria-hidden="true" className="self-center text-ink">
+          <Icon name="check" size={12} />
         </span>
-      ) : null}
-      <span className="flex min-w-[200px] flex-1 flex-col gap-1">
-        <span className="text-status text-ink-3">{MESSAGE.yourBuild}</span>
-        <span className="flex items-center gap-2 text-name text-ink">
-          <StateGlyph state={result.status.state} size={12} />
-          {result.status.word}
-        </span>
-      </span>
+      ) : (
+        <StateGlyph state={result.status.state} size={12} />
+      )}
+      <span className="min-w-0 truncate text-ink">{word}</span>
+      {time ? <span className="shrink-0 text-ink-3">· {time}</span> : null}
     </button>
   );
 }

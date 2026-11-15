@@ -96,6 +96,25 @@ describe("what the person did on the board, as its file is read", () => {
     assert.equal(notes.notes.length, NOTES_MAX);
     assert.deepEqual(notes.picks, {}, "a pick is use or not");
   });
+
+  it("keeps where on its artboard a note is only as two fractions from 0 to 1, and only on an artboard", () => {
+    const on = { id: "n", text: "here", file: "docs/design/a.png", x: 1, y: 2 };
+    const read = (spot: Record<string, unknown>, note: Record<string, unknown> = on) =>
+      readDesignMarks({ notes: [{ ...note, ...spot }] }).notes[0];
+    assert.deepEqual(read({ fx: 0.25, fy: 0.123456 }), { ...on, fx: 0.25, fy: 0.123, told: false });
+    const hostile: Array<[string, Record<string, unknown>]> = [
+      ["past the edge", { fx: 1.5, fy: -0.2 }],
+      ["not numbers", { fx: "0.5", fy: null }],
+      ["not finite", { fx: Number.NaN, fy: Number.POSITIVE_INFINITY }],
+      ["one alone", { fx: 0.5 }],
+    ];
+    for (const [why, spot] of hostile) {
+      const note = read(spot);
+      assert.ok(note && note.fx === undefined && note.fy === undefined, why);
+    }
+    const bare = read({ fx: 0.5, fy: 0.5 }, { id: "c", text: "canvas", x: 1, y: 2 });
+    assert.equal(bare?.fx, undefined, "a note on the bare canvas has no artboard to be across");
+  });
 });
 
 describe("what the person does on the canvas, as changes to the marks", () => {

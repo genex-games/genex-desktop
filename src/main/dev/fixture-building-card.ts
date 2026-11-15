@@ -67,6 +67,9 @@ const EARLIER: readonly EarlierLoop[] = [
 
 /** The lead's save points, in the order it made them: their labels, in its words for the person. */
 const SAVE_POINTS = ["A car to drive on a test loop", "A full lap of the night city, with speed and lap time"] as const;
+/** The build's name and its plan as the chat named them at its start: two steps done, the third at work. */
+const TITLE = "Night street race";
+const PLAN = ["A car to drive", "A full lap of the night city", "Clear-coat cars", "Building facades"] as const;
 
 /** Records of the run. */
 type Scoped = ReturnType<typeof fixtureRun>;
@@ -132,6 +135,8 @@ function buildingLoop(project: string): EventData[] {
     { type: EventKind.Messages, messages: [{ role: "user", content: GOAL }] },
     run(CustomEvent.RunStarted, {
       goal: GOAL,
+      title: TITLE,
+      steps: [...PLAN],
       engine: EngineId.ClaudeCode,
       model: FIXTURE_MODEL,
     }),

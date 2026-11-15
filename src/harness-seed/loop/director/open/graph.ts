@@ -99,6 +99,7 @@ export async function savePointRound(
     snapshot: point.snapshotId,
     shots,
     ...(shown ? { shown } : {}),
+    ...(point.steps?.length ? { steps: point.steps } : {}),
     auto: point.auto,
     move: { what: point.summary ? `${point.label}: ${point.summary}` : point.label, delivered: true },
   };

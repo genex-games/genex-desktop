@@ -4,11 +4,11 @@
  * reword, and removed with its ×; a new one opens to type where the Note tool was pressed. Notes
  * keep their size on screen whatever the zoom, as captions do, and say whether the agent was told.
  */
-import { type JSX, type PointerEvent as ReactPointerEvent, useState } from "react";
+import { type JSX, memo, type PointerEvent as ReactPointerEvent, useState } from "react";
 import type { DesignMarks, DesignNote, DesignPlace } from "../../../shared/design-marks.ts";
-import { noteAnchor, notePoint, withNote, withoutNote } from "./board-marks.ts";
+import { type NoteAnchor, noteAnchor, notePoint, withNote, withoutNote } from "./board-marks.ts";
 import { BOARD_WORDS } from "./board-words.ts";
-import type { WallFrame } from "./design-model.ts";
+import { UNZOOMED, type WallFrame } from "./design-model.ts";
 import { useArtboardDrag } from "./use-artboard-drag.ts";
 import type { MarksChange } from "./use-board-marks.ts";
 
@@ -20,7 +20,7 @@ const PAPER_QUIET = "#6d5a10";
 const NOTE_WIDTH = 184;
 
 /** A note being written before it is kept: where it is pinned, and its id once it is. */
-export type NoteDraft = DesignPlace & { id: string; file?: string };
+export type NoteDraft = NoteAnchor & { id: string };
 
 /** The words of a note being typed: Enter keeps them, Shift+Enter breaks the line, Escape drops them. */
 function NoteField({
@@ -62,14 +62,12 @@ function NoteField({
 /** One sticky at a point of the canvas: its spot at the point, the paper beside it. */
 function Sticky({
   point,
-  zoom,
   dragged,
   children,
   onPointerDown,
   onDoubleClick,
 }: {
   point: DesignPlace;
-  zoom: number;
   dragged: boolean;
   children: JSX.Element | JSX.Element[];
   onPointerDown?: (event: ReactPointerEvent<HTMLDivElement>) => void;
@@ -77,7 +75,7 @@ function Sticky({
 }): JSX.Element {
   return (
     <div className={`absolute ${dragged ? "z-30" : "z-20"}`} style={{ left: point.x, top: point.y }}>
-      <div style={{ transform: `scale(${1 / zoom})`, transformOrigin: "left top" }}>
+      <div style={{ transform: UNZOOMED, transformOrigin: "left top" }}>
         <span
           aria-hidden="true"
           className="absolute top-[-6px] left-[-6px] size-3 rounded-full"
@@ -100,16 +98,16 @@ function Sticky({
 }
 
 /** A note with its place put at `anchor`: on that artboard, or on the bare canvas. */
-function movedTo(note: DesignNote, anchor: DesignPlace & { file?: string }): DesignNote {
-  const { file: _file, ...bare } = note;
-  return { ...bare, x: anchor.x, y: anchor.y, ...(anchor.file ? { file: anchor.file } : {}) };
+function movedTo(note: DesignNote, anchor: NoteAnchor): DesignNote {
+  const { file: _file, fx: _fx, fy: _fy, ...bare } = note;
+  return { ...bare, ...anchor };
 }
 
-/** Every note of the board on the canvas, and the one being written. */
-export function BoardNotes({
+/** Every note of the board on the canvas, and the one being written; a camera move renders none of them. */
+export const BoardNotes = memo(function BoardNotes({
   marks,
   frames,
-  zoom,
+  zoomNow,
   draft,
   change,
   onDraft,
@@ -117,7 +115,8 @@ export function BoardNotes({
   marks: DesignMarks;
   /** Where each artboard hangs now. */
   frames: readonly WallFrame[];
-  zoom: number;
+  /** The canvas's zoom this moment. */
+  zoomNow: () => number;
   /** A new note, open to type; null when none is being written. */
   draft: NoteDraft | null;
   change: (update: MarksChange) => void;
@@ -125,7 +124,7 @@ export function BoardNotes({
 }): JSX.Element {
   const [editing, setEditing] = useState<string | null>(null);
   const dragger = useArtboardDrag({
-    zoom,
+    zoomNow,
     onStart: () => {},
     onPlace: (id, place) =>
       change((now) => {
@@ -155,7 +154,7 @@ export function BoardNotes({
         const point = moving ?? hung;
         if (editing === note.id)
           return (
-            <Sticky key={note.id} point={point} zoom={zoom} dragged={false}>
+            <Sticky key={note.id} point={point} dragged={false}>
               <NoteField text={note.text} onKeep={(text) => keep(note, text)} onDrop={() => setEditing(null)} />
             </Sticky>
           );
@@ -163,7 +162,6 @@ export function BoardNotes({
           <Sticky
             key={note.id}
             point={point}
-            zoom={zoom}
             dragged={moving !== null}
             onPointerDown={(event) => dragger.begin({ file: note.id, ...hung, width: 0, height: 0 }, event)}
             onDoubleClick={() => setEditing(note.id)}
@@ -189,10 +187,10 @@ export function BoardNotes({
         );
       })}
       {draft && draftPoint ? (
-        <Sticky key={draft.id} point={draftPoint} zoom={zoom} dragged={false}>
+        <Sticky key={draft.id} point={draftPoint} dragged={false}>
           <NoteField text="" onKeep={keepDraft} onDrop={() => onDraft(null)} />
         </Sticky>
       ) : null}
     </>
   );
-}
+});

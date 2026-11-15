@@ -3,8 +3,14 @@
  * and the side-by-side pair a judge compares. Plain functions over Electron's `nativeImage`;
  * {@link GamePreview} exposes them as methods.
  */
-import { nativeImage } from "electron";
-import { computePixelDiff, computePixelStats, type PixelDiff, type PixelStats } from "../substrate/pixel-stats.ts";
+import { type NativeImage, nativeImage } from "electron";
+import {
+  computePixelDiff,
+  computePixelStats,
+  hasTransparency,
+  type PixelDiff,
+  type PixelStats,
+} from "../substrate/pixel-stats.ts";
 import type { CropRect } from "../substrate/preview-port.ts";
 import { DEFAULT_PAIR_HEIGHT, DEFAULT_STILL_QUALITY, PAIR_QUALITY } from "./core/capture.ts";
 
@@ -113,21 +119,33 @@ export function encodedImageStats(data: Buffer): { stats: PixelStats; width: num
   return { stats, width: size.width, height: size.height };
 }
 
-/** Re-encode as JPEG with the long side capped — reference stills at judge/builder size. */
-export function resizeToJpeg(data: Buffer, maxPx: number, quality = DEFAULT_STILL_QUALITY): Buffer {
+/** An encoded image decoded and scaled down so its long side is at most `maxPx`. */
+function shrunk(data: Buffer, maxPx: number): NativeImage {
   const image = nativeImage.createFromBuffer(data);
   if (image.isEmpty()) throw new Error(MESSAGE.undecodableImage);
   const { width, height } = image.getSize();
   const long = Math.max(width, height);
-  if (long <= maxPx) return image.toJPEG(quality);
+  if (long <= maxPx) return image;
   const scale = maxPx / long;
-  return image
-    .resize({
-      width: Math.max(1, Math.round(width * scale)),
-      height: Math.max(1, Math.round(height * scale)),
-      quality: "good",
-    })
-    .toJPEG(quality);
+  return image.resize({
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+    quality: "good",
+  });
+}
+
+/** Re-encode as JPEG with the long side capped — a play shot at the play view's width. */
+export function resizeToJpeg(data: Buffer, maxPx: number, quality = DEFAULT_STILL_QUALITY): Buffer {
+  return shrunk(data, maxPx).toJPEG(quality);
+}
+
+/**
+ * Re-encode with the long side capped — reference stills at judge/builder size, thumbnails: a
+ * JPEG, or a PNG when any pixel is see-through, so a sprite never lands on black.
+ */
+export function resizeStill(data: Buffer, maxPx: number, quality = DEFAULT_STILL_QUALITY): Buffer {
+  const image = shrunk(data, maxPx);
+  return hasTransparency(image.toBitmap()) ? image.toPNG() : image.toJPEG(quality);
 }
 
 /**

@@ -7,6 +7,7 @@
 import type { JSX } from "react";
 import { DesignPick } from "../../../shared/design-marks.ts";
 import { BOARD_WORDS } from "./board-words.ts";
+import { screenPx, UNZOOMED } from "./design-model.ts";
 
 /** The ring around a chosen artboard, in screen pixels. */
 const RING_PX = 3;
@@ -15,15 +16,13 @@ const PICK_BUTTON = "h-8 cursor-pointer rounded-[9px] px-3 font-medium text-[13p
 
 export function BoardPick({
   pick,
-  zoom,
   onPick,
 }: {
   /** What the person said of this artboard, if anything. */
   pick: DesignPick | null;
-  zoom: number;
   onPick: (pick: DesignPick) => void;
 }): JSX.Element {
-  const screen = (origin: string) => ({ transform: `scale(${1 / zoom})`, transformOrigin: origin });
+  const screen = (origin: string) => ({ transform: UNZOOMED, transformOrigin: origin });
   return (
     <>
       {pick === DesignPick.Not ? (
@@ -33,7 +32,7 @@ export function BoardPick({
         <span
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 rounded-[12px]"
-          style={{ boxShadow: `0 0 0 ${RING_PX / zoom}px var(--accent)` }}
+          style={{ boxShadow: `0 0 0 ${screenPx(RING_PX)} var(--accent)` }}
         />
       ) : null}
       {pick ? (

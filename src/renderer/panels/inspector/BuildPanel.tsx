@@ -8,7 +8,7 @@ import { type BuildCard, BuildOutcome } from "../../run-graph-builds.ts";
 import { Tone } from "../../run-steps.ts";
 import { useStill } from "../../stills.ts";
 import { BUILD_LINE_WORDS } from "../../words.ts";
-import { Details, Panel, PanelRow, Para, Row, Rows, Section } from "./chrome.tsx";
+import { Panel, Para, Section } from "./chrome.tsx";
 import { Single } from "./pictures.tsx";
 import { Status } from "./tone.tsx";
 import type { InspectorProps } from "./types.ts";
@@ -58,16 +58,6 @@ export function BuildPanel(props: InspectorProps & { build: BuildCard }): JSX.El
           ))}
         </Section>
       ) : null}
-      <Rows>
-        <Row row={PanelRow.TechnicalDetails} label={t("Technical details")}>
-          <Details
-            rows={[
-              [t("commit"), build.head],
-              [BUILD_LINE_WORDS.found, build.problems.join(" | ") || null],
-            ]}
-          />
-        </Row>
-      </Rows>
     </Panel>
   );
 }

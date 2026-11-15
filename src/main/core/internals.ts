@@ -256,6 +256,8 @@ export interface CoreViews {
   readonly mcpSecrets: SecretPort | null;
   readonly settings: StudioSettings;
   readonly started: boolean;
+  /** The agents' start in flight (the sandbox, then the harness), settled either way; null when none runs. */
+  readonly agentsStarting: Promise<void> | null;
   readonly toolRegistryRevision: number;
 }
 

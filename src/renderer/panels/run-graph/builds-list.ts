@@ -73,6 +73,8 @@ export interface BuildsListInput {
   /** the run's asset jobs: the plugins' and the modeller's own */
   assetJobs: AssetInfo[];
   finishCheck: FinishCheckNode | null;
+  /** what the lead is doing in one line (`leadLine`), the same the chat's Building card says; null when it said nothing */
+  leadSays: string | null;
   now: number;
 }
 
@@ -201,7 +203,7 @@ function assetsRow(jobs: AssetInfo[]): ListRow {
 
 /** The run's own rows that are no step: the ones at work, and the ones that head what changed. */
 function fixedRows(input: BuildsListInput): ListRow[] {
-  const lead = leadWorks(input) ? fixed(GraphSelection.Lead, LEAD_WORDS.name, RowMark.Working) : null;
+  const lead = leadWorks(input) ? fixed(GraphSelection.Lead, LEAD_WORDS.name, RowMark.Working, input.leadSays) : null;
   const assets = input.nodes.assets ? assetsRow(input.assetJobs) : null;
   return [lead, finishRow(input.finishCheck), jobsRow(input), assets].filter((row): row is ListRow => row !== null);
 }

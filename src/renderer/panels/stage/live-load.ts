@@ -229,11 +229,24 @@ function settled(
   settle.currentAt ||= now;
   let ready = now - settle.currentAt > LIVE_SETTLE_MAX_MS;
   const page = live?.page;
-  if (page?.complete && page.resources !== settle.lastResources) {
-    settle.lastResources = page.resources;
+  // A page too busy to answer the probe (a long loop before its first frame) is not quiet.
+  const busy = !page || page.resources !== settle.lastResources || settingUp(page.state);
+  if (busy) {
+    settle.lastResources = page?.resources ?? -1;
     settle.quietAt = now;
-  } else if (page?.complete && now - settle.quietAt >= LIVE_QUIET_MS) ready = true;
+  } else if (page.complete && now - settle.quietAt >= LIVE_QUIET_MS) ready = true;
   return gaveUp ?? (ready ? LiveOutcome.Shown : null);
+}
+
+/**
+ * Whether the page says its game is still setting its scene up: it has a canvas, and has neither
+ * drawn on it nor asked for a first frame (pictures awaited, pixels filled before the loop starts).
+ * A hidden view draws no frames, so this, not a frame, is what Live can wait on. A page that says
+ * nothing of it is not held.
+ */
+function settingUp(state: Record<string, unknown> | null): boolean {
+  if (state?.canvas !== true || state.frameAsked !== false) return false;
+  return !(typeof state.drawCalls === "number" && state.drawCalls > 0);
 }
 
 /** What this game's own page says on a probe: whether it is stopped, and the state it reports. */

@@ -18,7 +18,7 @@ import { MINUTE_MS } from "../shared/duration.ts";
 import { assetFormat, type ProjectAsset } from "../shared/game-assets.ts";
 import { GameEngine } from "../shared/game-engine.ts";
 import { formatList, t, tc } from "../shared/i18n.ts";
-import { comparedWithNothing, ExecutionStatus, type RunWorked, VerdictPass, workedMs } from "../shared/run-state.ts";
+import { ExecutionStatus, type RunWorked, workedMs } from "../shared/run-state.ts";
 import { type RunSummary, UNKNOWN_EXECUTION } from "../shared/run-summary.ts";
 import { LoopProfile } from "../shared/project-facts.ts";
 import { WorkerEnd, WorkerIsolation, WorkerStopCode, WorkerVerdict } from "../shared/workers.ts";
@@ -995,24 +995,6 @@ function runningResultStatus(graph: RunGraph, summary: RunSummary | null): Resul
 export function readyToPlay(graph: RunGraph, summary: RunSummary | null): string | null {
   if (!graph.active || !summary?.head) return null;
   return runningResultStatus(graph, summary).state === StepState.InBuild ? summary.head : null;
-}
-
-/** Who took the last look at the build on offer, as the result card names them; the reviewers otherwise. */
-const REVIEW_BY: Partial<Record<string, string>> = {
-  [VerdictPass.Health]: t("Health check"),
-  [VerdictPass.Close]: t("Lead's last look"),
-};
-
-/**
- * The last look anybody took at the build on offer, for the result card: who looked, and the
- * sentence they wrote. Nothing when nobody wrote one, or when the build had nothing to be
- * compared with — a first build from an empty game is judged on its own, and saying so is noise.
- */
-export function buildReview(graph: RunGraph): { label: string; words: string } | null {
-  const look = headVerdict(graph);
-  const words = verdictSentence(look);
-  if (!look || !words || comparedWithNothing(look.decision.rule)) return null;
-  return { label: REVIEW_BY[look.pass] ?? t("Reviewers"), words };
 }
 
 /** A chat turn put a worker's work in your game: the lead added it, or the worker wrote it there and finished. */

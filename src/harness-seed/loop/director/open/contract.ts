@@ -56,6 +56,8 @@ export interface OpenSavePoint {
   notes: string[];
   /** The picture in the project's folder the lead named as showing what changed; absent when it named none. */
   shows?: string | null;
+  /** The plan's steps as the lead named them again at this save point; absent when it kept its plan. */
+  steps?: string[];
 }
 
 /** A rewind the lead asked for: the save point's label, and the snapshot that label named when it asked. */

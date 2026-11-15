@@ -19,6 +19,8 @@ export const NOTE_TEXT_MAX_CHARS = 600;
 const COORD_MAX = 1_000_000;
 /** A note's longest id. */
 const NOTE_ID_MAX_CHARS = 40;
+/** How finely where a note is on its artboard is kept: a thousandth of its width or height. */
+const SPOT_STEPS = 1000;
 
 /** What the person said of an artboard: the one to go with, or one set aside. Wire values: never rename one. */
 export const DesignPick = { Use: "use", Not: "not" } as const;
@@ -44,6 +46,12 @@ export interface DesignNote extends DesignPlace {
   id: string;
   text: string;
   file?: string;
+  /**
+   * Where on its artboard it is, as shares of the artboard's width and height (0 to 1), kept as it
+   * is pinned: how the agent is told where it is, by a teller that does not know the artboard's size.
+   */
+  fx?: number;
+  fy?: number;
   /** The person has told the agent about it. */
   told: boolean;
 }
@@ -101,6 +109,19 @@ function readPicks(value: unknown): Record<string, DesignPickMark> {
   return picks;
 }
 
+/** A share of an artboard's side: a finite number from 0 to 1, to a thousandth; null for anything else. */
+function share(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) return null;
+  return Math.round(value * SPOT_STEPS) / SPOT_STEPS;
+}
+
+/** Where on its artboard a note is: both shares, or nothing. */
+function readSpot(note: Record<string, unknown>): { fx: number; fy: number } | Record<string, never> {
+  const fx = share(note.fx);
+  const fy = share(note.fy);
+  return fx === null || fy === null ? {} : { fx, fy };
+}
+
 /** One note, or null for one with no id, no words, no place, or pinned to what is no artboard of the board. */
 function readNote(value: unknown): DesignNote | null {
   const note = record(value);
@@ -110,7 +131,7 @@ function readNote(value: unknown): DesignNote | null {
   if (!note || !place || !id || !text) return null;
   if (note.file === undefined) return { id, text, ...place, told: note.told === true };
   const file = artboard(note.file);
-  return file ? { id, text, file, ...place, told: note.told === true } : null;
+  return file ? { id, text, file, ...place, ...readSpot(note), told: note.told === true } : null;
 }
 
 function readNotes(value: unknown): DesignNote[] {
@@ -142,3 +163,45 @@ export function readDesignMarks(value: unknown): DesignMarks {
 /** The file's text for these marks. */
 export const writeDesignMarks = (marks: DesignMarks): string =>
   `${JSON.stringify({ v: MARKS_VERSION, ...readDesignMarks(marks) }, null, 2)}\n`;
+
+/** What was told to the agent: each note by its id and the words it had, each pick by its artboard and what it was. */
+export interface DesignToldMarks {
+  notes: Array<{ id: string; text: string }>;
+  picks: Array<{ file: string; pick: DesignPick }>;
+}
+
+/** The notes and picks of one game's board the agent was just told, as the canvas hears it. */
+export interface DesignTold extends DesignToldMarks {
+  project: string;
+}
+
+/**
+ * The marks with what was told marked told: a note only while it still has the words it was told
+ * with, a pick only while it is still the same pick, so a note reworded since stays news.
+ */
+export function withTold(marks: DesignMarks, told: DesignToldMarks): DesignMarks {
+  const notes = new Set(told.notes.map((note) => `${note.id}\n${note.text}`));
+  const picks = new Set(told.picks.map((mark) => `${mark.file}\n${mark.pick}`));
+  return {
+    ...marks,
+    notes: marks.notes.map((note) => (notes.has(`${note.id}\n${note.text}`) ? { ...note, told: true } : note)),
+    picks: Object.fromEntries(
+      Object.entries(marks.picks).map(([file, mark]) => [
+        file,
+        picks.has(`${file}\n${mark.pick}`) ? { ...mark, told: true } : mark,
+      ]),
+    ),
+  };
+}
+
+/**
+ * `incoming` (the canvas's save) with every note and pick `stored` holds as told still told, while
+ * it is the same note with the same words or the same pick: a canvas that saved before it heard
+ * they were sent cannot make them new again.
+ */
+export function keepTold(incoming: DesignMarks, stored: DesignMarks): DesignMarks {
+  return withTold(incoming, {
+    notes: stored.notes.filter((note) => note.told).map(({ id, text }) => ({ id, text })),
+    picks: Object.entries(stored.picks).flatMap(([file, mark]) => (mark.told ? [{ file, pick: mark.pick }] : [])),
+  });
+}

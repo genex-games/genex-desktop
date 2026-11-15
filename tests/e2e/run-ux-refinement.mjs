@@ -340,7 +340,7 @@ try {
   const history = await start("history", "build-history");
   await pressStageView((selector) => op(history, "click", { selector }), "builds");
   await until(async () => (await snap(history)).stage.stageView === "builds", "Builds");
-  await check("build revision details open and close independently", async () => {
+  await check("the build's card opens without developer details", async () => {
     await until(async () => {
       try {
         await op(history, "click", { scope: "[data-stage-view]", selector: '[data-graph-node="final"]' });
@@ -349,20 +349,8 @@ try {
         return false;
       }
     }, "the build node loaded");
-    const details = '[data-graph-panel="final"] [data-panel-row="technical-details"]';
-    await op(history, "click", { scope: "[data-stage-view]", selector: details });
-    const detail = await snap(history, '[data-stage-view] [data-testid="build-details"]');
-    assert.match(detail.text, /Available revision:/);
-    assert.match(detail.text, /recorded integration/);
-    await op(history, "click", { scope: "[data-stage-view]", selector: details });
-    await until(async () => {
-      try {
-        await snap(history, '[data-stage-view] [data-testid="build-details"]');
-        return false;
-      } catch {
-        return true;
-      }
-    }, "technical details closed");
+    const card = await snap(history, '[data-stage-view] [data-graph-panel="final"]');
+    assert.doesNotMatch(card.text, /Technical details|recorded integration/);
     await op(history, "click", {
       scope: "[data-stage-view]",
       selector: '[data-graph-panel="final"] button[aria-label="Close (Esc)"]',

@@ -1509,6 +1509,16 @@ describe("a scoped ask on a project in pre-production (DeathWish)", () => {
     assert.match(words, /something narrower or different[^.]*do that instead, and the build stays paused/);
   });
 
+  it("the Loop's lead was never told the plan the person watched on the Building card, so its save points ticked steps it did not know", async () => {
+    const { LOOP_WORDS } = await import("../../src/harness-seed/loop/director/wake-prompts.ts");
+    const plan = ["Three places", "Game code", "Light and miracles"];
+    for (const line of [LOOP_WORDS.started("A walk", plan), LOOP_WORDS.resumed("A walk", plan)]) {
+      assert.match(line, /1\. Three places\n2\. Game code\n3\. Light and miracles/);
+      assert.match(line, /one save point as each step is done/);
+    }
+    assert.doesNotMatch(LOOP_WORDS.started("A walk"), /plan/, "a Loop with no plan reads no plan");
+  });
+
   it("SC-4. the Loop's lead read its goal with nothing about its bounds: the goal is all of the Loop's work", async () => {
     const { LOOP_WORDS } = await import("../../src/harness-seed/loop/director/wake-prompts.ts");
     for (const line of [LOOP_WORDS.started("Block out the lobby"), LOOP_WORDS.resumed("Block out the lobby")]) {

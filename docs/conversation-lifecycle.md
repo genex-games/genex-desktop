@@ -602,7 +602,8 @@ what a build is, work toward the goal the person set at the stage the project is
 starts: as the agent sets to making a game or a change of many steps the person asked for, instead of
 doing that work in its reply (packaging, publishing or a finished game only when asked), going on with a paused
 build (`resume_run`) and starting a new one only when needed; it starts from the folder as the reply
-leaves it. When to call it is the agent's own decision. It answers, researches, writes plans or makes
+leaves it. Its `title` (2–5 words, in the person's language) rides the run onto `run_registered`;
+Builds' tabs call the build by it (`buildTitle` in `src/shared/build-title.ts`). When to call it is the agent's own decision. It answers, researches, writes plans or makes
 a quick fix itself, or starts a build, and the chat never says a Loop started unless that call
 answered. A recorded question is asked (after the preview health pass when game sources
 changed); a recorded launch starts from the folder as the session left it; a turn that records

@@ -16,15 +16,30 @@ import {
   withPick,
 } from "../../src/renderer/panels/design/board-marks.ts";
 import { tellMessage } from "../../src/renderer/panels/design/board-tell.ts";
-import { type DesignMarks, DesignPick, EMPTY_MARKS } from "../../src/shared/design-marks.ts";
+import { type DesignMarks, DesignPick, EMPTY_MARKS, keepTold, withTold } from "../../src/shared/design-marks.ts";
+import { boardNewsContext } from "../../src/shared/design-tell.ts";
+import { DESIGN_NEWS_HEADING } from "../../src/shared/design-tell-prompts.ts";
+import { MENTION_CONTEXT_HEADING, withoutMentionContext } from "../../src/shared/prompt-mention.ts";
 
 const frame = (file: string, x: number, y: number, width = 400, height = 300) => ({ file, x, y, width, height });
 const FRAMES = [frame("docs/design/world/town.png", 0, 0), frame("docs/design/from-you/ref.jpg", 1000, 0, 200, 200)];
 
 describe("where a note is pinned", () => {
   it("sticks to the artboard under it, counted from that artboard's corner, else to the bare canvas", () => {
-    assert.deepEqual(noteAnchor({ x: 120, y: 90 }, FRAMES), { file: "docs/design/world/town.png", x: 120, y: 90 });
-    assert.deepEqual(noteAnchor({ x: 1050, y: 30 }, FRAMES), { file: "docs/design/from-you/ref.jpg", x: 50, y: 30 });
+    assert.deepEqual(noteAnchor({ x: 120, y: 90 }, FRAMES), {
+      file: "docs/design/world/town.png",
+      x: 120,
+      y: 90,
+      fx: 0.3,
+      fy: 0.3,
+    });
+    assert.deepEqual(noteAnchor({ x: 1050, y: 30 }, FRAMES), {
+      file: "docs/design/from-you/ref.jpg",
+      x: 50,
+      y: 30,
+      fx: 0.25,
+      fy: 0.15,
+    });
     assert.deepEqual(noteAnchor({ x: 700, y: 700 }, FRAMES), { x: 700, y: 700 });
     const stacked = [...FRAMES, frame("docs/design/world/fires.png", 100, 50)];
     assert.equal(noteAnchor({ x: 150, y: 100 }, stacked).file, "docs/design/world/fires.png", "the one on top");
@@ -169,5 +184,60 @@ describe("picks as changes to the marks", () => {
     const told = toldPicks(used, [town]);
     assert.deepEqual(untoldPicks(told), []);
     assert.deepEqual(untoldPicks(withPick(told, town, DesignPick.Not)), [{ file: town, pick: DesignPick.Not }]);
+  });
+});
+
+describe("notes and picks that go with the person's next message", () => {
+  const town = "docs/design/world/town.png";
+  const names = {
+    titleOf: (file: string) => (file === town ? "Hollowmere" : file),
+    onBoard: (file: string) => file === town,
+  };
+
+  it("say where on its artboard a note is from the fractions kept with it, when no size is known", () => {
+    const note = { id: "a", text: "A well here", file: town, x: 10, y: 20, fx: 0.25, fy: 0.5, told: false };
+    const context = boardNewsContext({ notes: [note], picks: [] }, names);
+    assert.ok(context.startsWith(DESIGN_NEWS_HEADING), "after a heading of its own");
+    assert.match(context, /Hollowmere \(docs\/design\/world\/town\.png\), 25% across and 50% down: A well here/);
+    const unplaced = boardNewsContext({ notes: [{ ...note, fx: undefined, fy: undefined }], picks: [] }, names);
+    assert.match(unplaced, /Hollowmere \(docs\/design\/world\/town\.png\): A well here/, "no spot it cannot know");
+    assert.equal(boardNewsContext({ notes: [], picks: [] }, names), "", "nothing for no news");
+  });
+
+  it("are words the agent reads and the chat leaves out, after the person's words and their tags'", () => {
+    const context = boardNewsContext({ notes: [], picks: [{ file: town, pick: DesignPick.Use }] }, names);
+    assert.match(context, /Use this: Hollowmere/);
+    assert.equal(withoutMentionContext(`make it darker${context}`), "make it darker");
+    assert.equal(withoutMentionContext(`mix @a${MENTION_CONTEXT_HEADING}- @a: …${context}`), "mix @a");
+  });
+
+  it("count as told once sent, and a stale save of the canvas cannot make them new again", () => {
+    const note = { id: "a", text: "A well here", file: town, x: 1, y: 2, told: false };
+    const sent: DesignMarks = {
+      ...EMPTY_MARKS,
+      notes: [note],
+      picks: { [town]: { pick: DesignPick.Use, told: false } },
+    };
+    const told = withTold(sent, {
+      notes: [{ id: "a", text: "A well here" }],
+      picks: [{ file: town, pick: DesignPick.Use }],
+    });
+    assert.equal(told.notes[0]?.told, true);
+    assert.equal(told.picks[town]?.told, true);
+    const reworded = withTold(
+      { ...sent, notes: [{ ...note, text: "Two wells" }] },
+      { notes: [{ id: "a", text: "A well here" }], picks: [] },
+    );
+    assert.equal(reworded.notes[0]?.told, false, "a note reworded since is news");
+    // The canvas saved before it heard: its copy still says new, the stored one says told.
+    const kept = keepTold(sent, told);
+    assert.equal(kept.notes[0]?.told, true);
+    assert.equal(kept.picks[town]?.told, true);
+    const changed = keepTold(
+      { ...sent, notes: [{ ...note, text: "Two wells" }], picks: { [town]: { pick: DesignPick.Not, told: false } } },
+      told,
+    );
+    assert.equal(changed.notes[0]?.told, false, "a reworded note stays new");
+    assert.equal(changed.picks[town]?.told, false, "a changed pick stays new");
   });
 });

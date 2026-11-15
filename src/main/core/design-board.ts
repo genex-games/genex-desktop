@@ -8,6 +8,7 @@ import path from "node:path";
 import {
   CHOICES_MAX,
   DESIGN_DROPS,
+  displayName,
   DESIGN_FOLDER,
   type DesignBoard,
   designItemFile,
@@ -19,7 +20,16 @@ import {
   readDesignMaking,
   readDesignSpot,
 } from "../../shared/design-board.ts";
-import { DESIGN_MARKS_FILE, type DesignMarks, readDesignMarks, writeDesignMarks } from "../../shared/design-marks.ts";
+import {
+  DESIGN_MARKS_FILE,
+  type DesignMarks,
+  type DesignToldMarks,
+  keepTold,
+  readDesignMarks,
+  withTold,
+  writeDesignMarks,
+} from "../../shared/design-marks.ts";
+import { boardNewsContext } from "../../shared/design-tell.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { ensureDirBelow, writeFileInDir } from "../../substrate/fsx.ts";
 import {
@@ -50,6 +60,12 @@ type DesignCore = Pick<StudioCore, "games" | "emit">;
 export interface DesignShowResult {
   answer: string;
   item: DesignItemFile | null;
+}
+
+/** What waits to go to the agent with the person's next message: its lines, and what sending them tells. */
+export interface DesignNews {
+  context: string;
+  told: DesignToldMarks;
 }
 
 /** An answer that showed nothing. */
@@ -160,7 +176,53 @@ export class DesignBoardService {
    * when the game is not there or the file could not be written.
    */
   saveMarks(project: string, marks: unknown): Promise<boolean> {
-    return this.#inTurn(project, () => this.#writeMarks(project, marks));
+    // A canvas that saved before it heard its notes were sent cannot make them new again.
+    return this.#inTurn(project, async () =>
+      this.#writeMarks(project, keepTold(readDesignMarks(marks), await this.marks(project))),
+    );
+  }
+
+  /**
+   * The person's notes and picks the agent has not been told, as the lines that go with their next
+   * message, and what sending them tells; null when none waits. Only what the board shows counts: a
+   * note or pick on an artboard no longer on the board is never sent as the person's words.
+   */
+  async news(project: string): Promise<DesignNews | null> {
+    const marks = await this.marks(project);
+    const waiting = marks.notes.some((note) => !note.told) || Object.values(marks.picks).some((mark) => !mark.told);
+    const root = waiting ? await this.#root(project) : null;
+    if (!root) return null;
+    const items = new Map((await listDesignBoard(root, this.#facts)).items.map((item) => [item.file, item]));
+    const onBoard = (file: string): boolean => items.has(file);
+    const notes = marks.notes.filter((note) => !note.told && (!note.file || onBoard(note.file)));
+    const picks = Object.entries(marks.picks).flatMap(([file, mark]) =>
+      mark.told || !onBoard(file) ? [] : [{ file, pick: mark.pick }],
+    );
+    if (notes.length + picks.length === 0) return null;
+    const titleOf = (file: string): string => {
+      const item = items.get(file);
+      return item?.title.trim() || displayName(item?.name ?? file);
+    };
+    return {
+      context: boardNewsContext({ notes, picks }, { titleOf, onBoard }),
+      told: { notes: notes.map(({ id, text }) => ({ id, text })), picks },
+    };
+  }
+
+  /**
+   * The board's news for the message being sent, told as it is taken: read and marked in one turn of
+   * the game's marks, after any save queued before it (Tell Genex marks its notes told before it
+   * sends them in its own words), so two sends never carry the same notes. Null when none waits.
+   */
+  async takeNews(project: string): Promise<DesignNews | null> {
+    const news = await this.#inTurn(project, async () => {
+      const waiting = await this.news(project);
+      if (!waiting) return null;
+      const written = await this.#writeMarks(project, withTold(await this.marks(project), waiting.told));
+      return written ? waiting : null;
+    });
+    if (news) this.#core.emit(UiEvent.DesignTold, { project, ...news.told });
+    return news;
   }
 
   /** `change` once the game's change to its marks before it has ended, however that ended. */
