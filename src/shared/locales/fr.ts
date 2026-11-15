@@ -569,6 +569,7 @@ export default {
   "Build updated": "Build mis à jour",
   "Build with Genex": "Créer avec Genex",
   "Build with the Cursor plan you already have.": "Crée avec le forfait Cursor que tu as déjà.",
+  "Build with the Google AI plan you already have.": "Crée avec le forfait Google AI que tu as déjà.",
   "Build with the Grok account you already have.": "Crée avec le compte Grok que tu as déjà.",
   "Changes Harness made to its own instructions. Undo any of them.":
     "Les changements que Harness a faits dans ses propres instructions. Tu peux annuler n’importe lequel.",
@@ -940,6 +941,7 @@ export default {
   "Configure optional connection": "Configurer la connexion facultative",
   Connect: "Connecter",
   "Connect AI model": "Connecter un modèle d’IA",
+  "Connect Antigravity": "Connecter Antigravity",
   "Connect ChatGPT": "Connecter ChatGPT",
   "Connect Claude Code": "Connecter Claude Code",
   "Connect Genex": "Connecter Genex",
@@ -3393,6 +3395,7 @@ export default {
   "Set {setting}": "Définir {setting}",
   "Setting Roblox Studio up for Genex.": "Configuration de Roblox Studio pour Genex.",
   "Setting the route": "Définit le parcours",
+  "Setting up Antigravity…": "Installation d’Antigravity…",
   "Setting up Claude Code…": "Installation de Claude Code…",
   "Setting up Codex…": "Installation de Codex…",
   "Setting up Genex": "Configuration de Genex",
@@ -6512,6 +6515,7 @@ export default {
   "Antigravity didn't answer. Check the installation, then try again.":
     "Antigravity n’a pas répondu. Vérifie l’installation, puis réessaie.",
   "Antigravity isn't installed on this computer.": "Antigravity n’est pas installé sur cet ordinateur.",
+  "Antigravity ready": "Antigravity prêt",
   "Antigravity sign-in": "Connexion à Antigravity",
   "Antigravity {version}": "Antigravity {version}",
   "Antigravity's model list could not be read.": "Impossible de lire la liste des modèles d’Antigravity.",

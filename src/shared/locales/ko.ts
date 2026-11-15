@@ -511,6 +511,7 @@ export default {
   "Build updated": "빌드가 업데이트됐어요",
   "Build with Genex": "Genex로 만들기",
   "Build with the Cursor plan you already have.": "이미 있는 Cursor 요금제로 만들어요.",
+  "Build with the Google AI plan you already have.": "이미 있는 Google AI 요금제로 만들어요.",
   "Build with the Grok account you already have.": "이미 있는 Grok 계정으로 만들어요.",
   "Changes Harness made to its own instructions. Undo any of them.":
     "Harness가 자기 지침에 한 변경이에요. 어떤 것이든 되돌릴 수 있어요.",
@@ -865,6 +866,7 @@ export default {
   "Configure optional connection": "선택 연결 설정",
   Connect: "연결",
   "Connect AI model": "AI 모델 연결",
+  "Connect Antigravity": "Antigravity 연결",
   "Connect ChatGPT": "ChatGPT 연결",
   "Connect Claude Code": "Claude Code 연결",
   "Connect Genex": "Genex 연결",
@@ -3255,6 +3257,7 @@ export default {
   "Set {setting}": "{setting} 설정",
   "Setting Roblox Studio up for Genex.": "Genex에 맞게 Roblox Studio를 설정하고 있어요.",
   "Setting the route": "경로를 설정하는 중",
+  "Setting up Antigravity…": "Antigravity 설치 중…",
   "Setting up Claude Code…": "Claude Code 설치 중…",
   "Setting up Codex…": "Codex 설치 중…",
   "Setting up Genex": "Genex 설정 중",
@@ -6256,6 +6259,7 @@ export default {
   "Antigravity didn't answer. Check the installation, then try again.":
     "Antigravity가 응답하지 않았어요. 설치를 확인한 뒤 다시 시도해 주세요.",
   "Antigravity isn't installed on this computer.": "이 컴퓨터에 Antigravity가 설치되어 있지 않아요.",
+  "Antigravity ready": "Antigravity 준비됨",
   "Antigravity sign-in": "Antigravity 로그인",
   "Antigravity {version}": "Antigravity {version}",
   "Antigravity's model list could not be read.": "Antigravity의 모델 목록을 읽을 수 없어요.",

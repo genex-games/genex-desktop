@@ -36,6 +36,7 @@ export const WelcomeScreen = {
   OpenCode: "opencode",
   Grok: "grok",
   Cursor: "cursor",
+  Antigravity: "antigravity",
 } as const;
 export type WelcomeScreen = (typeof WelcomeScreen)[keyof typeof WelcomeScreen];
 

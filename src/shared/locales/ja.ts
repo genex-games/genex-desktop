@@ -517,6 +517,7 @@ export default {
   "Build updated": "ビルドを更新しました",
   "Build with Genex": "Genexでつくる",
   "Build with the Cursor plan you already have.": "すでに契約しているCursorのプランでつくります。",
+  "Build with the Google AI plan you already have.": "すでに契約しているGoogle AIのプランでつくります。",
   "Build with the Grok account you already have.": "すでに持っているGrokアカウントでつくります。",
   "Changes Harness made to its own instructions. Undo any of them.":
     "Harnessが自分の指示に加えた変更です。どれでも元に戻せます。",
@@ -881,6 +882,7 @@ export default {
   "Configure optional connection": "オプションの接続を設定",
   Connect: "接続",
   "Connect AI model": "AIモデルを接続",
+  "Connect Antigravity": "Antigravityを接続",
   "Connect ChatGPT": "ChatGPTを接続",
   "Connect Claude Code": "Claude Codeを接続",
   "Connect Genex": "Genexを接続",
@@ -3331,6 +3333,7 @@ export default {
   "Set {setting}": "{setting}を設定",
   "Setting Roblox Studio up for Genex.": "Roblox StudioをGenex用にセットアップしています。",
   "Setting the route": "ルートを設定しています",
+  "Setting up Antigravity…": "Antigravityをセットアップ中…",
   "Setting up Claude Code…": "Claude Codeをセットアップ中…",
   "Setting up Codex…": "Codexをセットアップ中…",
   "Setting up Genex": "Genexをセットアップ中",
@@ -6404,6 +6407,7 @@ export default {
   "Antigravity didn't answer. Check the installation, then try again.":
     "Antigravityから応答がありません。インストールを確認して、もう一度試してください。",
   "Antigravity isn't installed on this computer.": "このコンピューターにAntigravityがインストールされていません。",
+  "Antigravity ready": "Antigravity準備完了",
   "Antigravity sign-in": "Antigravityへのサインイン",
   "Antigravity {version}": "Antigravity {version}",
   "Antigravity's model list could not be read.": "Antigravityのモデル一覧を読み取れませんでした。",

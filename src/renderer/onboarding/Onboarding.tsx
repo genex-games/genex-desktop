@@ -74,13 +74,22 @@ import { SHOW_TERMINAL_EVENT } from "../panels/terminal-events.ts";
 import { prefersReducedMotion, REDUCED_MOTION_QUERY } from "../ui/media-queries.ts";
 import { ArtCanvas, type Draw } from "./ArtCanvas.tsx";
 import { CliScreen } from "./CliScreen.tsx";
-import { useCli } from "./cli-way.tsx";
+import { type Cli, useCli } from "./cli-way.tsx";
 import { type Genex, GenexScreen, useGenex } from "./GenexScreen.tsx";
 import { OpenCodeScreen, useFreeModel, useOpenCode } from "./OpenCodeScreen.tsx";
 import { OpenRouterScreen, useOpenRouter } from "./OpenRouterScreen.tsx";
 import { OtherWays } from "./OtherWays.tsx";
 import { Check, Hug, OnboardingAction, StartBuilding, TopBar, useHeadingFocus } from "./parts.tsx";
-import { cliWay, localWay, openCodeWay, openRouterWay, OtherWay, RouterStep, type WayView } from "./ways.ts";
+import {
+  type CliWay,
+  cliWay,
+  localWay,
+  openCodeWay,
+  openRouterWay,
+  OtherWay,
+  RouterStep,
+  type WayView,
+} from "./ways.ts";
 import {
   CHIP,
   ChipState,
@@ -140,8 +149,15 @@ const WAY_SCREEN: Record<OtherWay, WelcomeScreen> = {
   [OtherWay.OpenCode]: WelcomeScreen.OpenCode,
   [OtherWay.Grok]: WelcomeScreen.Grok,
   [OtherWay.Cursor]: WelcomeScreen.Cursor,
+  [OtherWay.Antigravity]: WelcomeScreen.Antigravity,
 };
-/** The engines besides OpenCode that, once ready, are something to build with (Grok Build and Cursor are ready once signed in). */
+/** The screen of each CLI first launch offers beside OpenCode. */
+const CLI_OF_SCREEN: Partial<Record<WelcomeScreen, CliWay>> = {
+  [WelcomeScreen.Grok]: EngineId.Grok,
+  [WelcomeScreen.Cursor]: EngineId.Cursor,
+  [WelcomeScreen.Antigravity]: EngineId.Antigravity,
+};
+/** The engines besides OpenCode that, once ready, are something to build with (Grok Build, Cursor and Antigravity are ready once signed in). */
 const BUILDS_WITH: readonly string[] = [
   EngineId.ClaudeCode,
   EngineId.Codex,
@@ -149,6 +165,7 @@ const BUILDS_WITH: readonly string[] = [
   EngineId.OpenRouter,
   EngineId.Grok,
   EngineId.Cursor,
+  EngineId.Antigravity,
 ];
 
 /** Each subscription's mark on the connect art. */
@@ -1130,8 +1147,8 @@ function Connect({
   genex: Genex;
   /** Use Genex was pressed: Genex's screen opens. */
   onGenex: () => void;
-  /** The row's buttons under the subscriptions: local models, OpenRouter, OpenCode, Grok Build and Cursor. */
-  ways: Record<OtherWay, WayView>;
+  /** The buttons under the subscriptions: Grok Build, Cursor, Antigravity (on a Mac), local models, OpenRouter and OpenCode. */
+  ways: Partial<Record<OtherWay, WayView>>;
   anyOn: boolean;
   back: boolean;
   onBack: () => void;
@@ -1421,14 +1438,23 @@ function useOtherWays(engines: EngineDescriptor[], onEnginesRefresh: () => void)
   const code = useOpenCode(engines, onEnginesRefresh);
   const grok = useCli(EngineId.Grok, engines, onEnginesRefresh);
   const cursor = useCli(EngineId.Cursor, engines, onEnginesRefresh);
-  const ways: Record<OtherWay, WayView> = {
+  const antigravity = useCli(EngineId.Antigravity, engines, onEnginesRefresh);
+  // Antigravity runs on a Mac alone: where no engine is registered, its button is left out.
+  const offersAntigravity = engines.some((engine) => engine.id === EngineId.Antigravity);
+  const ways: Partial<Record<OtherWay, WayView>> = {
     [OtherWay.Local]: localWay(local.state, local.name, local.percent),
     [OtherWay.OpenRouter]: openRouterWay(router.status, router.step === RouterStep.Browser),
     [OtherWay.OpenCode]: openCodeWay(code.row),
     [OtherWay.Grok]: cliWay(EngineId.Grok, grok.row),
     [OtherWay.Cursor]: cliWay(EngineId.Cursor, cursor.row),
+    ...(offersAntigravity ? { [OtherWay.Antigravity]: cliWay(EngineId.Antigravity, antigravity.row) } : {}),
   };
-  return { local, router, code, grok, cursor, ways };
+  const clis: Record<CliWay, Cli> = {
+    [EngineId.Grok]: grok,
+    [EngineId.Cursor]: cursor,
+    [EngineId.Antigravity]: antigravity,
+  };
+  return { local, router, code, clis, ways };
 }
 
 /** The connect screen's problem line: what went wrong, in plain words, or nothing. */
@@ -1513,14 +1539,8 @@ interface ScreenShown {
 }
 const FIRST_SCREEN: ScreenShown = { id: WelcomeScreen.Welcome, back: false };
 
-export function Onboarding({
-  engines,
-  onEnginesRefresh,
-  onReady,
-  onFinish,
-  held = false,
-  onScreen,
-}: {
+/** What the app hands the welcome. */
+interface OnboardingProps {
   engines: EngineDescriptor[];
   onEnginesRefresh: () => void;
   /** Welcome is ending: the app opens what waits behind it (the idea, if any, goes to its composer) before the fade. */
@@ -1531,10 +1551,19 @@ export function Onboarding({
   held?: boolean;
   /** The welcome's screen changed (usage analytics names it). */
   onScreen?: (screen: WelcomeScreen) => void;
-}): JSX.Element {
+}
+
+export function Onboarding({
+  engines,
+  onEnginesRefresh,
+  onReady,
+  onFinish,
+  held = false,
+  onScreen,
+}: OnboardingProps): JSX.Element {
   const [screen, setScreen] = useState<ScreenShown>(FIRST_SCREEN);
   const [idea, setIdea] = useState("");
-  const { local, router, code, grok, cursor, ways } = useOtherWays(engines, onEnginesRefresh);
+  const { local, router, code, clis, ways } = useOtherWays(engines, onEnginesRefresh);
   const genex = useGenex(engines);
   const { closing, leaving, finish } = useWelcomeExit(idea, onReady, onFinish);
   const { othersOn, anyOn } = readiness(engines, { localInstalled: local.installed, genexOn: genex.on });
@@ -1552,6 +1581,8 @@ export function Onboarding({
   };
 
   const current = (): JSX.Element => {
+    const cli = CLI_OF_SCREEN[screen.id];
+    if (cli) return <CliScreen key={screen.id} provider={cli} cli={clis[cli]} {...after} />;
     switch (screen.id) {
       case WelcomeScreen.Welcome:
         return (
@@ -1592,10 +1623,6 @@ export function Onboarding({
         return <OpenRouterScreen key={WelcomeScreen.OpenRouter} router={router} {...after} />;
       case WelcomeScreen.OpenCode:
         return <OpenCodeScreen key={WelcomeScreen.OpenCode} code={code} free={freeModel.free} {...after} />;
-      case WelcomeScreen.Grok:
-        return <CliScreen key={WelcomeScreen.Grok} provider={EngineId.Grok} cli={grok} {...after} />;
-      case WelcomeScreen.Cursor:
-        return <CliScreen key={WelcomeScreen.Cursor} provider={EngineId.Cursor} cli={cursor} {...after} />;
       default:
         return (
           <Local

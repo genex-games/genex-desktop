@@ -1,6 +1,7 @@
 /**
- * First launch's other ways to build, as pure decisions: the row under the subscriptions (local
- * models, OpenRouter, OpenCode, Grok Build, Cursor), what each of its buttons says, and the step
+ * First launch's other ways to build, as pure decisions: the two lines under the subscriptions
+ * (the plans a person may already pay for, Grok Build, Cursor and Antigravity; then local models,
+ * OpenRouter and OpenCode, free or on their own key), what each of its buttons says, and the step
  * OpenRouter's and the CLIs' screens are at. The screens render these; they never work them out again.
  */
 import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
@@ -19,18 +20,17 @@ export const OtherWay = {
   OpenCode: "opencode",
   Grok: "grok",
   Cursor: "cursor",
+  Antigravity: "antigravity",
 } as const;
 export type OtherWay = (typeof OtherWay)[keyof typeof OtherWay];
-export const OTHER_WAYS: readonly OtherWay[] = [
-  OtherWay.Local,
-  OtherWay.OpenRouter,
-  OtherWay.OpenCode,
-  OtherWay.Grok,
-  OtherWay.Cursor,
+/** The row's two lines, in the order their buttons stand: plans first, then free or own key. */
+export const OTHER_WAY_LINES: readonly (readonly OtherWay[])[] = [
+  [OtherWay.Grok, OtherWay.Cursor, OtherWay.Antigravity],
+  [OtherWay.Local, OtherWay.OpenRouter, OtherWay.OpenCode],
 ];
 
 /** The CLIs first launch offers beside OpenCode, each signing in to the person's own account. */
-export type CliWay = typeof EngineId.Grok | typeof EngineId.Cursor;
+export type CliWay = typeof EngineId.Grok | typeof EngineId.Cursor | typeof EngineId.Antigravity;
 
 /** How a way's button looks: its offer, something under way, or ready to build with. */
 export const WayState = { Idle: "idle", Busy: "busy", On: "on" } as const;
@@ -105,6 +105,25 @@ const CURSOR_WORDS: CliWayWords = {
   unreachable: t("Cursor didn't answer. Check the installation, then try again."),
 };
 
+/** Antigravity's button and screen, in the person's language. */
+const ANTIGRAVITY_WORDS: CliWayWords = {
+  name: "Antigravity",
+  hint: t("Uses your Google AI plan"),
+  installing: t("Setting up Antigravity…"),
+  ready: t("Antigravity ready"),
+  title: t("Connect Antigravity"),
+  lede: t("Build with the Google AI plan you already have."),
+  install: t("Install Antigravity"),
+  installNote: t("Install Antigravity's CLI to build with your Google AI plan."),
+  signIn: t("Sign in"),
+  signInNote: t("Sign in with your Google account to build with your plan."),
+  terminal: t("Antigravity sign-in"),
+  signingInNote: t("Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in."),
+  readyNote: t("Uses your Google AI plan"),
+  update: t("Update Antigravity"),
+  unreachable: t("Antigravity didn't answer. Check the installation, then try again."),
+};
+
 /** The row's and the two screens' words. */
 export const WAYS_WORDS = {
   lead: t("or use"),
@@ -176,6 +195,7 @@ export const WAYS_WORDS = {
   },
   grok: GROK_WORDS,
   cursor: CURSOR_WORDS,
+  antigravity: ANTIGRAVITY_WORDS,
   /** What every CLI's screen says alike. */
   cli: {
     checkAgain: t("Already installed? Check again"),
@@ -213,8 +233,9 @@ export function openCodeWay(row: OpenCodeRowState): WayView {
 }
 
 /**
- * Grok Build's or Cursor's button: the offer, setting up, or ready once signed in (a ready CLI whose
- * account Genex cannot name is signed in all the same). Cursor says Beta in every state.
+ * Grok Build's, Cursor's or Antigravity's button: the offer, setting up, or ready once signed in (a
+ * ready CLI whose account Genex cannot name is signed in all the same). A beta provider says Beta in
+ * every state.
  */
 export function cliWay(provider: CliWay, row: OpenCodeRowState): WayView {
   const words = WAYS_WORDS[provider];

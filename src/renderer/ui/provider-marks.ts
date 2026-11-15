@@ -1,11 +1,13 @@
 /**
- * The Claude Code, Codex, OpenRouter, OpenCode, Grok and Cursor marks, used only to name the
- * providers Studio connects to. Claude Code is a trademark of Anthropic, Codex of OpenAI, OpenRouter
- * of OpenRouter, Inc., OpenCode of its owners, Grok of xAI and Cursor of Anysphere. The paths are
- * their marks as collected by lobe-icons (MIT, @lobehub/icons-static-svg 1.95.1: claudecode.svg,
- * codex.svg, openrouter-color.svg, opencode.svg, grok.svg and cursor.svg), unaltered, on a 24-unit
- * grid with even-odd holes. Colours are the ones those files carry; OpenCode's, Grok's and Cursor's
- * files are monochrome, so their face is a grey that reads on light and dark. Genex's own G is the
+ * The Claude Code, Codex, OpenRouter, OpenCode, Grok, Cursor and Antigravity marks, used only to
+ * name the providers Studio connects to. Claude Code is a trademark of Anthropic, Codex of OpenAI,
+ * OpenRouter of OpenRouter, Inc., OpenCode of its owners, Grok of xAI, Cursor of Anysphere and
+ * Antigravity of Google. The paths are their marks as collected by lobe-icons (MIT,
+ * @lobehub/icons-static-svg 1.95.1: claudecode.svg, codex.svg, openrouter-color.svg, opencode.svg,
+ * grok.svg and cursor.svg; antigravity.svg from a later release of the same package), unaltered, on a
+ * 24-unit grid with even-odd holes. Colours are the ones those files carry; OpenCode's, Grok's,
+ * Cursor's and Antigravity's files are monochrome, so their face is a grey that reads on light and
+ * dark. Genex's own G is the
  * wordmark's (`ui/GenexLogo.tsx`), fitted to the same grid.
  */
 export interface ProviderMark {
@@ -41,6 +43,11 @@ export const GROK_MARK: ProviderMark = {
 
 export const CURSOR_MARK: ProviderMark = {
   path: "M22.106 5.68L12.5.135a.998.998 0 00-.998 0L1.893 5.68a.84.84 0 00-.419.726v11.186c0 .3.16.577.42.727l9.607 5.547a.999.999 0 00.998 0l9.608-5.547a.84.84 0 00.42-.727V6.407a.84.84 0 00-.42-.726zm-.603 1.176L12.228 22.92c-.063.108-.228.064-.228-.061V12.34a.59.59 0 00-.295-.51l-9.11-5.26c-.107-.062-.063-.228.062-.228h18.55c.264 0 .428.286.296.514z",
+  colors: ["#B7B4B4", "#4B4646"],
+};
+
+export const ANTIGRAVITY_MARK: ProviderMark = {
+  path: "M21.751 22.607c1.34 1.005 3.35.335 1.508-1.508C17.73 15.74 18.904 1 12.037 1 5.17 1 6.342 15.74.815 21.1c-2.01 2.009.167 2.511 1.507 1.506 5.192-3.517 4.857-9.714 9.715-9.714 4.857 0 4.522 6.197 9.714 9.715z",
   colors: ["#B7B4B4", "#4B4646"],
 };
 

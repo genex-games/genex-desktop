@@ -1,16 +1,24 @@
 /**
- * The connect screen's quiet row under the subscriptions: "or use" Local models, OpenRouter,
- * OpenCode, Grok Build or Cursor. Each button is its icon and name, or its progress, or a check once
- * it is ready, with Beta beside a beta provider's name; the line under the row says what the button
- * pointed at (or focused) offers.
+ * The connect screen's quiet lines under the subscriptions: "or use" Grok Build, Cursor or
+ * Antigravity (a plan the person may already pay for), then Local models, OpenRouter or OpenCode.
+ * Each button is its icon and name, or its progress, or a check once it is ready, with Beta beside a
+ * beta provider's name; a way with no engine on this computer (Antigravity off a Mac) is left out.
+ * The line under them says what the button pointed at (or focused) offers.
  */
 import { useId, useState, type JSX } from "react";
 import { BetaTag } from "../ui/beta-tag.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { LoaderGrid } from "../ui/LoadingState.tsx";
-import { CURSOR_MARK, GROK_MARK, OPENCODE_MARK, OPENROUTER_MARK, type ProviderMark } from "../ui/provider-marks.ts";
+import {
+  ANTIGRAVITY_MARK,
+  CURSOR_MARK,
+  GROK_MARK,
+  OPENCODE_MARK,
+  OPENROUTER_MARK,
+  type ProviderMark,
+} from "../ui/provider-marks.ts";
 import { Check } from "./parts.tsx";
-import { OTHER_WAYS, OtherWay, WAYS_WORDS, WayState, type WayView } from "./ways.ts";
+import { OTHER_WAY_LINES, OtherWay, WAYS_WORDS, WayState, type WayView } from "./ways.ts";
 
 /** Each provider's mark in the row; local models show a chip. */
 const WAY_MARKS: Partial<Record<OtherWay, ProviderMark>> = {
@@ -18,6 +26,7 @@ const WAY_MARKS: Partial<Record<OtherWay, ProviderMark>> = {
   [OtherWay.OpenCode]: OPENCODE_MARK,
   [OtherWay.Grok]: GROK_MARK,
   [OtherWay.Cursor]: CURSOR_MARK,
+  [OtherWay.Antigravity]: ANTIGRAVITY_MARK,
 };
 
 /** A provider's mark at icon size, in the button's own ink. */
@@ -43,41 +52,45 @@ export function OtherWays({
   views,
   onOpen,
 }: {
-  views: Record<OtherWay, WayView>;
+  views: Partial<Record<OtherWay, WayView>>;
   onOpen: (way: OtherWay) => void;
 }): JSX.Element {
   const [pointed, setPointed] = useState<OtherWay | null>(null);
   const hintId = useId();
   const leave = (way: OtherWay) => setPointed((current) => (current === way ? null : current));
+  const button = (way: OtherWay) => {
+    const view = views[way];
+    if (!view) return null;
+    return (
+      <button
+        key={way}
+        type="button"
+        className="onboarding-way"
+        data-way={way}
+        data-state={view.state}
+        aria-describedby={pointed === way ? hintId : undefined}
+        onPointerEnter={() => setPointed(way)}
+        onPointerLeave={() => leave(way)}
+        onFocus={() => setPointed(way)}
+        onBlur={() => leave(way)}
+        onClick={() => onOpen(way)}
+      >
+        <WayIcon way={way} state={view.state} />
+        {view.label}
+        {view.beta && <BetaTag />}
+      </button>
+    );
+  };
   return (
     <div className="onboarding-ways">
       <p className="onboarding-ways-lead">{WAYS_WORDS.lead}</p>
-      <div className="onboarding-ways-row">
-        {OTHER_WAYS.map((way) => {
-          const view = views[way];
-          return (
-            <button
-              key={way}
-              type="button"
-              className="onboarding-way"
-              data-way={way}
-              data-state={view.state}
-              aria-describedby={pointed === way ? hintId : undefined}
-              onPointerEnter={() => setPointed(way)}
-              onPointerLeave={() => leave(way)}
-              onFocus={() => setPointed(way)}
-              onBlur={() => leave(way)}
-              onClick={() => onOpen(way)}
-            >
-              <WayIcon way={way} state={view.state} />
-              {view.label}
-              {view.beta && <BetaTag />}
-            </button>
-          );
-        })}
-      </div>
+      {OTHER_WAY_LINES.map((line) => (
+        <div key={line.join()} className="onboarding-ways-row">
+          {line.map(button)}
+        </div>
+      ))}
       <p id={hintId} className="onboarding-ways-hint">
-        {pointed ? views[pointed].hint : ""}
+        {pointed ? views[pointed]?.hint : ""}
       </p>
     </div>
   );

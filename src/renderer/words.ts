@@ -2943,6 +2943,8 @@ export const PICKER_MODELS_WORDS = {
   group: (provider: string) => t("{provider} models in the model picker", { provider }),
   reset: t("Reset"),
   older: t("Older models"),
+  /** The heading over the models a provider offers beside its own (Antigravity's Claude, GPT-OSS). */
+  more: t("More models"),
   olderShown: (shown: number, total: number) =>
     shown ? t("{shown} of {total} shown", { shown, total }) : String(total),
   defaultModel: t("Default"),

@@ -31,7 +31,7 @@ import {
   localWay,
   openCodeWay,
   openRouterWay,
-  OTHER_WAYS,
+  OTHER_WAY_LINES,
   routerMark,
   routerStep,
 } from "../../src/renderer/onboarding/ways.ts";
@@ -286,8 +286,17 @@ describe("first launch's other ways", () => {
       assert.equal(openCodeWay(row).state, "idle", row);
   });
 
-  it("offers Grok Build and Cursor after OpenCode, ready once installed and signed in, Cursor in beta", () => {
-    assert.deepEqual(OTHER_WAYS, ["local", "openrouter", "opencode", "grok", "cursor"]);
+  it("offers Grok Build, Cursor and Antigravity on the first line, ready once installed and signed in, Cursor and Antigravity in beta", () => {
+    assert.deepEqual(OTHER_WAY_LINES, [
+      ["grok", "cursor", "antigravity"],
+      ["local", "openrouter", "opencode"],
+    ]);
+    assert.deepEqual(cliWay("antigravity", "connected"), {
+      state: "on",
+      label: "Antigravity ready",
+      hint: "Uses your Google AI plan",
+      beta: true,
+    });
     assert.deepEqual(cliWay("grok", "not_installed"), {
       state: "idle",
       label: "Grok Build",

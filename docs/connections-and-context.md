@@ -317,7 +317,7 @@ Beta tag beside its name in Settings and its group in the picker). Settings show
 OpenCode and Grok Build: Install, Sign in (`cursor-agent login` in a terminal inside the row, which
 opens the browser and prints the page for Open sign-in page; `studio:cursor.signin`, native), and
 once connected Check connection, Sign in again, Sign out (`cursor-agent logout`,
-`studio:cursor.signout`, native) and Update. First launch's "or use" row offers it with its Beta
+`studio:cursor.signout`, native) and Update. First launch's "or use" lines offer it with its Beta
 tag, as Grok Build: Install and Sign in on its own screen. The engine is Ready once `cursor-agent status --format json` says `isAuthenticated` and
 `cursor-agent models` lists a model; the picker shows the CLI's default (`auto`) and the first three
 it lists, the rest under Older models.
@@ -371,7 +371,7 @@ that page gives; `studio:antigravity.signin`, native), and once
 connected Check connection, Sign in again and Update. The CLI has no command that says whether it
 is signed in, so the engine asks by opening a session in an empty folder, at most once a minute:
 the answer lists the models the account can run and its plan, or refuses with ACP's sign-in code
-(`-32000`). The row's status names the CLI's version and the plan.
+(`-32000`). The row's status names the CLI's version and the plan. First launch's "or use" lines offer it on a Mac, beside Grok Build and Cursor on the first line (plans a person may already pay for; local models, OpenRouter and OpenCode on the second), with its Beta tag and the same Install and Sign in on its own screen. The model list is the account's (`session/new`'s `availableModels`, so a paid plan's newer Gemini shows by itself); the picker starts with the newest Gemini generation it lists, each family at its newest version with every thinking level (`googleLatest` in `renderer/model-lineup.ts`), and the other vendors' models Google's plan runs (Claude, GPT-OSS) and older Gemini wait under More models.
 
 Antigravity keeps its Google sign-in in the operating system's own store (the Keychain on a Mac)
 when it can reach it, and in `~/.gemini/antigravity-cli/antigravity-oauth-token` when it cannot (a

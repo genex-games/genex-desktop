@@ -232,3 +232,43 @@ test("OpenCode starts with a signed-in provider's models; its free ones start it
     "a sign-in's models only: the free ones wait in Settings",
   );
 });
+
+/** Antigravity CLI 1.5.7's `agy models` on a free plan, 2026-11-15. */
+const ANTIGRAVITY_FREE = [
+  row("gemini-3.8-flash-high", "Gemini 3.8 Flash (High)", undefined, true),
+  row("gemini-3.8-flash-medium", "Gemini 3.8 Flash (Medium)"),
+  row("gemini-3.8-flash-low", "Gemini 3.8 Flash (Low)"),
+  row("claude-sonnet-4-6", "Claude Sonnet 4.6 (Thinking)"),
+  row("claude-opus-4-6-thinking", "Claude Opus 4.6 (Thinking)"),
+  row("gpt-oss-120b-medium", "GPT-OSS 120B (Medium)"),
+];
+
+test("Antigravity starts with Google's own Gemini models; Claude and GPT-OSS wait, switched off", () => {
+  assert.deepEqual(
+    [...latestModels(EngineId.Antigravity, ANTIGRAVITY_FREE)],
+    ["gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low"],
+  );
+  const shown = shownModels(EngineId.Antigravity, ANTIGRAVITY_FREE, { "claude-opus-4-6-thinking": true });
+  assert.ok(shown.has("claude-opus-4-6-thinking"), "a model the person switched on shows");
+  assert.equal(shown.has("gpt-oss-120b-medium"), false);
+});
+
+test("on a paid Antigravity plan the newest Gemini generation shows, each family at its newest version", () => {
+  const paid = [
+    row("gemini-4-argon-high", "Gemini 4 Argon (High)", undefined, true),
+    row("gemini-4-argon-low", "Gemini 4 Argon (Low)"),
+    row("gemini-4-hydrogen-xhigh", "Gemini 4 Hydrogen (Extra)"),
+    row("gemini-3.8-flash-high", "Gemini 3.8 Flash (High)"),
+    row("gemini-3.7-flash-high", "Gemini 3.7 Flash (High)"),
+    row("gemini-3.1-pro-high", "Gemini 3.1 Pro (High)"),
+    row("gemini-nova", "Gemini Nova"),
+    row("claude-opus-5-5-thinking", "Claude Opus 5.5 (Thinking)"),
+    row("orchestrator-argon", "Orchestrator (Argon)"),
+  ];
+  assert.deepEqual(
+    [...latestModels(EngineId.Antigravity, paid)],
+    ["gemini-4-argon-high", "gemini-4-argon-low", "gemini-4-hydrogen-xhigh", "gemini-nova"],
+    "older Gemini wait; a Gemini named some new way never vanishes",
+  );
+  assert.equal(modelName(EngineId.Antigravity, paid[0] as (typeof paid)[number]), "Gemini 4 Argon (High)");
+});

@@ -1,7 +1,8 @@
 /**
- * First launch → Grok Build or Cursor, as their Settings rows run them: Install puts the CLI in
+ * First launch → Grok Build, Cursor or Antigravity, as their Settings rows run them: Install puts the CLI in
  * place, Sign in runs its own sign-in in a terminal on the screen (with Open sign-in page), and once
- * it is signed in it counts as connected, so Start building appears. Cursor says Beta beside its name.
+ * it is signed in it counts as connected, so Start building appears. A beta provider says Beta beside
+ * its name.
  */
 import type { JSX } from "react";
 import { EngineId, isBeta } from "../../shared/providers.ts";
@@ -17,7 +18,11 @@ import { cliMark, type CliWay, type CliWayWords, WAYS_WORDS } from "./ways.ts";
 
 const SHARED = WAYS_WORDS.cli;
 /** Each CLI's mark on its screen. */
-const MARK: Record<CliWay, MeteredMark> = { [EngineId.Grok]: MeteredMark.Grok, [EngineId.Cursor]: MeteredMark.Cursor };
+const MARK: Record<CliWay, MeteredMark> = {
+  [EngineId.Grok]: MeteredMark.Grok,
+  [EngineId.Cursor]: MeteredMark.Cursor,
+  [EngineId.Antigravity]: MeteredMark.Antigravity,
+};
 
 /** The screen's main button. */
 function Action({ onClick, children }: { onClick: () => void; children: string }): JSX.Element {

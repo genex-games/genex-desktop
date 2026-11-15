@@ -5,7 +5,14 @@
  */
 import { type JSX, useId, useState } from "react";
 import { EngineId } from "../../shared/providers.ts";
-import { latestModels, modelName, offersLineup, runnableModels, shownModels } from "../model-lineup.ts";
+import {
+  latestModels,
+  modelName,
+  offersLineup,
+  restIsOtherVendors,
+  runnableModels,
+  shownModels,
+} from "../model-lineup.ts";
 import { matchingModels, offersSearch } from "./picker-search.ts";
 import { useEngines, useModelPicker } from "../state/hooks.ts";
 import { pickerModelSet, pickerModelsReset } from "../state/model-picker.ts";
@@ -159,7 +166,7 @@ export function PickerModels({ engine, name }: { engine: EngineDescriptor; name:
             onClick={() => setOlderOpen(!olderOpen)}
             className="flex min-h-9 w-full cursor-pointer items-center gap-2 rounded-control px-2.5 text-left text-chat-sub text-ink hover:bg-control-hover"
           >
-            {PICKER_MODELS_WORDS.older}
+            {restIsOtherVendors(engine.id) ? PICKER_MODELS_WORDS.more : PICKER_MODELS_WORDS.older}
             <span className="text-micro text-ink-3">{PICKER_MODELS_WORDS.olderShown(olderShown, older.length)}</span>
             <Icon
               name="chevron-down"

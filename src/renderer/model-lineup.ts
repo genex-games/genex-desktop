@@ -6,8 +6,9 @@
  * in the picker: a model named some new way must never vanish. A catalog of hundreds (OpenRouter,
  * OpenCode) starts instead with its first few: the newest GPT and Claude it lists, a vendor at a
  * time, then the rest in the order the provider lists them, its free models only when it lists
- * nothing else. Settings choices (`state/model-picker.ts`) override the rule per model; the
- * provider's default always shows.
+ * nothing else. Antigravity starts with Google's newest Gemini models alone (`googleLatest`).
+ * Settings choices (`state/model-picker.ts`) override the rule per model; the provider's default
+ * always shows.
  */
 import { EngineStatusCode, LoginSource } from "../shared/engine-descriptor.ts";
 import { EngineId, isMetered } from "../shared/providers.ts";
@@ -116,6 +117,44 @@ function newestFirst(listed: readonly LineupModel[], runnable: ReadonlySet<strin
   return [...ranked, ...listed.filter((model) => !ranked.includes(model))];
 }
 
+/** A Gemini id as Antigravity lists it: `gemini-3.8-flash-high`, `gemini-4-hydrogen-xhigh`. */
+const GEMINI_ID = /^gemini-(\d+)(?:\.(\d+))?-([a-z]+)(?:-[a-z]+)?$/;
+/** Any Gemini id, read or not. */
+const GEMINI_PREFIX = "gemini-";
+
+function geminiLineage(model: LineupModel): Lineage | undefined {
+  const match = GEMINI_ID.exec(model.id);
+  if (!match) return undefined;
+  return { family: match[3] ?? "", major: Number(match[1]), minor: Number(match[2] ?? 0) };
+}
+
+/**
+ * Antigravity's picker by default: Google's own models, the newest Gemini generation the account
+ * lists, each family at its newest version with every thinking level it comes in (3.8 Flash High,
+ * Medium and Low). The other vendors' models Google's plan runs (Claude, GPT-OSS) and older Gemini
+ * wait, switched off, in Settings; a Gemini id that cannot be read stays in the picker.
+ */
+function googleLatest(listed: readonly LineupModel[]): Set<string> {
+  const read = listed.flatMap((model) => {
+    const lineage = geminiLineage(model);
+    return lineage ? [{ model, lineage }] : [];
+  });
+  const generation = Math.max(...read.map((entry) => entry.lineage.major));
+  const newest = new Map<string, Lineage>();
+  for (const { lineage } of read) {
+    const kept = newest.get(lineage.family);
+    if (lineage.major === generation && (!kept || isNewer(lineage, kept))) newest.set(lineage.family, lineage);
+  }
+  const current = (entry: Read) => {
+    const kept = newest.get(entry.lineage.family);
+    return kept !== undefined && entry.lineage.major === generation && sameVersion(entry.lineage, kept);
+  };
+  const unreadGemini = (model: LineupModel) =>
+    model.id.startsWith(GEMINI_PREFIX) && !read.some((entry) => entry.model === model);
+  const ids = new Set(read.filter(current).map((entry) => entry.model.id));
+  return new Set(listed.filter((model) => ids.has(model.id) || unreadGemini(model)).map((model) => model.id));
+}
+
 /** No models vouched for: a long catalog's own rule. */
 const NOBODY: ReadonlySet<string> = new Set();
 /** The engine that says which of another engine's vendor models run for this person, and the vendor. */
@@ -162,6 +201,12 @@ function preferred(kept: Read | undefined, next: Read): Read {
   return promotes ? next : kept;
 }
 
+/**
+ * Does the picker's switched-off rest hold other vendors' models (Antigravity's Claude and
+ * GPT-OSS), not only older ones? Settings then calls them More models.
+ */
+export const restIsOtherVendors = (engine: string): boolean => engine === EngineId.Antigravity;
+
 /** The ids the picker shows by default, in the provider's order. */
 export function latestModels(
   engine: string,
@@ -169,6 +214,7 @@ export function latestModels(
   runnable: ReadonlySet<string> = NOBODY,
 ): Set<string> {
   const listed = models.filter((model) => model.id !== DEFAULT_MODEL);
+  if (engine === EngineId.Antigravity) return googleLatest(listed);
   const firstFew = FIRST_FEW[engine];
   if (firstFew !== undefined) {
     // A sign-in's models start the list; the free ones start it only when there is nothing else.
