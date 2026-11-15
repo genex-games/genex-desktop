@@ -169,6 +169,34 @@ describe("sandboxed spawn", () => {
     }
   });
 
+  it("a terminal of the caller's own starts its command boxed, and is refused on Windows", async () => {
+    const command = `cat ${path.join(secrets, "engine-token.json")}; echo wrote > ${path.join(outside, "terminal.txt")}; echo inside > terminal.txt`;
+    const launch = await sandbox.terminalLaunch({ command, cwd: workspace });
+    const { spawn } = await import("node:child_process");
+    const child = spawn(launch.file, launch.args, {
+      cwd: launch.cwd,
+      env: launch.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let out = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+      out += chunk;
+    });
+    await once(child, "close");
+    launch.release();
+    assert.equal(out.includes("super-secret"), false, "a secret is not readable from the terminal's command");
+    await assert.rejects(stat(path.join(outside, "terminal.txt")), "nothing is written outside its roots");
+    assert.equal((await readFile(path.join(workspace, "terminal.txt"), "utf8")).trim(), "inside");
+    const windows = await ProcessSandbox.create({
+      writableRoots: [workspace],
+      scratchDir: path.join(scratch, "windows"),
+      secretPaths: [],
+      platform: "win32",
+      enabled: false,
+    });
+    await assert.rejects(windows.terminalLaunch({ command: "echo hi", cwd: workspace }));
+  });
+
   it("never runs the user's shell rc file, even while the command's stdin stays open", async () => {
     // The fake home's rc file stands in for one that fails on this machine: what it prints would
     // otherwise lead a build's stderr, which is the problem the stage shows.

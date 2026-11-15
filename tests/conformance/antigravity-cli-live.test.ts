@@ -9,7 +9,6 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, realpath } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { EngineStatusCode } from "../../src/shared/engine-descriptor.ts";
@@ -36,9 +35,8 @@ const SMALL_MODEL = "gemini-3.8-flash-low";
 /** What the build is asked to write in its folder, and outside it. */
 const PROOF = { file: "antigravity-proof.txt", text: "ok" } as const;
 
-/** The Keychain's files, and macOS's own program that reads an item it saved without asking. */
-const KEYCHAINS = path.join(os.homedir(), "Library", "Keychains");
-const KEYCHAIN_TOOL = "/usr/bin/security";
+/** The file the CLI keeps its sign-in in when the Keychain is out of its reach, as in every sandbox. */
+const SIGN_IN_FILE = path.join(antigravityHome(), "antigravity-cli", "antigravity-oauth-token");
 /** The hosts a session might need at the least, to learn whether `*.googleapis.com` can be narrowed. */
 const NARROW_HOSTS = [
   "cloudcode-pa.googleapis.com",
@@ -49,25 +47,14 @@ const NARROW_HOSTS = [
   "antigravity.google",
 ];
 type Box = (shipped: SandboxOptions) => SandboxOptions;
-/** The box before the Keychain's files were made read-only, to compare. */
-const writableKeychain: Box = (shipped) => ({
-  ...shipped,
-  denyWrite: (shipped.denyWrite ?? []).filter((dir) => dir !== KEYCHAINS),
-});
-/**
- * macOS's Keychain program made unreadable. It still starts (a run on macOS 15 showed a program the
- * sandbox may not read runs all the same), so this box only shows the CLI does not need to read it.
- */
-const noKeychainTool: Box = (shipped) => ({ ...shipped, secretPaths: [...shipped.secretPaths, KEYCHAIN_TOOL] });
+const shipped: Box = (box) => box;
 
-/** The session's sandbox as shipped, with each of its two openings taken away, and other shapes to compare. */
+/** The session's sandbox as shipped (no Keychain), with each thing it needs taken away, and fewer hosts. */
 const BOXES: ReadonlyArray<[string, Box, (readonly string[])?]> = [
-  ["as shipped", (shipped) => shipped],
-  ["without the Keychain's files", (shipped) => ({ ...shipped, ownHome: [antigravityHome()] })],
-  ["without the certificate service", (shipped) => ({ ...shipped, machServices: [] })],
-  ["with the Keychain's files writable", writableKeychain],
-  ["without macOS's Keychain program", noKeychainTool],
-  ["with the fewest hosts", (shipped) => shipped, NARROW_HOSTS],
+  ["as shipped", shipped],
+  ["without its sign-in file", (box) => ({ ...box, secretPaths: [...box.secretPaths, SIGN_IN_FILE] })],
+  ["without the certificate service", (box) => ({ ...box, machServices: [] })],
+  ["with the fewest hosts", shipped, NARROW_HOSTS],
 ];
 /** What the CLI's own words may show in a report: nothing as long as a token. */
 const redact = (words: string) => words.replace(/[\w.~+/=-]{24,}/g, "…").slice(-600);
@@ -110,7 +97,7 @@ describe("Antigravity's real CLI in the real sandbox", { skip: !LIVE && "STUDIO_
     console.log(`antigravity live: ${status.detail}; models: ${models.map((model) => model.id).join(", ")}`);
   });
 
-  it("says which of the sandbox's two openings the sign-in needs", async () => {
+  it("reads its sign-in from its file, with the Keychain closed, and says what else the sign-in needs", async () => {
     for (const [name, box, hosts] of BOXES) {
       const { game } = await engineAndGame();
       const said: string[] = [];
@@ -119,7 +106,7 @@ describe("Antigravity's real CLI in the real sandbox", { skip: !LIVE && "STUDIO_
         startFn: startIn(box, said, hosts),
       });
       const status = await engine.status();
-      if (box === BOXES[0]?.[1]) assert.equal(status.code, EngineStatusCode.Ready, status.detail);
+      if (name === BOXES[0]?.[0]) assert.equal(status.code, EngineStatusCode.Ready, status.detail);
       console.log(`antigravity live: ${name}: ${status.code}; stderr: ${redact(said.join(" ").trim()) || "(none)"}`);
     }
   });
@@ -131,7 +118,7 @@ describe("Antigravity's real CLI in the real sandbox", { skip: !LIVE && "STUDIO_
     const said: string[] = [];
     const engine = new AntigravityEngine({
       scratchRoot: path.join(game, "..", "scratch"),
-      startFn: startIn((shipped) => shipped, said),
+      startFn: startIn(shipped, said),
     });
     const listed = (await engine.models()).some((model) => model.id === SMALL_MODEL);
     const model = listed ? { model: SMALL_MODEL } : {};

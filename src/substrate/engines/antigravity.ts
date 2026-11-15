@@ -40,6 +40,7 @@ import {
 import {
   ANTIGRAVITY_CLIENT,
   ANTIGRAVITY_HOSTS,
+  ANTIGRAVITY_LOGIN_ARGV,
   ANTIGRAVITY_SESSION_ARGV,
   AntigravityAccess,
   type AntigravitySession,
@@ -78,7 +79,7 @@ import { abortControllerFor, CompletionStop, interruption, partialDelegateResult
 import type { PartialDelegateState } from "./common.ts";
 import { ProcessSandbox, type SandboxOptions, SandboxMachService, shellQuote } from "../spawn.ts";
 import { childEnv } from "../child-env.ts";
-import { antigravityHomes, antigravityKeychain, credentialHomes } from "../credential-homes.ts";
+import { antigravityHomes, credentialHomes } from "../credential-homes.ts";
 import { killProcessTree } from "../process-tree.ts";
 import { spawnCommand } from "../command-launch.ts";
 import { withEnvPath } from "../toolchain.ts";
@@ -781,10 +782,10 @@ const NO_FOLDERS: NeverTouchList = { roots: [], open: [] };
 
 /**
  * The agent asks before a tool runs. Inside the studio's sandbox the answer is yes, once (the
- * first option that allows), except for a command the never-touch screen stops: the Keychain's
- * files are readable in this sandbox, and macOS's keychain tool, which no file deny reaches, is
- * what reads another program's sign-in from them. Such a command, one the screen cannot read and
- * a command with no command line are refused. A question that offers no fitting option is left
+ * first option that allows), except for a command the never-touch screen stops: macOS's keychain
+ * tool (which a file deny does not keep from starting, and which a Bypass session, outside the
+ * sandbox, could use to read another program's sign-in), a command the screen cannot read and a
+ * command with no command line are refused. A question that offers no fitting option is left
  * unanswered-for (`cancelled`).
  */
 export function antigravityPermission(params: Json, cwd: string, neverTouch: NeverTouchList = NO_FOLDERS): Json {
@@ -882,16 +883,69 @@ export function antigravitySandbox(input: {
     writableRoots: [input.runDir, ...input.gitDirs],
     scratchDir: input.scratchDir,
     secretPaths: input.secretPaths,
-    // Antigravity's settings and conversations, and where its sign-in is kept: its own in this sandbox alone.
+    // Antigravity's settings, conversations and sign-in file: its own in this sandbox alone. The
+    // Keychain stays closed, as in every sandbox: the CLI then reads and renews the file.
     ownHome: antigravityHomes(),
     // The CLI is a Go program: on a Mac it verifies each HTTPS certificate through the system's
     // checker, and with that unreachable it cannot renew its sign-in and answers "sign in".
     machServices: [SandboxMachService.Trust],
-    // A game's own Antigravity hooks, plugins and MCP servers are never the session's to plant, and
-    // the Keychain's files are read, never written: a signed-in CLI works with them read-only.
-    denyWrite: [path.join(input.gameDir, ".agents"), ...antigravityKeychain()],
+    // A game's own Antigravity hooks, plugins and MCP servers are never the session's to plant.
+    denyWrite: [path.join(input.gameDir, ".agents")],
     ...(input.toolPath ? { toolPath: input.toolPath } : {}),
   };
+}
+
+/** A sign-in started in the sessions' box: how its terminal starts it, and what gives the box back. */
+export interface AntigravitySignInLaunch {
+  file: string;
+  args: string[];
+  env: NodeJS.ProcessEnv;
+  cwd: string;
+  /** The terminal has closed: the sandbox and its folder go. */
+  release(): Promise<void>;
+}
+
+/**
+ * Antigravity's sign-in (`agy acp --login`) as the person's terminal starts it: in the box every
+ * session runs in, its folder an empty one of its own. The Keychain is out of reach there, so the
+ * CLI keeps the sign-in in its file in `~/.gemini`, which is where each session reads it; the
+ * sign-in needs only Google's hosts and the certificate checker. macOS and Linux.
+ */
+export async function antigravitySignInLaunch(input: {
+  binary: string;
+  env: Record<string, string>;
+  scratchRoot?: string;
+}): Promise<AntigravitySignInLaunch> {
+  const root = await mkdtemp(path.join(input.scratchRoot ?? os.tmpdir(), "antigravity-signin-"));
+  const runDir = path.join(root, "run");
+  await mkdir(runDir, { recursive: true });
+  const gone = () => rm(root, { recursive: true, force: true }).catch(() => {});
+  const sandbox = await ProcessSandbox.create(
+    antigravitySandbox({ runDir, gameDir: runDir, gitDirs: [], scratchDir: path.join(root, "tmp"), secretPaths: [] }),
+  ).catch(async (err: unknown) => {
+    await gone();
+    throw err;
+  });
+  try {
+    const command = [input.binary, ...ANTIGRAVITY_LOGIN_ARGV].map(shellQuote).join(" ");
+    const launch = await sandbox.terminalLaunch({
+      command,
+      cwd: runDir,
+      env: input.env,
+      label: "antigravity:sign-in",
+      policy: { allowedDomains: [...ANTIGRAVITY_HOSTS] },
+    });
+    const release = async () => {
+      launch.release();
+      await sandbox.dispose().catch(() => {});
+      await gone();
+    };
+    return { file: launch.file, args: launch.args, env: launch.env, cwd: launch.cwd, release };
+  } catch (err) {
+    await sandbox.dispose().catch(() => {});
+    await gone();
+    throw err;
+  }
 }
 
 /** What a session's tools may do: a build edits; a read-only session, a lead while its build runs and Plan only look. */

@@ -9,7 +9,8 @@
  * The CLI has no command that says whether it is signed in. A new session does: it answers with
  * the models the account can run and its plan, or refuses with ACP's sign-in code
  * (`AcpErrorCode.AuthRequired`). The sign-in itself is the CLI's: `agy acp --login` in a terminal,
- * kept in the operating system's own store (the Keychain on a Mac), which the studio never reads.
+ * kept in the Keychain when the CLI reaches it and else in its own file in `~/.gemini`; the studio
+ * reads neither.
  */
 import { CatalogError } from "./model-catalog.ts";
 import type { EngineModel } from "./types.ts";

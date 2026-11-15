@@ -21,6 +21,7 @@ import { registerJobsIpc } from "../../src/main/ipc/jobs.ts";
 import { type PlayIpcDeps, registerPlayIpc } from "../../src/main/ipc/play.ts";
 import { NativeArch, type NativeHost, NativePlatform } from "../../src/shared/play-native.ts";
 import { gameLinks } from "../../src/main/play/game-links.ts";
+import type { TerminalSession } from "../../src/shared/terminal.ts";
 import { createLoginControllers, settleSignIn, type SubscriptionEngine } from "../../src/main/login-controllers.ts";
 import { AccountId, SubscriptionAccounts } from "../../src/substrate/engines/subscription-accounts.ts";
 import { EngineStatusCode } from "../../src/shared/engine-descriptor.ts";
@@ -558,6 +559,7 @@ describe("both sign-in paths go through the controllers", () => {
     let signedIn = 0;
     const { cursorLogin } = createLoginControllers({
       terminals: {
+        list: () => [],
         open: (launch) => {
           opened.push(launch);
           exit = launch.onExit;
@@ -598,12 +600,88 @@ describe("both sign-in paths go through the controllers", () => {
     assert.equal(signedIn, 1);
   });
 
+  it("the Antigravity sign-in runs `agy acp --login` in the sessions' box, gives the box back when it ends, and rechecks", async () => {
+    const opened: Array<{ file: string; args: string[]; kind: string; env: NodeJS.ProcessEnv }> = [];
+    const boxed: Array<{ binary: string; env: Record<string, string> }> = [];
+    let exit: ((code: number) => void) | undefined;
+    let released = 0;
+    let signedIn = 0;
+    let open: TerminalSession[] = [];
+    const { antigravityLogin } = createLoginControllers({
+      terminals: {
+        list: () => open,
+        open: (launch) => {
+          const running = open.find((session) => session.kind === launch.kind);
+          if (running) return running;
+          opened.push(launch);
+          exit = launch.onExit;
+          const session = {
+            id: `t${opened.length}`,
+            title: launch.title,
+            kind: launch.kind,
+            phase: "running" as const,
+          };
+          open = [session];
+          return session;
+        },
+        stop: async () => {},
+      },
+      openExternal: async () => {},
+      subscription: () => null,
+      pushUiEvent: () => {},
+      showCodexState: () => {},
+      showClaudeState: () => {},
+      onAntigravitySignedIn: async () => {
+        signedIn++;
+      },
+      boxAntigravitySignIn: async (input) => {
+        boxed.push(input);
+        return {
+          file: "/usr/bin/sandbox-exec",
+          args: ["-p", "(profile)", "/bin/agy", "acp", "--login"],
+          env: { PATH: "/bin" },
+          cwd: "/scratch/run",
+          release: async () => {
+            released++;
+          },
+        };
+      },
+      requireCli: async (provider) => ({
+        path: `/bin/${provider}`,
+        env: { PATH: "/bin", OPENCODE_CONFIG: "/oc.json", GEMINI_API_KEY: "key_not_for_genex" },
+        status: {
+          provider,
+          state: "ready",
+          selection: "automatic",
+          path: `/bin/${provider}`,
+          detail: "",
+          guidanceUrl: "",
+        },
+      }),
+    });
+    assert.deepEqual(await antigravityLogin.start(), { started: true });
+    assert.equal(boxed[0]?.binary, "/bin/antigravity");
+    assert.equal(boxed[0]?.env.OPENCODE_CONFIG, undefined, "no other vendor's variables reach the sign-in");
+    assert.equal(boxed[0]?.env.GEMINI_API_KEY, undefined, "nor a key standing in for the account");
+    assert.equal(opened[0]?.file, "/usr/bin/sandbox-exec", "the terminal starts the boxed command");
+    assert.deepEqual(opened[0]?.args.slice(-2), ["acp", "--login"]);
+    assert.equal(opened[0]?.kind, "antigravity-login");
+    assert.deepEqual(await antigravityLogin.start(), { started: true });
+    assert.equal(opened.length, 1, "a sign-in already open is shown again");
+    assert.equal(released, 1, "and the box made for the second one is given back");
+    exit?.(0);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(released, 2, "the box goes with the terminal");
+    assert.equal(signedIn, 1);
+  });
+
   it("the OpenCode sign-in runs `opencode auth login` in the terminal, and rechecks its models when it ends", async () => {
     const opened: Array<{ file: string; args: string[]; kind: string; env: NodeJS.ProcessEnv }> = [];
     let exit: ((code: number) => void) | undefined;
     let signedIn = 0;
     const { openCodeLogin } = createLoginControllers({
       terminals: {
+        list: () => [],
         open: (launch) => {
           opened.push(launch);
           exit = launch.onExit;
@@ -649,6 +727,7 @@ describe("both sign-in paths go through the controllers", () => {
 
     const missing = createLoginControllers({
       terminals: {
+        list: () => [],
         open: () => {
           throw new Error("no terminal without a CLI");
         },
@@ -678,6 +757,7 @@ describe("both sign-in paths go through the controllers", () => {
     let signedIn = 0;
     const { grokLogin } = createLoginControllers({
       terminals: {
+        list: () => [],
         open: (launch) => {
           opened.push(launch);
           exit = launch.onExit;
@@ -722,6 +802,7 @@ describe("both sign-in paths go through the controllers", () => {
     const v2: Array<{ args: string[] }> = [];
     const { openCodeLogin: v2Login } = createLoginControllers({
       terminals: {
+        list: () => [],
         open: (launch) => {
           v2.push(launch);
           return { id: "t2", title: launch.title, kind: launch.kind, phase: "running" };
@@ -767,6 +848,7 @@ describe("both sign-in paths go through the controllers", () => {
     const asked: string[] = [];
     const { claudeLogin, codexLogin } = createLoginControllers({
       terminals: {
+        list: () => [],
         open: () => {
           throw new Error("no terminal in this test");
         },

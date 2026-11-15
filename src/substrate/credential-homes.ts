@@ -173,37 +173,26 @@ export function sandboxedCliHomes(
     openCodeDataHome(env, home),
     grokHome(env, home),
     ...cursorHomes(env, home, platform),
-    ...antigravityHomes(home, platform),
+    ...antigravityHomes(home),
   ];
 }
 
 /**
- * Where Antigravity CLI keeps its settings, conversations and its MCP servers' sign-ins: `~/.gemini`,
- * the folder it took over from Gemini CLI. Its own Google sign-in is not there: the CLI keeps that
- * in the operating system's store (`antigravityHomes`).
+ * Where Antigravity CLI keeps its settings, conversations, its MCP servers' sign-ins and, when the
+ * operating system's store is out of its reach, its own Google sign-in
+ * (`antigravity-cli/antigravity-oauth-token`): `~/.gemini`, the folder it took over from Gemini CLI.
  */
 export function antigravityHome(home: string = os.homedir()): string {
   return path.join(home, ".gemini");
 }
 
 /**
- * What an Antigravity session's own sandbox is given of the sign-in stores: its folder and, on a
- * Mac, the Keychain's files. The CLI keeps its Google sign-in in the Keychain and has no file to
- * keep it in instead (1.5.7), and with those files unreadable a signed-in CLI answers "sign in":
- * so this one sandbox reads them, and every other sandbox still does not. It reads and never
- * writes them (`antigravityKeychain`). Each Keychain item keeps its own access list, which macOS
- * enforces, but that is no wall inside the session: an item saved through macOS's own
- * `/usr/bin/security` trusts that program, and the sandbox cannot keep a command from starting it:
- * the engine's never-touch screen refuses each command that calls it (`antigravityPermission`).
+ * What an Antigravity session's own sandbox is given of the sign-in stores: its folder alone. The
+ * CLI keeps its sign-in in the Keychain when it can reach it and in a file in this folder when it
+ * cannot (1.5.7: a failed Keychain read or save falls back to the file). Genex's sign-in runs in
+ * the same box as the sessions (`antigravitySignInLaunch`), so the sign-in lands in the file every
+ * session reads, and no sandbox reaches the Keychain.
  */
-export function antigravityHomes(home: string = os.homedir(), platform: NodeJS.Platform = process.platform): string[] {
-  return [antigravityHome(home), ...antigravityKeychain(home, platform)];
-}
-
-/** The Keychain's files an Antigravity session reads its sign-in from: a Mac's, and none elsewhere. */
-export function antigravityKeychain(
-  home: string = os.homedir(),
-  platform: NodeJS.Platform = process.platform,
-): string[] {
-  return platform === "darwin" ? [path.join(home, "Library", "Keychains")] : [];
+export function antigravityHomes(home: string = os.homedir()): string[] {
+  return [antigravityHome(home)];
 }

@@ -353,6 +353,7 @@ const MESSAGE = {
   NotInitialized: "sandbox-runtime is not initialized",
   NoStreams: "the process started without its stdio pipes",
   EmptyArgv: "sandbox-runtime returned an empty command",
+  NoWindowsTerminal: "a terminal of the caller's own cannot run inside the Windows sandbox",
 } as const;
 
 /**
@@ -1011,6 +1012,30 @@ export class ProcessSandbox {
       close();
       await live?.close();
       await bridge?.close();
+      throw err;
+    }
+  }
+
+  /**
+   * How to start `command` in this sandbox from a terminal the caller runs itself (a sign-in that
+   * waits for what the person types): the program, its arguments, environment and folder, and
+   * `release`, called once it has exited, which closes the domains held open for it until then.
+   * macOS and Linux: on Windows srt-win does not pass a terminal's input on, so it is refused.
+   */
+  async terminalLaunch(
+    request: Pick<RunRequest, "command" | "cwd" | "env" | "label" | "policy">,
+  ): Promise<{ file: string; args: string[]; env: NodeJS.ProcessEnv; cwd: string; release: () => void }> {
+    if (this.#platform === StudioPlatform.Windows) throw new Error(MESSAGE.NoWindowsTerminal);
+    const close = await this.#openDomains(request.policy);
+    try {
+      const plan = await this.#launchPlan({ ...request, longLived: true });
+      const release = () => {
+        plan.release?.();
+        close();
+      };
+      return { file: plan.file, args: plan.args, env: plan.env, cwd: plan.cwd, release };
+    } catch (err) {
+      close();
       throw err;
     }
   }

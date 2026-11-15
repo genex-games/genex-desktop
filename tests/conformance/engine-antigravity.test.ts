@@ -30,12 +30,7 @@ import {
   googleFailure,
 } from "../../src/substrate/engines/antigravity.ts";
 import { ANTIGRAVITY_HOSTS, parseAntigravitySession } from "../../src/substrate/engines/antigravity-cli.ts";
-import {
-  antigravityHome,
-  antigravityHomes,
-  antigravityKeychain,
-  sandboxedCliHomes,
-} from "../../src/substrate/credential-homes.ts";
+import { antigravityHome, antigravityHomes, sandboxedCliHomes } from "../../src/substrate/credential-homes.ts";
 import { childEnv } from "../../src/substrate/child-env.ts";
 import { type DelegateEvent, DelegateEventType, EngineError } from "../../src/substrate/engines/types.ts";
 import { EngineStatusCode, LoginSource } from "../../src/shared/engine-descriptor.ts";
@@ -637,15 +632,13 @@ describe("Antigravity's box", () => {
     );
   });
 
-  it("its session's sandbox may keep its own folder and, on a Mac alone, read the Keychain it signs in from", () => {
+  it("its session's sandbox keeps its own folder, where its sign-in file is, and never reaches the Keychain", async () => {
     const home = path.join(os.tmpdir(), "home");
-    assert.deepEqual(antigravityHomes(home, "darwin"), [
-      path.join(home, ".gemini"),
-      path.join(home, "Library", "Keychains"),
-    ]);
-    assert.deepEqual(antigravityHomes(home, "linux"), [path.join(home, ".gemini")]);
-    assert.deepEqual(antigravityHomes(home, "win32"), [path.join(home, ".gemini")]);
-    for (const dir of antigravityHomes(home, "darwin"))
+    const keychains = path.join(home, "Library", "Keychains");
+    assert.deepEqual(antigravityHomes(home), [path.join(home, ".gemini")]);
+    for (const platform of ["darwin", "linux", "win32"] as const)
+      assert.equal(sandboxedCliHomes({}, home, platform).includes(keychains), false, `${platform}: no sandbox's own`);
+    for (const dir of antigravityHomes(home))
       assert.ok(sandboxedCliHomes({}, home, "darwin").includes(dir), "only a listed home can be a sandbox's own");
     assert.equal(antigravityHome(home), path.join(home, ".gemini"));
     const sandbox = antigravitySandbox({
@@ -657,14 +650,22 @@ describe("Antigravity's box", () => {
     });
     assert.deepEqual(sandbox.writableRoots, ["/games/pong", "/games/.git/worktrees/pong"]);
     assert.deepEqual(sandbox.secretPaths, ["/studio/secrets"]);
+    assert.deepEqual(sandbox.ownHome, [antigravityHome()]);
     assert.deepEqual(sandbox.machServices, [SandboxMachService.Trust]);
-    assert.deepEqual(
-      sandbox.denyWrite,
-      [path.join("/games/pong", ".agents"), ...antigravityKeychain()],
-      "the game's own Antigravity folder and the Keychain's files are never written",
-    );
-    assert.deepEqual(antigravityKeychain(home, "darwin"), [path.join(home, "Library", "Keychains")]);
-    assert.deepEqual(antigravityKeychain(home, "linux"), []);
+    assert.deepEqual(sandbox.denyWrite, [path.join("/games/pong", ".agents")], "the game's own Antigravity folder");
+    const root = await tmpDir("antigravity-keychain-");
+    const box = await ProcessSandbox.create({
+      ...sandbox,
+      writableRoots: [root],
+      scratchDir: path.join(root, "scratch"),
+      ownHome: [...antigravityHomes(), path.join(os.homedir(), "Library", "Keychains")],
+      platform: "darwin",
+      enabled: false,
+    });
+    const userKeychains = path.join(os.homedir(), "Library", "Keychains");
+    assert.ok(box.policy.denyRead.includes(userKeychains), "naming the Keychain as its own opens nothing");
+    assert.equal(box.policy.allowWrite.includes(userKeychains), false);
+    assert.ok(box.policy.allowWrite.includes(antigravityHome()), "its own folder: the sign-in file is renewed there");
   });
 
   it("on a Mac its sandbox alone may ask the system's certificate checker, and no sandbox opens any other service", async () => {
