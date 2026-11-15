@@ -1,6 +1,6 @@
 /**
- * First launch's "or use" row: one button per way, in order, each led by its own mark, and the Beta
- * tag beside a beta provider's name only. Rendered from the plain renderer build with React's server
+ * First launch's "or use" lines: one button per way, in order, each led by its own mark, the Beta
+ * tag beside a beta provider's name only, and no button for a way this computer has no engine for. Rendered from the plain renderer build with React's server
  * renderer.
  */
 import assert from "node:assert/strict";
@@ -42,33 +42,47 @@ function buttons(markup: string): { way: string; beta: boolean; marked: boolean 
   }));
 }
 
-test("the row offers Grok Build and Cursor after OpenCode, each with its mark, and only Cursor says Beta", async () => {
+test("the lines offer Grok Build, Cursor and Antigravity first, each with its mark, and only the beta ones say Beta", async () => {
   const { OtherWays, cliWay, localWay, openCodeWay, openRouterWay, createElement, renderToStaticMarkup } = await row();
-  for (const [grokRow, cursorRow] of [
-    ["not_installed", "not_installed"],
-    ["connected", "connected"],
-  ]) {
+  for (const cliRow of ["not_installed", "connected"]) {
     const views = {
       local: localWay("idle", "", 0),
       openrouter: openRouterWay(undefined, false),
       opencode: openCodeWay("not_installed"),
-      grok: cliWay("grok", grokRow),
-      cursor: cliWay("cursor", cursorRow),
+      grok: cliWay("grok", cliRow),
+      cursor: cliWay("cursor", cliRow),
+      antigravity: cliWay("antigravity", cliRow),
     };
     const markup: string = renderToStaticMarkup(createElement(OtherWays, { views, onOpen: () => {} }));
     const found = buttons(markup);
     assert.deepEqual(
       found.map((button) => button.way),
-      ["local", "openrouter", "opencode", "grok", "cursor"],
-      grokRow,
+      ["grok", "cursor", "antigravity", "local", "openrouter", "opencode"],
+      cliRow,
     );
     assert.deepEqual(
       found.filter((button) => button.beta).map((button) => button.way),
-      ["cursor"],
-      `${grokRow}: the Beta tag stands beside Cursor only`,
+      ["cursor", "antigravity"],
+      `${cliRow}: the Beta tag stands beside Cursor and Antigravity only`,
     );
-    if (grokRow === "not_installed")
-      for (const way of ["openrouter", "opencode", "grok", "cursor"])
+    if (cliRow === "not_installed")
+      for (const way of ["openrouter", "opencode", "grok", "cursor", "antigravity"])
         assert.ok(found.find((button) => button.way === way)?.marked, `${way} leads with its mark`);
   }
+});
+
+test("a way with no engine on this computer is left out of the lines", async () => {
+  const { OtherWays, cliWay, localWay, openCodeWay, openRouterWay, createElement, renderToStaticMarkup } = await row();
+  const views = {
+    local: localWay("idle", "", 0),
+    openrouter: openRouterWay(undefined, false),
+    opencode: openCodeWay("not_installed"),
+    grok: cliWay("grok", "not_installed"),
+    cursor: cliWay("cursor", "not_installed"),
+  };
+  const markup: string = renderToStaticMarkup(createElement(OtherWays, { views, onOpen: () => {} }));
+  assert.deepEqual(
+    buttons(markup).map((button) => button.way),
+    ["grok", "cursor", "local", "openrouter", "opencode"],
+  );
 });
