@@ -602,7 +602,7 @@ describe("both sign-in paths go through the controllers", () => {
 
   it("the Antigravity sign-in runs `agy acp --login` in the sessions' box, gives the box back when it ends, and rechecks", async () => {
     const opened: Array<{ file: string; args: string[]; kind: string; env: NodeJS.ProcessEnv }> = [];
-    const boxed: Array<{ binary: string; env: Record<string, string> }> = [];
+    const boxed: Array<{ binary: string; env: Record<string, string>; scratchRoot?: string }> = [];
     let exit: ((code: number) => void) | undefined;
     let released = 0;
     let signedIn = 0;
@@ -634,6 +634,7 @@ describe("both sign-in paths go through the controllers", () => {
       onAntigravitySignedIn: async () => {
         signedIn++;
       },
+      antigravityScratch: () => "/profile/scratch/antigravity",
       boxAntigravitySignIn: async (input) => {
         boxed.push(input);
         return {
@@ -667,6 +668,8 @@ describe("both sign-in paths go through the controllers", () => {
     });
     assert.deepEqual(await antigravityLogin.start(), { started: true });
     assert.equal(boxed[0]?.binary, "/bin/antigravity");
+    // Its box is made under the sessions' own folder: srt-win refused the temporary folder on a PC.
+    assert.equal(boxed[0]?.scratchRoot, "/profile/scratch/antigravity");
     // Flipped: the box is given Antigravity's own variables alone and builds the rest itself; on
     // Windows it writes each into a shell file, which refused the person's `ProgramFiles(x86)`.
     assert.deepEqual(

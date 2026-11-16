@@ -932,7 +932,9 @@ export async function antigravitySignInLaunch(input: {
   env: Record<string, string>;
   scratchRoot?: string;
 }): Promise<AntigravitySignInLaunch> {
-  const root = await mkdtemp(path.join(input.scratchRoot ?? os.tmpdir(), "antigravity-signin-"));
+  const base = input.scratchRoot ?? os.tmpdir();
+  await mkdir(base, { recursive: true });
+  const root = await mkdtemp(path.join(base, "antigravity-signin-"));
   const runDir = path.join(root, "run");
   await mkdir(runDir, { recursive: true });
   const gone = () => rm(root, { recursive: true, force: true }).catch(() => {});

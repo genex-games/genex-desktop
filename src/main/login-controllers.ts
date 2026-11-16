@@ -80,6 +80,12 @@ export interface LoginControllerDeps {
   findBinary?: typeof findClaudeBinary;
   /** How Antigravity's sign-in starts in the sessions' box; the real box unless a test gives another. */
   boxAntigravitySignIn?: typeof antigravitySignInLaunch;
+  /**
+   * The folder Antigravity's sessions run under, where its sign-in's box is made too (none before
+   * the core starts: the temporary folder then). On Windows srt-win refused to start a sign-in in
+   * the temporary folder (`mapped_drive_cwd`) while it started every session in this one.
+   */
+  antigravityScratch?: () => string | undefined;
   /** Write one line to the app's log (`studio.log`). */
   log?: (line: string) => void;
 }
@@ -98,6 +104,7 @@ export function createLoginControllers({
   onCursorSignedIn,
   onAntigravitySignedIn,
   boxAntigravitySignIn = antigravitySignInLaunch,
+  antigravityScratch = () => undefined,
   log,
 }: LoginControllerDeps): {
   codexLogin: CodexLoginController;
@@ -203,7 +210,13 @@ export function createLoginControllers({
     },
   };
   const cursorLogin = cursorSignIn({ terminals, requireCli, onCursorSignedIn });
-  const antigravityLogin = antigravitySignIn({ terminals, requireCli, onAntigravitySignedIn, boxAntigravitySignIn });
+  const antigravityLogin = antigravitySignIn({
+    terminals,
+    requireCli,
+    onAntigravitySignedIn,
+    boxAntigravitySignIn,
+    antigravityScratch,
+  });
   return { codexLogin, claudeLogin, openCodeLogin, grokLogin, cursorLogin, antigravityLogin };
 }
 
@@ -219,9 +232,11 @@ function antigravitySignIn({
   requireCli,
   onAntigravitySignedIn,
   boxAntigravitySignIn,
+  antigravityScratch,
 }: Pick<LoginControllerDeps, "terminals" | "onAntigravitySignedIn"> & {
   requireCli: typeof requireCodingCli;
   boxAntigravitySignIn: typeof antigravitySignInLaunch;
+  antigravityScratch: () => string | undefined;
 }): CliLogin {
   return {
     async start() {
@@ -229,7 +244,12 @@ function antigravitySignIn({
       if (!cli) return { started: false, missingCli: true };
       // Its own variables alone, never a Gemini key, which would stand in for the account; the box
       // builds the rest from its allow-list.
-      const boxed = await boxAntigravitySignIn({ binary: cli.path, env: vendorEnv(cli.env, "antigravity") });
+      const scratchRoot = antigravityScratch();
+      const boxed = await boxAntigravitySignIn({
+        binary: cli.path,
+        env: vendorEnv(cli.env, "antigravity"),
+        ...(scratchRoot ? { scratchRoot } : {}),
+      });
       const before = new Set(terminals.list().map((session) => session.id));
       const launch = {
         file: boxed.file,
