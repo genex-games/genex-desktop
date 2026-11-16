@@ -88,7 +88,7 @@ as listed, for example
 `genex__publish {"operation":"gallery"}`; both carry the room module (above). Other commands map
 onto Studio tools as the `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/SKILL.md v1.43.1 sha256 7cea981f9d186d1e5e5c665ec903d5f3626a5f4d0f443da030e42e99eda94528 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/SKILL.md v1.43.4 sha256 b17ef2f3edb865ec71c7332d07e1ad557961ac978052da299fda0b17a6f950eb -->
 ---
 name: genex-authoritative-multiplayer
 description: Server-authoritative multiplayer for Genex games — the game's own room module runs on Genex's servers, players only send input, and the server decides every move and hit (lag-compensated). Use for competitive play where cheating matters: ranked PvP, arenas, shooters (first-person, hitscan or dodgeable projectiles), car football, "so nobody can cheat". Casual co-op and hangouts use genex-threejs-multiplayer instead. Load before writing the room module or any networking code.
@@ -104,7 +104,8 @@ client renders. A modified client can lie only about its own stick and buttons.
 
 The client half is `connectAuthority` from `@genex-ai/multiplayer/authority`: it predicts the
 player's own body with the same movement preset the server runs (so moving feels instant), draws
-everything else 100 ms in the past, and reconciles when the server's truth arrives.
+everything else a render delay in the past (100 ms, more on a jittery link where the room allows
+it), and reconciles when the server's truth arrives.
 
 ## Casual or server-authoritative
 
@@ -151,14 +152,18 @@ and no shared objects — the server owns all state.
    `@genex-ai/multiplayer/authority` and an embed SDK at 0.35.0 or newer (it has
    `getAuthorityUrls`). If the import does not resolve after installing `@latest`, the release with
    server-authoritative rooms is not out yet: tell the person plainly and stop, rather than writing a
-   server of your own. Projectiles need `@genex-ai/multiplayer` 0.17.4 or newer.
+   server of your own. Projectiles need `@genex-ai/multiplayer` 0.17.4 or newer; predicted hits and
+   a render delay that follows the link need 0.17.14 or newer; the update rate (60 a second by
+   default) needs 0.17.15 or newer.
 
 ## Rules that decide whether it plays well
 
 1. **The server decides; the client asks.** Health, score, pickups, kills, respawns and round
    state change only in the room module, and the client draws them from `session.entities()` and
-   the module's events. Show a muzzle flash or play a sound at once if you like, but never draw a
-   hit, a kill or a score the server has not sent.
+   the module's events. Show a muzzle flash or play a sound at once if you like. A hit marker may
+   go up the moment your own shot reaches a target on screen, but only from the session's predicted
+   hits ("Shots", below), which say when to take it back. Never draw damage, a kill or a score the
+   server has not sent.
 2. **Never move your own body yourself.** Write the stick and aim into `session.input`; the session
    predicts your body with the room's preset and corrects it. A game whose movement is not the
    preset passes its own step as `predict: { step }` — the exact step the module runs
@@ -195,10 +200,10 @@ before writing either side. An Unreal level becomes that file by a bake (`Genex.
 in presets.md), not by hand. A ball the cars knock about is one projectile the module re-launches
 (template 3, and "Running a ball" in presets.md).
 
-## Feel settings: contacts, inputs, lifts, tick rate, regions, fast channel
+## Feel settings: contacts, inputs, lifts, tick rate, update rate, regions, fast channel
 
 Seats that touch (standing on heads, shoving, passing through), starved inputs, moving platforms, 120 Hz,
-regions and the UDP fast channel are **settings in `config`**, picked by genre (`shooter`, `platformer`,
+how often the room sends its state, regions and the UDP fast channel are **settings in `config`**, picked by genre (`shooter`, `platformer`,
 `party`, `physics-sandbox`, `vehicle-arena`), never code that names the game. Read
 [references/settings.md](references/settings.md) for a worked config per genre before writing any of them.
 
@@ -223,9 +228,27 @@ and crate stacks.
   [references/projectiles.md](references/projectiles.md) before writing either side.
 
 Never make a travelling shot a plain entity the module moves in `step`: it costs an update every
-tick and every client draws it 100 ms late. Every client in a room whose module launches
-projectiles must support them; one that does not draws each projectile frozen where it was
-launched.
+tick and every client draws it a render delay (100 ms or more) late. Every client in a room whose
+module launches projectiles must support them; one that does not draws each projectile frozen where
+it was launched.
+
+**Show the hit at once.** A hit marker that waits for the server shows a round trip late. The
+session can test your own shot against the bodies as it draws them and tell you the frame it
+lands; the server still decides every hit, and nothing extra is sent.
+
+- A projectile: add `hits` to its `predictProjectile` call, `{ kinds, radius }` exactly as the
+  module passes them to `ctx.projectiles.sweep`.
+- A hitscan: `session.predictHitscan(origin, dir, { range, radius, kinds })` while staging the
+  input that fires, with what the module passes `ctx.rewind.hitscan`.
+- `session.onPredictedHit(cb)` shows the marker; `session.onHitSettled((hit, confirmed) => …)`
+  keeps it or takes it back.
+- A hit is confirmed when the state shows the target's `hp` lower (or the target gone, or in a new
+  `epoch`), so a module that lowers `hp` on a hit needs nothing more. For a module that reports
+  hits another way, pass `settle: "manual"` beside `kinds` and call `session.confirmHit(id)` or
+  `session.cancelHit(id)` from the module's own event.
+
+The code for both is in
+[references/projectiles.md](references/projectiles.md#show-the-hit-at-once-predicted-hits).
 
 ## The client in one screen
 
@@ -258,6 +281,15 @@ session.on("rejoining", () => showBanner("Reconnecting…")); // a deploy or a d
 session.on("rejoined", () => hideBanner()); // a new seat in a new room, on the same session object
 session.on("disconnect", (code) => showLeft(code)); // over for good
 ```
+
+**Other players are drawn a render delay behind**, and the session sizes it: 100 ms on a steady
+link, more (up to the room's ceiling, at most 250 ms) when states arrive unevenly, so other players
+keep moving instead of freezing and jumping. There is nothing to call and nothing to tune in the
+client; `session.renderDelayMs` reads the delay now. A server that has the setting off keeps every
+client at 100 ms. A module lowers the ceiling with `config.interpolation`
+([references/module-api.md](references/module-api.md)). Never hard-code 100 ms in the game as that
+delay: each input carries the delay its player really drew, so a shot is still judged where it was
+aimed.
 
 **Deploys never end a game.** When a server is updated, your players get a `draining` event, keep
 playing for a minute, and are moved by the SDK to a fresh room, together. You write nothing for that.

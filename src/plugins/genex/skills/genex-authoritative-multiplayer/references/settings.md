@@ -6,13 +6,13 @@ every engine runs the same table, so prediction matches on every client. All of 
 `firstperson` or `vehicle` movement preset ([presets.md](presets.md)); a bad value is refused when the
 module loads, naming the first bad path (for example `$.config.contacts.top.speed`).
 
-| The game | `contacts.preset` | Movement | Seats on each other | Input repeat |
-|---|---|---|---|---|
-| Shooter, arena brawler | `shooter` | `firstperson` | stand on a head, slide off if the foot is mostly over the edge; players are solid and never shoved | on |
-| Platformer, co-op climber | `platformer` | `firstperson` | stand and ride; a stomp is opt-in | on |
-| Party game, minigames | `party` | `firstperson` | stand and ride, shoved by each other | on |
-| Sandbox with crates and props | `physics-sandbox` | `firstperson` or `vehicle` | stand and ride, props ride heads | on |
-| Car arena, derby | `vehicle-arena` | `vehicle` | cars slide off roofs, shove each other, bounce (restitution 0.6) | off |
+| The game | `contacts.preset` | Movement | Seats on each other | Updates a second | Input repeat |
+|---|---|---|---|---|---|
+| Shooter, arena brawler | `shooter` | `firstperson` | stand on a head, slide off if the foot is mostly over the edge; players are solid and never shoved | 60 | on |
+| Platformer, co-op climber | `platformer` | `firstperson` | stand and ride; a stomp is opt-in | 60 | on |
+| Party game, minigames | `party` | `firstperson` | stand and ride, shoved by each other | 60 | on |
+| Sandbox with crates and props | `physics-sandbox` | `firstperson` or `vehicle` | stand and ride, props ride heads | 60 | on |
+| Car arena, derby | `vehicle-arena` | `vehicle` | cars slide off roofs, shove each other, bounce (restitution 0.6) | 120 | off |
 
 ## Contacts
 
@@ -107,6 +107,32 @@ toward a server's capacity (12 units where 60 Hz counts 6), and each tick keeps 
 
 ```js
 config: { tickHz: 120, maxPlayers: 4, preset: { name: "vehicle", params: {} }, physics: true, contacts: { preset: "vehicle-arena" } },
+```
+
+## Update rate
+
+How often the room sends its state to its players. It sends after a tick, never between two, so it
+never sends faster than it ticks. Leave it out: the default is the genre's column above
+(`contacts.preset`), and a room that names no genre sends 60 a second. A car arena's 120 needs
+`tickHz: 120`; at 60 Hz it sends 60.
+
+`config.patchHz` overrides it: `patchHz` is 10, 15, 20, 30, 60 or 120 a second. The room runs the
+largest of those at or below what you ask that divides its tick rate (20 at 30 Hz is 15). Lower it
+only to send less data, for a slow or turn-based game: other players are drawn between two updates,
+so fewer updates mean a late one freezes them sooner. In a room with `physics` this is the same
+setting as `physics.patchHz` (give one, or the same number in both). A Genex server may cap the
+rate for every room on it; `genex-authority-dev` has no cap. A bad value is refused when the module
+loads, naming `$.config.patchHz`.
+
+**Who gets it.** A room runs these rates when the player whose join opened it plays a build on an SDK
+that claims the capability `rate@1` (`@genex-ai/multiplayer` 0.17.15 or newer: its client draws
+correctly at any rate; `genex-authority-dev`'s bots claim it). A game published on an SDK from before it keeps exactly what it had until it is
+rebuilt on one that does: a room opened by an older build sends 20 a second (a predicting physics
+room: its `physics.patchHz`, else 20), and stays so for whoever joins it. Nothing in the module
+changes: upgrade the SDK, rebuild and publish the game.
+
+```js
+config: { tickHz: 60, maxPlayers: 8, preset: { name: "firstperson", params: {} }, contacts: { preset: "party" }, patchHz: 30 },
 ```
 
 ## Regions
@@ -225,8 +251,10 @@ WebSocket. It needs nothing in the room module.
   browser can open it; `fast: false` turns it off. Anything else lands the seat on the WebSocket by itself,
   and `session.fast.fallback` says why (`no-webtransport`, `no-relay`, `not-offered`, `unreachable`,
   `handshake`, `stall`, `server`). A game gets it once it is rebuilt on this SDK.
-- **Not on UDP:** a native Godot build (no fast channel yet) and Unity WebGL (no sockets; `FastWebTransport`
-  asks for WebTransport) are WebSocket seats.
+- **Unity WebGL** rides the same relay by WebTransport, on by default once the game is rebuilt on a Unity
+  package with it (`FastWebTransport = false` turns it off); on an older package the game sets
+  `FastWebTransport = true` itself.
+- **Not on UDP:** a native Godot build (no fast channel yet) is a WebSocket seat.
 
 ## Idle seats and room age
 

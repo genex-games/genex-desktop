@@ -58,9 +58,11 @@ The same commands test it; nothing extra to install. What to look for:
 - **A launch that throws is a fault**: an `id` passed inside `onInput`, none passed in `step`, a
   launch in `init` (`load_failed`), or a burst past the launch budget (`RangeError`).
 - **In the browser**, at `--latency 75`: your shot leaves the frame you fire and flies on without a
-  jump when the server's arrives; another player's (a bot's) shots fly smoothly, not 100 ms behind;
-  `session.telemetry.projectilesRejected` stays near 0 while you fire steadily, and
-  `session.telemetry.projectilesConfirmed` grows with each shot.
+  jump when the server's arrives; another player's (a bot's) shots fly smoothly, not a render delay
+  behind; `session.telemetry.projectilesRejected` stays near 0 while you fire steadily, and
+  `session.telemetry.projectilesConfirmed` grows with each shot. With predicted hits, the marker
+  shows the frame your shot reaches a bot on your screen and `session.telemetry.hitsCancelled` stays
+  far below `hitsConfirmed`.
 
 ## Why validation failed
 
@@ -112,7 +114,9 @@ nothing:
 
 1. `validate` passes and `replay` says the hashes are equal.
 2. At `--latency 75`, two players (two windows count) move, aim and fire, and see each other move
-   smoothly, about 100 ms behind.
+   smoothly, a render delay behind: 100 ms on that steady link. With `--jitter 120` added the
+   others still move without freezing and jumping, and `session.renderDelayMs` climbs above 100 (a
+   local room allows up to 250 ms; a Genex server with the setting off stays at 100).
 3. A hit lands when it looked right on the shooter's screen; a respawn snaps instead of sliding.
    With projectiles: a shot is judged where the target is on the server, so a dodged bolt misses.
 4. Leaving and rejoining works, and the leaver's body is gone for everyone.

@@ -122,9 +122,9 @@ for (const ev of ctx.physics.events) {
 
 Nothing to set up: `connectAuthority` joins physics rooms and draws bodies. In
 `session.entities()`, a body has `body: true`, its orientation in `qx qy qz qw` (z up) and `sleep`.
-Its `x y z` are already where the server has it now: extrapolated past the last update, never
-100 ms behind like other players. A correction eases out over about 100 ms, and a jump over one
-metre (or an `epoch` bump) snaps. With three.js, z up becomes y up for both:
+Its `x y z` are already where the server has it now: extrapolated past the last update, never a
+render delay (100 ms or more) behind like other players. A correction eases out over about 100 ms,
+and a jump over one metre (or an `epoch` bump) snaps. With three.js, z up becomes y up for both:
 
 ```ts
 mesh.position.set(e.x, e.z, -e.y);

@@ -242,9 +242,15 @@ What it shows, and what to keep when you change it:
 - **Input is all the client decides.** It writes the stick, the aim and the fire bit into
   `session.input`; `session.frame(now)` sends them at the room's tick rate.
 - **The player's own body is predicted** by the session with the room's `topdown` preset; it moves
-  the instant a key is down. Every other body is drawn about 100 ms in the past.
+  the instant a key is down. Every other body is drawn a render delay in the past: 100 ms, more on
+  a jittery link where the room allows it (`session.renderDelayMs`).
 - **Hits, health and score come only from the server**: the `shot` and `kill` events and each
   entity's `hp` and `data`. A tracer drawn on `shot` lines up with what the server judged.
+- **A hit marker the frame the player fires** is a predicted hit: stage the fire input as template
+  2 does (8 inputs between shots here: this module's `COOLDOWN_TICKS` is 6) and call
+  `session.predictHitscan` with this module's origin, aim, `RANGE` and `RADIUS`. The code is in
+  [projectiles.md](projectiles.md#show-the-hit-at-once-predicted-hits). The module already lowers
+  `hp` on a hit, which is what confirms it.
 - **A respawn snaps** because the module bumps `epoch`; nothing in the client needs to know.
 - **A refused join is said in the player's words** and never retried in a loop.
 
@@ -256,7 +262,8 @@ before anything here.
 Players move with the same `topdown` preset and fire bolts: projectiles that fly at 16 units a
 second, bounce off the arena's walls twice and are judged by a sweep along their path every tick, so
 a bolt never passes through a body between two ticks. Three hits take a player down. The shooter's
-client draws its bolt the frame it fires; everyone else sees it where the server has it now. Read
+client draws its bolt the frame it fires and shows "Hit!" the frame that bolt reaches a body on its
+screen; everyone else sees the bolt where the server has it now. Read
 [projectiles.md](projectiles.md) for the rules behind each line.
 
 ### The room module
@@ -443,6 +450,8 @@ const BOLT_SPEED = 16;
 const FIRE_EVERY_INPUTS = 18;
 /** How high bolts fly above the floor; the server launches them at z = 0. */
 const BOLT_HEIGHT = 0.8;
+/** What a bolt can hit: the kinds and HIT_RADIUS the module's sweep uses in server/room.js. */
+const BOLT_HITS = { kinds: ["player"], radius: 0.8 };
 
 const boltGeometry = new THREE.SphereGeometry(0.2);
 const mineMaterial = new THREE.MeshBasicMaterial({ color: 0x9be7ff });
@@ -474,6 +483,13 @@ function draw(entities: Map<string, AuthorityEntityView>): void {
   }
 }
 
+// Your own bolt reached a body on your screen: say so now, a round trip before the server's word.
+session.onPredictedHit(() => (hud.textContent = "Hit!"));
+// The states that followed did not show that body hurt (it stepped aside on the server): take it back.
+session.onHitSettled((_hit, confirmed) => {
+  if (!confirmed && hud.textContent === "Hit!") hud.textContent = "";
+});
+// The server's word: what happened to you, a takedown, and a hit after a bounce (no longer predicted).
 session.on("hit", (data) => {
   const hit = data as { shooter: string; victim: string; down: boolean };
   if (hit.victim === session.id) hud.textContent = hit.down ? "You're down" : "You're hit";
@@ -494,8 +510,8 @@ function loop(now: number): void {
   if (me && firing && !armed && session.telemetry.inputsSent - lastShot >= FIRE_EVERY_INPUTS) {
     const yaw = session.input.yaw;
     session.input.buttons = FIRE;
-    // The module's launch for this input, predicted before the frame() that sends it.
-    session.predictProjectile({ kind: "bolt", x: me.x, y: me.y, z: 0, vx: Math.cos(yaw) * BOLT_SPEED, vy: Math.sin(yaw) * BOLT_SPEED, vz: 0 });
+    // The module's launch for this input, predicted before the frame() that sends it; `hits` is its sweep.
+    session.predictProjectile({ kind: "bolt", x: me.x, y: me.y, z: 0, vx: Math.cos(yaw) * BOLT_SPEED, vy: Math.sin(yaw) * BOLT_SPEED, vz: 0, hits: BOLT_HITS });
     armed = true;
   }
   const sent = session.frame(now);
@@ -523,7 +539,11 @@ What it shows, on top of template 1:
 - **The cooldown is mirrored with slack.** The client waits a few inputs longer than the module's
   cooldown. A shot the server refuses anyway, or one that hits point blank before any state patch
   carries it, simply leaves `session.entities()`; the `hit` event is what says something was hit.
-- **Hits, health and score still come only from the server**: the `hit` event, `hp` and `data`.
+- **The hit shows the frame it lands on the shooter's screen.** `hits` names what the module's
+  sweep can hit, `onPredictedHit` shows "Hit!" at once, and `onHitSettled` takes it back when the
+  states that follow do not show the body hurt. What confirms it is the module's own `hp`: `strike`
+  lowers it, and a takedown bumps `epoch`. Nothing in the module changes.
+- **Damage, takedowns and score still come only from the server**: the `hit` event, `hp` and `data`.
 
 ## Template 3: a car arena (`vehicle`, and a ball)
 
@@ -957,7 +977,7 @@ function draw(entities: Map<string, AuthorityEntityView>): void {
       scene.add(mesh);
       meshes.set(id, mesh);
     }
-    toThree(mesh.position, e.x, e.y, e.z); // the ball from its flight; your car predicted; the others 100 ms behind
+    toThree(mesh.position, e.x, e.y, e.z); // the ball from its flight; your car predicted; the others a render delay behind
     mesh.rotation.y = e.yaw; // the heading, about three's up axis
   }
   for (const [id, mesh] of meshes) {
@@ -1172,7 +1192,7 @@ function draw(entities: Map<string, AuthorityEntityView>): void {
       scene.add(mesh);
       meshes.set(id, mesh);
     }
-    toThree(mesh.position, e.x, e.y, e.z); // a body at the server's present; your car predicted; other cars 100 ms behind
+    toThree(mesh.position, e.x, e.y, e.z); // a body at the server's present; your car predicted; other cars a render delay behind
     if (e.body) mesh.quaternion.set(e.qx, e.qz, -e.qy, e.qw);
     else mesh.rotation.set(0, e.yaw, 0);
   }

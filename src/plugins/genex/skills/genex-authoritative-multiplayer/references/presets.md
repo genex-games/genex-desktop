@@ -316,6 +316,12 @@ Call it from `onInput` for a button in `config.lagComp.buttons`. A target counts
 its sphere is in front of the wall: `hitscan`'s `dist` is measured to the middle, so a target whose
 middle is past a corner is safe.
 
+To show the hit marker the frame the player fires, the client gives `session.predictHitscan` the
+same lowered origin, `dir`, `radius` and `kinds`, with `range` cut to its own wall distance along
+the aim: [projectiles.md](projectiles.md#show-the-hit-at-once-predicted-hits). This `fire` lowers
+no `hp`: add the damage there (a lower `hp` is what confirms the marker), or pass
+`settle: "manual"` and settle the hit from the `shot` event.
+
 - **What it answers.** `dist` is the distance along the ray, `point` where it entered, `normal` the
   face it entered by, `solid` which one, counting `boxes` and then `ramps`. Touching is not hitting:
   a shot along a face, or from a face heading away, passes. A shot from inside a solid stops at once:
@@ -390,10 +396,10 @@ and re-launches it from where it is when one of these changes it:
 
 Each re-launch is one entity update, far inside a tick's caps. **The limit to say out loud:** every
 client draws the ball where the server has it now, its own car ahead of the server by its input
-lead, and other cars 100 ms behind. So your own touch shows your car reaching the ball a moment
-before the ball reacts, and another car's touch shows the ball leaving before that car visibly gets
-there: both are off by about the one-way latency. Draw the ball from `session.entities()` and leave
-it there; do not try to hide this by moving the ball on the client.
+lead, and other cars a render delay behind (100 ms or more). So your own touch shows your car
+reaching the ball a moment before the ball reacts, and another car's touch shows the ball leaving
+before that car visibly gets there: both are off by about the one-way latency. Draw the ball from
+`session.entities()` and leave it there; do not try to hide this by moving the ball on the client.
 
 ## Sub-steps and the CPU budget
 

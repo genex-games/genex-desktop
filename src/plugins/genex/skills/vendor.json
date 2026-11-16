@@ -1,11 +1,11 @@
 {
-  "cliVersion": "1.43.1",
-  "skillMdVersion": "1.43.1",
+  "cliVersion": "1.43.4",
+  "skillMdVersion": "1.43.4",
   "url": "https://genex.games/SKILL.md",
   "files": {
     "genex/SKILL.md": {
       "source": "https://genex.games/SKILL.md",
-      "sha256": "44e7af7665d615f8c5a9fa9e6c5a6217a20da015fc8b35759819249505c43790",
+      "sha256": "2957fa9fd69c85caaa3e77a1c4fdbd9bb8fe677cdc6d3158cc61c25c2f706b31",
       "bytes": 5698
     },
     "genex-threejs-multiplayer/SKILL.md": {
@@ -20,8 +20,8 @@
     },
     "genex-authoritative-multiplayer/SKILL.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/SKILL.md",
-      "sha256": "7cea981f9d186d1e5e5c665ec903d5f3626a5f4d0f443da030e42e99eda94528",
-      "bytes": 13610
+      "sha256": "b17ef2f3edb865ec71c7332d07e1ad557961ac978052da299fda0b17a6f950eb",
+      "bytes": 15901
     },
     "genex-authoritative-multiplayer/references/levels.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/references/levels.md",
@@ -30,38 +30,38 @@
     },
     "genex-authoritative-multiplayer/references/module-api.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/references/module-api.md",
-      "sha256": "8ec69ea70e0e2605f3453543833f9978f95f63e8546e34f73ccdc1bed705369b",
-      "bytes": 12601
+      "sha256": "80e94854ccbe107addc3124c0ab25739563b9f5d2f85d054eeb33073fb26d1f1",
+      "bytes": 14295
     },
     "genex-authoritative-multiplayer/references/physics.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/references/physics.md",
-      "sha256": "8a91aff583f52d032cee151bd545c8ceecb4c433334ab91d78bf4883c60f6750",
-      "bytes": 7863
+      "sha256": "e70919e4692f07da943d5ae6541c77f6fc4987ef7d0b716d57d172c161376d55",
+      "bytes": 7888
     },
     "genex-authoritative-multiplayer/references/presets.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/references/presets.md",
-      "sha256": "371488f21e359f51d4779b7a9f015098466453a1789daddf28b5f3a6c1ba8169",
-      "bytes": 30112
+      "sha256": "eb501bf4265ec3ba7c5eb4d72cfaa5105270260de2574f3637ac3566bfa468a6",
+      "bytes": 30574
     },
     "genex-authoritative-multiplayer/references/projectiles.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/references/projectiles.md",
-      "sha256": "49269790e85b96c41f4988ba895a939b9513bc8d60d832bbf169dd72bb69cac4",
-      "bytes": 10645
+      "sha256": "d983fe2c73b7e4d57c4d70b5d412f5ac1abbe2a1d67840bbcbf631ecb044a79b",
+      "bytes": 16253
     },
     "genex-authoritative-multiplayer/references/room-template.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/references/room-template.md",
-      "sha256": "66966edc1571fa4c0fa27b1b98bae846cbaef5eadcb5c6bb0001357547e132f5",
-      "bytes": 50900
+      "sha256": "f6b6354a728b85e5711edf2ab3839bdd7f00d13a1c7432af1495a704a48c7132",
+      "bytes": 52540
     },
     "genex-authoritative-multiplayer/references/settings.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/references/settings.md",
-      "sha256": "ffe20619b74e810f73e03e397c186c18bcfc232160387634f94d8d34b555e507",
-      "bytes": 16078
+      "sha256": "6d2bf240e6ce902f4caada343f0b8c59dacf1b19b1f28ff22a571ed6bf360a2f",
+      "bytes": 17982
     },
     "genex-authoritative-multiplayer/references/testing.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/references/testing.md",
-      "sha256": "583aeabee6e7e7ec05d949a472702a2cc31798cf2067c5d768b0f920710666eb",
-      "bytes": 10077
+      "sha256": "5cc527a1482f968fee7785858d1c2df565ee4db979c2afaed29e743afc3151c7",
+      "bytes": 10492
     },
     "genex-threejs-embed-auth/SKILL.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-threejs-embed-auth/SKILL.md",
@@ -120,7 +120,7 @@
     },
     "genex-tool-texture/SKILL.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-tool-texture/SKILL.md",
-      "sha256": "d89a284d5b05fe24f69aecee1f860f18e2aeed607be27983168f1a9eaa402829",
+      "sha256": "a82b8473c8a2969010d4e0d71eacf932bdae2f6aa40d6f888aec33da2d7e7f2f",
       "bytes": 2284
     },
     "genex-tool-audio/SKILL.md": {
@@ -130,8 +130,8 @@
     },
     "genex-tool-image/SKILL.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-tool-image/SKILL.md",
-      "sha256": "6c759be788c22aee35b9327a92efe1da5c41f4401e5f2aa7dbf4e71f29fb2995",
-      "bytes": 4307
+      "sha256": "164974cb1243b5de9bf22b09d2b1603c64ab1701030f33556d69530fbb30a080",
+      "bytes": 4357
     }
   },
   "license": {

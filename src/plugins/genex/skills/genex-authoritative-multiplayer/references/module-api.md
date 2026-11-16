@@ -37,7 +37,7 @@ export default room;
 | Field | What it is |
 |---|---|
 | `contract` | Always `1`. A bundle whose default export has another contract does not load. |
-| `config` | Optional, and the one place to set these. `tickHz` (20, 30, 60 or 120), 120 only with `physics`; `maxPlayers` (a room never seats more than the game's manifest allows), `preset` (`{ name, params? }` with `name` one of `topdown`, `firstperson` or `vehicle`, see [presets.md](presets.md)) and `lagComp: { buttons }` — the bitmask of input buttons that ask for lag compensation. What the room runs with is `ctx.config` in `init`. `physics` asks for server physics (crates, balls, doors): see [physics.md](physics.md), which also says when Genex's servers run it. |
+| `config` | Optional, and the one place to set these. `tickHz` (20, 30, 60 or 120), 120 only with `physics`; `maxPlayers` (a room never seats more than the game's manifest allows), `preset` (`{ name, params? }` with `name` one of `topdown`, `firstperson` or `vehicle`, see [presets.md](presets.md)) and `lagComp: { buttons }` — the bitmask of input buttons that ask for lag compensation. What the room runs with is `ctx.config` in `init`. `physics` asks for server physics (crates, balls, doors): see [physics.md](physics.md), which also says when Genex's servers run it. `interpolation: { maxDelayMs }` is the render delay ceiling ([below](#the-render-delay)). |
 | `world` | The `firstperson` and `vehicle` presets' collision world, `{ boxes, ramps }`, fixed for the room's life. Validated when the module loads; its hash becomes the preset's `params.world`, and the client hands its session the same object (`session.setWorld`). Left out, the world is empty: no floor. See [presets.md](presets.md). |
 | `init(ctx)` | Runs once. Returns the module's own state, `ctx.state` from then on. Clients never see it. |
 | `onJoin(ctx, player)` | A player took a seat. Spawn their body here. |
@@ -128,6 +128,33 @@ ray through the module's `world`, or `null`, in `init` and every hook. How the t
 where it is wrong: [presets.md](presets.md#a-shot-and-the-world). With `world: "shot"` it asks the
 module's `shotWorld`, and `ctx.world.claim(origin, dir, claimed, { range })` holds a stop the shooter's
 client saw to it: [levels.md](levels.md#what-bullets-meet).
+
+## The update rate
+
+The room sends its state after a tick, 60 times a second unless its genre says otherwise
+(`contacts.preset: "vehicle-arena"` sends 120 at `tickHz: 120`) and never faster than it ticks.
+`config.patchHz` (10, 15, 20, 30, 60 or 120) asks for another rate; a bad value is refused when the
+module loads, naming `$.config.patchHz`. A room opened by a build on an SDK from before the
+capability `rate@1` keeps the 20 a second it had. When to change it, and who gets it:
+[settings.md](settings.md#update-rate).
+
+## The render delay
+
+Every client draws other players a render delay behind the server, and sizes that delay to its own
+link: 100 ms on a steady one, more when states arrive unevenly, up to the room's ceiling. The
+ceiling is the server's (at most 250 ms). Nothing in the module or the client turns it on; a server
+with the setting off keeps every client at 100 ms.
+
+`config.interpolation: { maxDelayMs }` lowers the ceiling for this room: a whole number of ms from
+100 to 250. `100` asks for the fixed 100 ms delay. It never raises the server's ceiling, and a bad
+value is refused when the module loads, naming `$.config.interpolation.maxDelayMs`. The room
+rewinds a lag-compensated shot by the delay the shooter really drew, up to this ceiling, so a
+higher ceiling keeps opponents smooth on a bad link and lets that shooter hit a target a little
+further in its past. Leave it out unless the game needs the tighter bound.
+
+```js
+config: { tickHz: 60, maxPlayers: 10, preset: { name: "firstperson", params: {} }, lagComp: { buttons: 1 }, interpolation: { maxDelayMs: 150 } },
+```
 
 ## Projectiles
 
