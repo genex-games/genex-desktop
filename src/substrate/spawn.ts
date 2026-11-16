@@ -1043,6 +1043,7 @@ export class ProcessSandbox {
       plan = await this.#launchPlan({ ...this.#wrapped(request, live, null), longLived: true });
       const { release: given, ...launch } = plan;
       const relay = live;
+      const bash = relay ? await this.#windowsBash() : null;
       // The feeder runs as the person: it goes in their own temp folder, which no box is granted.
       const feeder = relay ? await writeTerminalFeeder({ launch, relay, dir: os.tmpdir() }) : null;
       const release = () => {
@@ -1051,9 +1052,9 @@ export class ProcessSandbox {
         void relay?.close();
         if (feeder) void rm(path.dirname(feeder), { recursive: true, force: true });
       };
-      if (!feeder) return { file: launch.file, args: launch.args, env: launch.env, cwd: launch.cwd, release };
+      if (!(feeder && bash)) return { file: launch.file, args: launch.args, env: launch.env, cwd: launch.cwd, release };
       const env = { ...launch.env, ELECTRON_RUN_AS_NODE: "1" };
-      return { file: await this.#windowsBash(), args: this.#feederArgs(feeder), env, cwd: launch.cwd, release };
+      return { file: bash, args: this.#feederArgs(feeder), env, cwd: launch.cwd, release };
     } catch (err) {
       plan?.release?.();
       close();
