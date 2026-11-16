@@ -123,7 +123,7 @@ async function typeInto(launch: { file: string; args: string[]; env: NodeJS.Proc
   child.stdout.on("data", (chunk: string) => {
     stdout += chunk;
   });
-  child.stdin.write(typed);
+  child.stdin.end(typed);
   const code = await new Promise<number | null>((resolve) => child.once("close", resolve));
   return { code, stdout };
 }
@@ -160,7 +160,10 @@ describe("a terminal's feeder", () => {
       windows: { bash: await shell() },
     });
     const launch = await windows.terminalLaunch({ command: 'read line; echo "got:$line"', cwd: scratchDir });
-    assert.equal(launch.file, process.execPath, "the terminal runs the studio's own Node");
+    // Flipped: Git Bash starts the feeder (Electron, a windowed program, reads and prints nothing
+    // started straight in a Windows terminal), its input through Git's own `cat`.
+    assert.equal(launch.file, await shell(), "the terminal runs Git Bash");
+    assert.match(launch.args.at(-1) ?? "", /< <\(\/usr\/bin\/cat\)$/);
     const run = await typeInto(launch, "typed\n");
     launch.release();
     assert.equal(run.code, 0);

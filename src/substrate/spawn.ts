@@ -1052,7 +1052,7 @@ export class ProcessSandbox {
       };
       if (!feeder) return { file: launch.file, args: launch.args, env: launch.env, cwd: launch.cwd, release };
       const env = { ...launch.env, ELECTRON_RUN_AS_NODE: "1" };
-      return { file: process.execPath, args: [feeder], env, cwd: launch.cwd, release };
+      return { file: await this.#windowsBash(), args: this.#feederArgs(feeder), env, cwd: launch.cwd, release };
     } catch (err) {
       plan?.release?.();
       close();
@@ -1065,9 +1065,26 @@ export class ProcessSandbox {
   async #terminalInput(command: string): Promise<LiveInput> {
     const live = await this.#liveInput(command);
     if (live) return live;
-    const bash = this.#seams.bash === undefined ? await findGitBash() : this.#seams.bash;
+    return openLiveInput({ command, shell: await this.#windowsBash(), scratchDir: this.scratchDir });
+  }
+
+  /** Windows: Git Bash, the sandbox's own or the one found on this computer. */
+  async #windowsBash(): Promise<string> {
+    const bash = this.#windows?.bash ?? (this.#seams.bash === undefined ? await findGitBash() : this.#seams.bash);
     if (!bash) throw new SandboxUnavailableError(gitMissingProblem());
-    return openLiveInput({ command, shell: bash, scratchDir: this.scratchDir });
+    return bash;
+  }
+
+  /**
+   * Windows: Git Bash's arguments that start a terminal's feeder. The studio's own Node is
+   * Electron, a windowed program: started straight in a terminal (a ConPTY), it reads nothing the
+   * person types and prints nothing. Under Git Bash its output reaches the terminal, and its input
+   * comes from Git's `cat` through a process substitution, which, unlike a pipe, lets the terminal
+   * end when the feeder does instead of on the person's next keystroke.
+   */
+  #feederArgs(feeder: string): string[] {
+    const node = shellQuote(mixedPath(longPath(process.execPath, this.#platform)));
+    return ["--noprofile", "--norc", "-c", `${node} ${shellQuote(mixedPath(feeder))} < <(/usr/bin/cat)`];
   }
 
   /** Linux, sandboxed: the bridge a loopback server is started under. Null elsewhere: its loopback is this computer's. */
