@@ -367,18 +367,27 @@ bill, but the provider is `metered` in the table so the app never picks a Beta o
 Settings › Model Providers has its row (`CliSignInRow`): Install, Sign in (`agy acp --login` in a
 terminal inside the row, started in the box a session runs in (`antigravitySignInLaunch`,
 `ProcessSandbox.terminalLaunch`): it prints Google's page for Open sign-in page and takes the code
-that page gives; `studio:antigravity.signin`, native), and once
+that page gives; `studio:antigravity.signin`, native; on Windows the terminal reaches the boxed CLI
+through the sandbox's input relay: Git Bash starts a feeder under the studio's own Node, which
+starts the box and hands it what the person types, because Electron started straight in a Windows
+terminal reads and prints nothing; the box is made under the engine's own scratch folder), and once
 connected Check connection, Sign in again and Update. The CLI has no command that says whether it
 is signed in, so the engine asks by opening a session in an empty folder, at most once a minute:
 the answer lists the models the account can run and its plan, or refuses with ACP's sign-in code
-(`-32000`). The row's status names the CLI's version and the plan. First launch's "or use" lines offer it on a Mac, beside Grok Build and Cursor on the first line (plans a person may already pay for; local models, OpenRouter and OpenCode on the second), with its Beta tag and the same Install and Sign in on its own screen. The model list is the account's (`session/new`'s `availableModels`, so a paid plan's newer Gemini shows by itself); the picker starts with the newest Gemini generation it lists, each family at its newest version with every thinking level (`googleLatest` in `renderer/model-lineup.ts`), and the other vendors' models Google's plan runs (Claude, GPT-OSS) and older Gemini wait under More models.
+(`-32000`). The row's status names the CLI's version and the plan. First launch's "or use" lines offer it beside Grok Build and Cursor on the first line (plans a person may already pay for; local models, OpenRouter and OpenCode on the second), with its Beta tag and the same Install and Sign in on its own screen. The model list is the account's (`session/new`'s `availableModels`, so a paid plan's newer Gemini shows by itself); the picker starts with the newest Gemini generation it lists, each family at its newest version with every thinking level (`googleLatest` in `renderer/model-lineup.ts`), and the other vendors' models Google's plan runs (Claude, GPT-OSS) and older Gemini wait under More models.
 
-Antigravity keeps its Google sign-in in the operating system's own store (the Keychain on a Mac)
-when it can reach it, and in `~/.gemini/antigravity-cli/antigravity-oauth-token` when it cannot (a
-failed Keychain read or save falls back to the file). Genex never reads either. Its sign-in runs in
-the session's box, where the Keychain is out of reach, so the sign-in lands in the file every
-session reads; a sign-in made in the person's own terminal lives in the Keychain alone, and the row
-then asks for Sign in. Its own controls are no box (its
+Antigravity keeps its Google sign-in in the operating system's own store (the Keychain, Windows'
+Credential Manager, the Secret Service) when it can reach it, and in
+`~/.gemini/antigravity-cli/antigravity-oauth-token` when it cannot or when it believes it runs over
+SSH. Genex never reads either. Its sign-in runs in the session's box, so the sign-in lands in the
+file every session reads: on a Mac the box denies the Keychain; off a Mac the box sets
+`SSH_CONNECTION` and `SSH_CLIENT` (`antigravityBoxEnv`), because on Windows the boxed CLI otherwise
+saved the sign-in in the sandbox user's Credential Manager, which every Windows sandbox runs as. On
+Windows the box also sets `USERPROFILE` to the person's home, so that file is in the person's
+`~/.gemini`, not the sandbox user's profile. A box is given Antigravity's own variables alone
+(`vendorEnv`) and builds the rest from its allow-list: Windows' env file refuses a name like
+`ProgramFiles(x86)`. A sign-in made in the person's own terminal lives in the system's store alone,
+and the row then asks for Sign in. Its own controls are no box (its
 terminal sandbox leaves its file tools out, and its permission rules do not reach an ACP session),
 so each turn runs in `ProcessSandbox` with `antigravitySandbox` (a build for a chat the person set to
 Bypass runs as them outside it, `runsAsPerson`, as Codex's and Grok Build's do): the workspace (a read-only
@@ -388,7 +397,7 @@ the box every tool call the agent asks about is allowed, except a command the ne
 stops (`antigravityPermission`, `neverTouchVerdict`): macOS's keychain tool, a command the screen
 cannot read and a command with no command line are refused, as a worker's hook refuses them. Its sandbox alone is given `~/.gemini`
 (its settings, conversations and sign-in file; `antigravityHomes`, `ownHome`) and the system's
-certificate checker (`SandboxMachService.Trust`, `com.apple.trustd.agent`, which a Go program
+certificate checker on a Mac (`SandboxMachService.Trust`, `com.apple.trustd.agent`, which a Go program
 verifies every HTTPS certificate through and sandbox-runtime leaves closed by default), because
 without either a signed-in CLI answers "sign in"; `~/Library/Keychains` stays denied, as in every
 sandbox, and every other sandbox still denies `~/.gemini` and opens no extra service. Studio tools reach it through the bridge command, as Codex's do.
@@ -401,8 +410,10 @@ gives the CLI five seconds to answer before it is stopped; a turn that says noth
 A live run on a signed-in Mac (CLI 1.5.7, free plan) reads the sign-in, builds in the game and
 cannot write beside it, continues a session from another folder, builds in Bypass, and shows
 what the sign-in needs: with the Keychain closed it works from the file; with the file or the
-certificate service closed, the CLI answers "sign in". Not yet shown: a plan that has run out, and
-Windows and Linux (where the sandbox runs as another user or has no Secret Service). Tests: `engine-antigravity.test.ts` and `event-antigravity.test.ts` on
+certificate service closed, the CLI answers "sign in". On a Windows PC (CLI 1.5.9) the boxed
+sign-in, the status check, a small game's build and the live tests ran with the sign-in in the
+file and nothing in the Windows credential store. Not yet shown: a plan that
+has run out, and a live Linux run. Tests: `engine-antigravity.test.ts` and `event-antigravity.test.ts` on
 `tests/fixtures/transcripts/antigravity-*`, recorded from Antigravity CLI 1.5.7.
 `STUDIO_ANTIGRAVITY_CLI_TESTS=1` runs the real, signed-in CLI in the real sandbox
 (`antigravity-cli-live.test.ts`).
