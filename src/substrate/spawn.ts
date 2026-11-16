@@ -1043,12 +1043,13 @@ export class ProcessSandbox {
       plan = await this.#launchPlan({ ...this.#wrapped(request, live, null), longLived: true });
       const { release: given, ...launch } = plan;
       const relay = live;
-      const feeder = relay ? await writeTerminalFeeder({ launch, relay, scratchDir: this.scratchDir }) : null;
+      // The feeder runs as the person: it goes in their own temp folder, which no box is granted.
+      const feeder = relay ? await writeTerminalFeeder({ launch, relay, dir: os.tmpdir() }) : null;
       const release = () => {
         given?.();
         close();
         void relay?.close();
-        if (feeder) void rm(feeder, { force: true });
+        if (feeder) void rm(path.dirname(feeder), { recursive: true, force: true });
       };
       if (!feeder) return { file: launch.file, args: launch.args, env: launch.env, cwd: launch.cwd, release };
       const env = { ...launch.env, ELECTRON_RUN_AS_NODE: "1" };

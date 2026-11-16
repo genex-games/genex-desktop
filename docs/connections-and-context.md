@@ -368,7 +368,8 @@ Settings › Model Providers has its row (`CliSignInRow`): Install, Sign in (`ag
 terminal inside the row, started in the box a session runs in (`antigravitySignInLaunch`,
 `ProcessSandbox.terminalLaunch`): it prints Google's page for Open sign-in page and takes the code
 that page gives; `studio:antigravity.signin`, native; on Windows the terminal reaches the boxed CLI
-through the sandbox's input relay: Git Bash starts a feeder under the studio's own Node, which
+through the sandbox's input relay: Git Bash starts a feeder (written in the person's own temp
+folder, which no box can write, since it runs outside every box) under the studio's own Node, which
 starts the box and hands it what the person types, because Electron started straight in a Windows
 terminal reads and prints nothing; the box is made under the engine's own scratch folder), and once
 connected Check connection, Sign in again and Update. The CLI has no command that says whether it

@@ -139,13 +139,14 @@ describe("a terminal's feeder", () => {
     const feeder = await writeTerminalFeeder({
       launch: { file: process.execPath, args: [live.file], cwd: scratchDir },
       relay: live,
-      scratchDir,
+      dir: await tmpDir("feeder-"),
     });
     const env = { ...process.env, ...live.env, ELECTRON_RUN_AS_NODE: "1" };
     const run = await typeInto({ file: process.execPath, args: [feeder], env, cwd: scratchDir }, "4/0AbCd-code\n");
     assert.equal(run.code, 3, "the terminal ends with the command's code");
     assert.equal(run.stdout, "got:4/0AbCd-code\n");
     assert.equal(existsSync(feeder), false, "the feeder deleted its own file");
+    assert.ok(!feeder.startsWith(scratchDir), "the feeder is not in the box's scratch folder");
     await live.close();
   });
 
@@ -164,6 +165,10 @@ describe("a terminal's feeder", () => {
     // started straight in a Windows terminal), its input through Git's own `cat`.
     assert.equal(launch.file, await shell(), "the terminal runs Git Bash");
     assert.match(launch.args.at(-1) ?? "", /< <\(\/usr\/bin\/cat\)$/);
+    // The feeder runs as the person, outside every box: it is never written where a box can write.
+    for (const root of [windows.scratchDir, scratchDir]) {
+      assert.ok(!(launch.args.at(-1) ?? "").includes(root), `the feeder is outside ${root}`);
+    }
     const run = await typeInto(launch, "typed\n");
     launch.release();
     assert.equal(run.code, 0);

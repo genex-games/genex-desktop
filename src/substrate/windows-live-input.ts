@@ -10,7 +10,7 @@
  * exits with the command; a connection with any other first line is dropped and never heard.
  */
 import { randomUUID } from "node:crypto";
-import { rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Writable } from "node:stream";
 import { HarnessInbox } from "./harness-inbox.ts";
@@ -169,14 +169,17 @@ export interface FedLaunch {
 
 /**
  * Write the feeder for `launch` (a relay prepared by `openLiveInput`, wrapped by the sandbox) into
- * `scratchDir`, readable by its owner alone; returns its file, for the studio's own Node to run with
- * `ELECTRON_RUN_AS_NODE` set and the launch's environment. Windows only: elsewhere a terminal's
- * input reaches a sandboxed command directly.
+ * a new folder of its own under `dir`; returns its file, for the studio's own Node to run with
+ * `ELECTRON_RUN_AS_NODE` set and the launch's environment. The feeder runs as the person, outside
+ * every box, so `dir` must be a folder no box can write (never the sandbox's scratch folder: on
+ * Windows every box runs as one user, so a box could rewrite the feeder before it starts). The
+ * caller removes the folder. Windows only: elsewhere a terminal's input reaches a sandboxed command
+ * directly.
  */
 export async function writeTerminalFeeder(options: {
   launch: FedLaunch;
   relay: Pick<LiveInput, "env">;
-  scratchDir: string;
+  dir: string;
 }): Promise<string> {
   const plan = {
     file: options.launch.file,
@@ -185,7 +188,8 @@ export async function writeTerminalFeeder(options: {
     port: Number(options.relay.env[LiveInputEnv.Port]),
     token: options.relay.env[LiveInputEnv.Token],
   };
-  const file = path.join(options.scratchDir, `.terminal-feeder-${randomUUID()}.cjs`);
+  const folder = await mkdtemp(path.join(options.dir, "genex-terminal-feeder-"));
+  const file = path.join(folder, "feeder.cjs");
   await writeFile(
     file,
     FEEDER_SOURCE.replace("__PLAN__", () => JSON.stringify(plan)),

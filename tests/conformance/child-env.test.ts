@@ -713,6 +713,11 @@ describe("a sandboxed coding CLI's own variables", () => {
       GEMINI_DEFAULT_PROJECT: "my-project",
       AGY_CLI_THEME: "dark",
       antigravity_gemini_dir: "D:\\gemini",
+      GOOGLE_CLOUD_PROJECT: "workspace-project",
+      GOOGLE_CLOUD_LOCATION: "europe-west1",
+      GOOGLE_GENAI_USE_VERTEXAI: "true",
+      GOOGLE_APPLICATION_CREDENTIALS: "/home/me/service-account.json",
+      GOOGLE_CLOUD_PROJECTS: "not the variable",
       GEMINI_API_KEY: "a key standing in for the account",
       GOOGLE_GEMINI_BASE_URL: "https://user:hunter2@proxy.example",
       ANTHROPIC_API_KEY: "another vendor's key",
@@ -728,6 +733,10 @@ describe("a sandboxed coding CLI's own variables", () => {
       GEMINI_DEFAULT_PROJECT: "my-project",
       AGY_CLI_THEME: "dark",
       antigravity_gemini_dir: "D:\\gemini",
+      // Google Cloud's project for a Workspace or Code Assist plan, which the Gemini CLI read.
+      GOOGLE_CLOUD_PROJECT: "workspace-project",
+      GOOGLE_CLOUD_LOCATION: "europe-west1",
+      GOOGLE_GENAI_USE_VERTEXAI: "true",
     });
   });
 });
