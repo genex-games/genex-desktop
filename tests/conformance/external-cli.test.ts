@@ -720,6 +720,8 @@ test("Windows standard folders: the native installers first, then npm's prefix a
     "C:\\Users\\Ada\\.grok\\bin",
     // Flipped (Cursor): its PowerShell installer's own folder.
     "C:\\Users\\Ada\\AppData\\Local\\cursor-agent",
+    // Flipped (Antigravity): its PowerShell installer's own folder.
+    "C:\\Users\\Ada\\AppData\\Local\\agy\\bin",
     "C:\\Users\\Ada\\AppData\\Roaming\\npm",
     "C:\\Program Files\\nodejs",
     "C:\\Users\\Ada\\AppData\\Local\\pnpm",

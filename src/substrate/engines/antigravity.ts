@@ -909,7 +909,8 @@ export interface AntigravitySignInLaunch {
  * Antigravity's sign-in (`agy acp --login`) as the person's terminal starts it: in the box every
  * session runs in, its folder an empty one of its own. The Keychain is out of reach there, so the
  * CLI keeps the sign-in in its file in `~/.gemini`, which is where each session reads it; the
- * sign-in needs only Google's hosts and the certificate checker. macOS and Linux.
+ * sign-in needs only Google's hosts and, on a Mac, the certificate checker. On Windows the terminal
+ * reaches the boxed CLI through the sandbox's input relay (`ProcessSandbox.terminalLaunch`).
  */
 export async function antigravitySignInLaunch(input: {
   binary: string;

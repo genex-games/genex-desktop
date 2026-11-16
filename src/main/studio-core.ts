@@ -1626,21 +1626,18 @@ export class StudioCore {
   }
 
   /**
-   * Antigravity on the person's Google AI plan, on a Mac alone for now: its sign-in runs in the
-   * session's sandbox and lands in the CLI's own file there (macOS shown live), while on Windows the
-   * sandbox runs as another user and cannot start a sign-in terminal, and Linux is untested.
+   * Antigravity on the person's Google AI plan, on every platform: its sign-in runs in the
+   * session's sandbox and lands in the CLI's own file there, the one each session reads (on
+   * Windows through the sandbox's input relay, `ProcessSandbox.terminalLaunch`).
    */
-  #antigravityEngines(): Engine[] {
-    if (process.platform !== StudioPlatform.Mac) return [];
-    return [
-      new AntigravityEngine({
-        scratchRoot: path.join(this.layout.scratch, EngineId.Antigravity),
-        protectedPaths: this.#protectedPaths(),
-        toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
-        lockRecovery: path.join(this.layout.engineHomes, LOCK_RECOVERY_DIR),
-        onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.Antigravity }),
-      }),
-    ];
+  #antigravityEngine(): Engine {
+    return new AntigravityEngine({
+      scratchRoot: path.join(this.layout.scratch, EngineId.Antigravity),
+      protectedPaths: this.#protectedPaths(),
+      toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
+      lockRecovery: path.join(this.layout.engineHomes, LOCK_RECOVERY_DIR),
+      onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.Antigravity }),
+    });
   }
 
   #defaultEngines(): Engine[] {
@@ -1694,7 +1691,7 @@ export class StudioCore {
         lockRecovery: path.join(this.layout.engineHomes, LOCK_RECOVERY_DIR),
         onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.Cursor }),
       }),
-      ...this.#antigravityEngines(),
+      this.#antigravityEngine(),
       // Metered: OpenCode on whatever the person signed it in to, OpenRouter on the key pasted in
       // Settings. Registered like the subscriptions, so the picker can offer them.
       new OpenCodeEngine({

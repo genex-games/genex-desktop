@@ -498,6 +498,8 @@ function windowsCliDirs(home: string, env: NodeJS.ProcessEnv): string[] {
     join(home, ".grok", "bin"),
     // Cursor's installer (install.ps1) puts its launchers here and adds the folder to the user's PATH.
     join(localAppData, "cursor-agent"),
+    // Antigravity's installer (install.ps1) copies `agy.exe` here and has `agy install` add it to the user's PATH.
+    join(localAppData, "agy", "bin"),
     join(appData, "npm"),
     join(variable("ProgramFiles", "C:\\Program Files"), "nodejs"),
     join(localAppData, "pnpm"),

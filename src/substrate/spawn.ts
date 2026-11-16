@@ -79,7 +79,7 @@ import {
   writeDeniesBeyondRead,
 } from "./windows-sandbox.ts";
 import { DenyAccess } from "./windows-folder-ace.ts";
-import { type LiveInput, openLiveInput } from "./windows-live-input.ts";
+import { type LiveInput, openLiveInput, writeTerminalFeeder } from "./windows-live-input.ts";
 
 /**
  * A file of sandbox-runtime's `vendor` folder in a package, as its unpacked copy; undefined outside
@@ -353,7 +353,6 @@ const MESSAGE = {
   NotInitialized: "sandbox-runtime is not initialized",
   NoStreams: "the process started without its stdio pipes",
   EmptyArgv: "sandbox-runtime returned an empty command",
-  NoWindowsTerminal: "a terminal of the caller's own cannot run inside the Windows sandbox",
 } as const;
 
 /**
@@ -411,6 +410,15 @@ type LaunchRequest = Pick<RunRequest, "command" | "cwd" | "env" | "label" | "pol
 };
 
 /** How one process starts: the program, its arguments, its environment, and whether srt wraps it. */
+/** How a terminal of the caller's own starts a sandboxed command, and what gives the sandbox back once it has exited. */
+export interface TerminalLaunch {
+  file: string;
+  args: string[];
+  env: NodeJS.ProcessEnv;
+  cwd: string;
+  release: () => void;
+}
+
 interface LaunchPlan {
   file: string;
   args: string[];
@@ -1020,24 +1028,46 @@ export class ProcessSandbox {
    * How to start `command` in this sandbox from a terminal the caller runs itself (a sign-in that
    * waits for what the person types): the program, its arguments, environment and folder, and
    * `release`, called once it has exited, which closes the domains held open for it until then.
-   * macOS and Linux: on Windows srt-win does not pass a terminal's input on, so it is refused.
+   * On Windows srt-win does not pass a terminal's input on, so the command starts under the live
+   * input relay and the terminal runs its feeder (`writeTerminalFeeder`), which starts the
+   * sandboxed relay and hands it what the person types.
    */
   async terminalLaunch(
     request: Pick<RunRequest, "command" | "cwd" | "env" | "label" | "policy">,
-  ): Promise<{ file: string; args: string[]; env: NodeJS.ProcessEnv; cwd: string; release: () => void }> {
-    if (this.#platform === StudioPlatform.Windows) throw new Error(MESSAGE.NoWindowsTerminal);
+  ): Promise<TerminalLaunch> {
     const close = await this.#openDomains(request.policy);
+    let live: LiveInput | null = null;
+    let plan: LaunchPlan | null = null;
     try {
-      const plan = await this.#launchPlan({ ...request, longLived: true });
+      live = this.#platform === StudioPlatform.Windows ? await this.#terminalInput(request.command) : null;
+      plan = await this.#launchPlan({ ...this.#wrapped(request, live, null), longLived: true });
+      const { release: given, ...launch } = plan;
+      const relay = live;
+      const feeder = relay ? await writeTerminalFeeder({ launch, relay, scratchDir: this.scratchDir }) : null;
       const release = () => {
-        plan.release?.();
+        given?.();
         close();
+        void relay?.close();
+        if (feeder) void rm(feeder, { force: true });
       };
-      return { file: plan.file, args: plan.args, env: plan.env, cwd: plan.cwd, release };
+      if (!feeder) return { file: launch.file, args: launch.args, env: launch.env, cwd: launch.cwd, release };
+      const env = { ...launch.env, ELECTRON_RUN_AS_NODE: "1" };
+      return { file: process.execPath, args: [feeder], env, cwd: launch.cwd, release };
     } catch (err) {
+      plan?.release?.();
       close();
+      await live?.close();
       throw err;
     }
+  }
+
+  /** Windows: the relay a terminal's input goes through, sandboxed or not (Git Bash runs it either way). */
+  async #terminalInput(command: string): Promise<LiveInput> {
+    const live = await this.#liveInput(command);
+    if (live) return live;
+    const bash = this.#seams.bash === undefined ? await findGitBash() : this.#seams.bash;
+    if (!bash) throw new SandboxUnavailableError(gitMissingProblem());
+    return openLiveInput({ command, shell: bash, scratchDir: this.scratchDir });
   }
 
   /** Linux, sandboxed: the bridge a loopback server is started under. Null elsewhere: its loopback is this computer's. */

@@ -1147,7 +1147,7 @@ function Connect({
   genex: Genex;
   /** Use Genex was pressed: Genex's screen opens. */
   onGenex: () => void;
-  /** The buttons under the subscriptions: Grok Build, Cursor, Antigravity (on a Mac), local models, OpenRouter and OpenCode. */
+  /** The buttons under the subscriptions: Grok Build, Cursor, Antigravity, local models, OpenRouter and OpenCode. */
   ways: Partial<Record<OtherWay, WayView>>;
   anyOn: boolean;
   back: boolean;
@@ -1439,7 +1439,7 @@ function useOtherWays(engines: EngineDescriptor[], onEnginesRefresh: () => void)
   const grok = useCli(EngineId.Grok, engines, onEnginesRefresh);
   const cursor = useCli(EngineId.Cursor, engines, onEnginesRefresh);
   const antigravity = useCli(EngineId.Antigravity, engines, onEnginesRefresh);
-  // Antigravity runs on a Mac alone: where no engine is registered, its button is left out.
+  // Where no Antigravity engine is registered (a fixture without one), its button is left out.
   const offersAntigravity = engines.some((engine) => engine.id === EngineId.Antigravity);
   const ways: Partial<Record<OtherWay, WayView>> = {
     [OtherWay.Local]: localWay(local.state, local.name, local.percent),
