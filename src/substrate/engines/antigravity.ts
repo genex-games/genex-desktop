@@ -79,6 +79,7 @@ import { abortControllerFor, CompletionStop, interruption, partialDelegateResult
 import type { PartialDelegateState } from "./common.ts";
 import { ProcessSandbox, type SandboxOptions, SandboxMachService, shellQuote } from "../spawn.ts";
 import { childEnv, vendorEnv } from "../child-env.ts";
+import { StudioPlatform } from "../../shared/boot.ts";
 import { antigravityHomes, credentialHomes } from "../credential-homes.ts";
 import { killProcessTree } from "../process-tree.ts";
 import { spawnCommand } from "../command-launch.ts";
@@ -638,7 +639,7 @@ export class AntigravityEngine implements Engine {
     return {
       argv: [...ANTIGRAVITY_SESSION_ARGV],
       cwd: ctx.runDir,
-      env: {},
+      env: antigravityBoxEnv(),
       sandbox: antigravitySandbox({
         runDir: ctx.runDir,
         gameDir: ctx.cwd,
@@ -895,6 +896,20 @@ export function antigravitySandbox(input: {
   };
 }
 
+/**
+ * What a boxed Antigravity process is told on top of its own variables. On Windows the sandbox
+ * runs it as its own user, whose profile is not the person's: its home is the person's, so the
+ * CLI keeps its settings and sign-in in the person's `~/.gemini`, which this sandbox alone may
+ * reach (`antigravityHomes`), and never in the sandbox user's profile, which every Windows
+ * sandbox shares. Nothing elsewhere: the sandbox runs it as the person.
+ */
+export function antigravityBoxEnv(
+  platform: NodeJS.Platform = process.platform,
+  home: string = os.homedir(),
+): Record<string, string> {
+  return platform === StudioPlatform.Windows ? { USERPROFILE: home } : {};
+}
+
 /** A sign-in started in the sessions' box: how its terminal starts it, and what gives the box back. */
 export interface AntigravitySignInLaunch {
   file: string;
@@ -932,7 +947,7 @@ export async function antigravitySignInLaunch(input: {
     const launch = await sandbox.terminalLaunch({
       command,
       cwd: runDir,
-      env: input.env,
+      env: { ...input.env, ...antigravityBoxEnv() },
       label: "antigravity:sign-in",
       policy: { allowedDomains: [...ANTIGRAVITY_HOSTS] },
     });

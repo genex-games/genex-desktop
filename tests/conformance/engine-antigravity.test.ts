@@ -23,6 +23,7 @@ import {
   type AntigravityInvocation,
   type AntigravityProcess,
   type AntigravitySchedule,
+  antigravityBoxEnv,
   antigravityPermission,
   antigravityProcess,
   antigravitySandbox,
@@ -630,6 +631,13 @@ describe("Antigravity's box", () => {
       { outcome: { outcome: "cancelled" } },
       "with no way to refuse offered, the question is left unanswered, never allowed",
     );
+  });
+
+  it("on Windows, where the sandbox runs it as its own user, its home is the person's, where its own folder is", () => {
+    const home = "C:\\Users\\Ada";
+    assert.deepEqual(antigravityBoxEnv("win32", home), { USERPROFILE: home });
+    for (const platform of ["darwin", "linux"] as const)
+      assert.deepEqual(antigravityBoxEnv(platform, home), {}, `${platform}: the box runs it as the person`);
   });
 
   it("its session's sandbox keeps its own folder, where its sign-in file is, and never reaches the Keychain", async () => {
