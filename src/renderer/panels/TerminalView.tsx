@@ -3,7 +3,8 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { TERMINAL_LIMITS, type TerminalSession } from "../../shared/terminal.ts";
 import { useAppearance } from "../appearance/store.ts";
-import { isTerminalChord, TOGGLE_TERMINAL_EVENT } from "./terminal-events.ts";
+import { isPasteChord, isTerminalChord, TOGGLE_TERMINAL_EVENT } from "./terminal-events.ts";
+import { hostPlatform } from "../platform.ts";
 import { t } from "../../shared/i18n.ts";
 
 /** The terminal's type: its size, its line height, and the contrast xterm keeps text above (WCAG AA). */
@@ -83,6 +84,8 @@ function dockKeys(terminal: Terminal, node: HTMLElement, report: { current: (err
     if (isTerminalChord(event)) return toggle(event);
     const copying = event.type === "keydown" && event.ctrlKey && event.shiftKey && event.code === "KeyC";
     if (copying) return copy(event);
+    // xterm skips the key and the browser's own paste reaches it with the clipboard's text.
+    if (isPasteChord(event, hostPlatform())) return false;
     return true;
   };
 }

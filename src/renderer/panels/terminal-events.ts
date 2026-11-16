@@ -1,3 +1,5 @@
+import { StudioPlatform } from "../../shared/boot.ts";
+
 /** Window events the terminal dock listens for. */
 
 /** Ask the terminal dock to show its open terminal (a sign-in running in Studio's own terminal, for one). */
@@ -21,3 +23,16 @@ export const OPEN_TERMINAL_EVENT = "studio:open-terminal";
 /** Whether a key press is the terminal's own chord, Cmd/Ctrl+`. */
 export const isTerminalChord = (event: { metaKey: boolean; ctrlKey: boolean; code: string }): boolean =>
   (event.metaKey || event.ctrlKey) && event.code === "Backquote";
+
+/**
+ * Whether a key press is a paste the terminal must leave to the browser: Ctrl+V or Ctrl+Shift+V off
+ * a Mac (Cmd+V on a Mac is the app menu's paste and never reaches the terminal). Left to xterm, it
+ * sends one control character (^V) in place of the clipboard, so a pasted sign-in code never arrives.
+ */
+export const isPasteChord = (
+  event: { metaKey: boolean; ctrlKey: boolean; altKey: boolean; code: string },
+  platform: string,
+): boolean => {
+  const ctrlOnly = event.ctrlKey && !event.metaKey && !event.altKey;
+  return ctrlOnly && event.code === "KeyV" && platform !== StudioPlatform.Mac;
+};
