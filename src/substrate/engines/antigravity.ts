@@ -897,17 +897,33 @@ export function antigravitySandbox(input: {
 }
 
 /**
- * What a boxed Antigravity process is told on top of its own variables. On Windows the sandbox
- * runs it as its own user, whose profile is not the person's: its home is the person's, so the
- * CLI keeps its settings and sign-in in the person's `~/.gemini`, which this sandbox alone may
- * reach (`antigravityHomes`), and never in the sandbox user's profile, which every Windows
- * sandbox shares. Nothing elsewhere: the sandbox runs it as the person.
+ * What makes Antigravity CLI keep its sign-in in its own file (`~/.gemini/antigravity-cli`) rather
+ * than in the operating system's credential store: it uses the file whenever it believes it runs
+ * over SSH (1.5.9 logs "Using file-based token storage because SSH session detected"). Nothing
+ * connects over SSH; the values only satisfy that check.
+ */
+const ANTIGRAVITY_FILE_STORE = {
+  SSH_CONNECTION: "127.0.0.1 0 127.0.0.1 0",
+  SSH_CLIENT: "127.0.0.1 0 0",
+} as const;
+
+/**
+ * What a boxed Antigravity process is told on top of its own variables.
+ *
+ * On a Mac the box denies the Keychain, so the CLI falls back to its file by itself. On Windows the
+ * sandbox runs it as its own user, whose Credential Manager the CLI would use: every Windows
+ * sandbox runs as that user and could read the sign-in there (seen on a real PC). On Linux the
+ * Secret Service may be within reach. So off a Mac it is told to use its file, and on Windows its
+ * home is the person's, so that file is the person's `~/.gemini`, which this sandbox alone may
+ * reach (`antigravityHomes`), never the sandbox user's profile, which every Windows sandbox shares.
  */
 export function antigravityBoxEnv(
   platform: NodeJS.Platform = process.platform,
   home: string = os.homedir(),
 ): Record<string, string> {
-  return platform === StudioPlatform.Windows ? { USERPROFILE: home } : {};
+  if (platform === StudioPlatform.Mac) return {};
+  if (platform === StudioPlatform.Windows) return { ...ANTIGRAVITY_FILE_STORE, USERPROFILE: home };
+  return { ...ANTIGRAVITY_FILE_STORE };
 }
 
 /** A sign-in started in the sessions' box: how its terminal starts it, and what gives the box back. */

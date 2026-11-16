@@ -633,11 +633,21 @@ describe("Antigravity's box", () => {
     );
   });
 
-  it("on Windows, where the sandbox runs it as its own user, its home is the person's, where its own folder is", () => {
+  it("off a Mac its box keeps the sign-in in its own file, and on Windows that file is in the person's home", () => {
     const home = "C:\\Users\\Ada";
-    assert.deepEqual(antigravityBoxEnv("win32", home), { USERPROFILE: home });
-    for (const platform of ["darwin", "linux"] as const)
-      assert.deepEqual(antigravityBoxEnv(platform, home), {}, `${platform}: the box runs it as the person`);
+    // The CLI uses its file, not the credential store, when it believes it runs over SSH (1.5.9).
+    const fileStore = { SSH_CONNECTION: "127.0.0.1 0 127.0.0.1 0", SSH_CLIENT: "127.0.0.1 0 0" };
+    assert.deepEqual(
+      antigravityBoxEnv("win32", home),
+      { ...fileStore, USERPROFILE: home },
+      "not the shared sandbox user's store",
+    );
+    assert.deepEqual(antigravityBoxEnv("linux", home), fileStore, "not the Secret Service");
+    assert.deepEqual(
+      antigravityBoxEnv("darwin", home),
+      {},
+      "a Mac's box denies the Keychain, and the CLI uses its file",
+    );
   });
 
   it("its session's sandbox keeps its own folder, where its sign-in file is, and never reaches the Keychain", async () => {
