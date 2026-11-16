@@ -636,7 +636,7 @@ describe("a folder the Windows sandbox left out", () => {
 });
 
 describe("P10b: main's own errors and a window that stopped answering", () => {
-  it("main tells only an error's kind and type, a few times a launch, and a hang's length", async () => {
+  it("main tells only an error's kind, type and where it was thrown, a few times a launch, and a hang's length", async () => {
     const { createAppDiagnostics, MAIN_FAULT_EVENTS_MAX } = await appDiagnostics();
     const target = new EventEmitter();
     const faults: string[] = [];
@@ -670,7 +670,17 @@ describe("P10b: main's own errors and a window that stopped answering", () => {
     for (let i = 0; i < MAIN_FAULT_EVENTS_MAX + 5; i++) diagnostics.fault(MainDiagnostic.Uncaught, error);
     diagnostics.fault(MainDiagnostic.Rejection, HOSTILE[0]);
     assert.equal(pushed.length, MAIN_FAULT_EVENTS_MAX, "a loop that throws is one problem");
-    assert.deepEqual(pushed[0], { kind: MainDiagnostic.Uncaught, errorType: "RangeError" });
+    const stackless = createAppDiagnostics({ push: (payload) => pushed.push(payload), marker: null, now: clock.now });
+    stackless.fault(MainDiagnostic.Rejection, HOSTILE[0]);
+    assert.deepEqual(pushed.at(-1), { kind: MainDiagnostic.Rejection }, "a thrown string has no place to tell");
+    pushed.pop();
+    const where = launchEvents.fingerprint(launchEvents.stackFrames(error.stack));
+    assert.match(where ?? "", /^[0-9a-f]{8}$/);
+    assert.deepEqual(
+      pushed[0],
+      { kind: MainDiagnostic.Uncaught, errorType: "RangeError", fingerprint: where },
+      "where it was thrown, as the window's own errors are told apart",
+    );
     assert.equal(counted.length, MAIN_FAULT_EVENTS_MAX + 6, "the session counts every one");
     pushed.length = 0;
     const hang = diagnostics.hangWatch();
@@ -691,6 +701,15 @@ describe("P10b: main's own errors and a window that stopped answering", () => {
     const heard = launchHeard(session);
     heard.ui({ type: UiEvent.AppDiagnostic, payload: { kind: MainDiagnostic.Rejection, errorType: "TypeError" } });
     heard.ui({ type: UiEvent.AppDiagnostic, payload: { kind: MainDiagnostic.Uncaught, errorType: HOSTILE[0] } });
+    heard.ui({
+      type: UiEvent.AppDiagnostic,
+      payload: { kind: MainDiagnostic.Uncaught, errorType: "TypeError", fingerprint: "0a1b2c3d" },
+    });
+    for (const fingerprint of [HOSTILE[0], "zzzzzzzz", 123])
+      heard.ui({
+        type: UiEvent.AppDiagnostic,
+        payload: { kind: MainDiagnostic.Rejection, errorType: "Error", fingerprint },
+      });
     heard.ui({ type: UiEvent.AppDiagnostic, payload: { kind: MainDiagnostic.Unresponsive, durationMs: 4200.4 } });
     for (const durationMs of [-1, 1e308, "5", HOSTILE[5]])
       heard.ui({ type: UiEvent.AppDiagnostic, payload: { kind: MainDiagnostic.Unresponsive, durationMs } });
@@ -701,6 +720,8 @@ describe("P10b: main's own errors and a window that stopped answering", () => {
     assert.deepEqual(errors, [
       { process: "main", kind: "rejection", error_type: "TypeError", fatal: false, fingerprint: null },
       { process: "main", kind: "uncaught", error_type: "other", fatal: false, fingerprint: null },
+      { process: "main", kind: "uncaught", error_type: "TypeError", fatal: false, fingerprint: "0a1b2c3d" },
+      ...Array(3).fill({ process: "main", kind: "rejection", error_type: "Error", fatal: false, fingerprint: null }),
     ]);
     const hangs = sentOf(sent, AnalyticsEvent.WindowUnresponsive);
     assert.deepEqual(hangs, [

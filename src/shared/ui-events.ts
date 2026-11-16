@@ -117,7 +117,7 @@ export interface UiEventMap {
   /** An update the app looked for on its own failed, at `stage`, and why (`main/auto-update.ts`). */
   "update.failed": Partial<UpdateFailedNote>;
   /** Main's own process caught an error nowhere, or a window answered again after `durationMs`. */
-  "app.diagnostic": { kind?: MainDiagnostic; durationMs?: number; errorType?: string };
+  "app.diagnostic": { kind?: MainDiagnostic; durationMs?: number; errorType?: string; fingerprint?: string };
 
   // — engines and models —
   "engines.changed": { engine?: string };

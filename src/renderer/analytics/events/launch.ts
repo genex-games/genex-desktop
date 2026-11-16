@@ -29,6 +29,7 @@ import {
 import { DAY_MS, HOUR_MS, MINUTE_MS } from "../../../shared/duration.ts";
 import { EngineStatusCode } from "../../../shared/engine-descriptor.ts";
 import { isStudioErrorCode, type StudioErrorCode } from "../../../shared/error-codes.ts";
+import { fingerprint, isFingerprint, stackFrames } from "../../../shared/error-fingerprint.ts";
 import { isInvokeChannel, type StudioInvokeChannel } from "../../../shared/ipc-channels.ts";
 import { UiEvent } from "../../../shared/ui-events.ts";
 import { threadLog } from "../../state/event-log.ts";
@@ -42,8 +43,6 @@ import { currentScreen } from "../screens.ts";
 
 /** How often the long tasks seen are summed and sent, while there were any. */
 export const STALL_SUMMARY_MS = 5 * MINUTE_MS;
-/** How many stack frames make an error's fingerprint. */
-const FINGERPRINT_FRAMES = 5;
 /** How many times one error (by fingerprint) is sent in a launch: a loop that throws is one problem. */
 const ERROR_REPEATS_MAX = 3;
 /** The longest hang a window reports: anything longer is not a measure. */
@@ -279,7 +278,7 @@ export function mainErrorProperties(payload: unknown): AppErrorProperties | null
     kind: MAIN_ERROR_KIND[kind],
     error_type: errorType({ name: payload.errorType }),
     fatal: false,
-    fingerprint: null,
+    fingerprint: isFingerprint(payload.fingerprint) ? payload.fingerprint : null,
   };
 }
 
@@ -341,30 +340,7 @@ export function errorType(error: unknown): string {
 const isNamed = (value: unknown): value is { name: string } =>
   typeof value === "object" && value !== null && "name" in value && typeof value.name === "string";
 
-/** A frame's place: a file's name with its line and column, everything before the last slash dropped. */
-const PLACE = /(?:[a-z][\w+.-]*:\/\/)?(?:[^\s()]*[\\/])?([^\s()\\/?#]+?)(?:[?#][^\s():]*)?:(\d+):(\d+)/gi;
-
-/** The top stack frames, with only file names and positions kept: no folder, no address, no message. */
-export function stackFrames(stack: string | undefined): string[] {
-  if (!stack) return [];
-  return stack
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("at ") || /@.*:\d+:\d+$/.test(line))
-    .slice(0, FINGERPRINT_FRAMES)
-    .map((line) => line.replace(PLACE, "$1:$2:$3"));
-}
-
-/** FNV-1a over the frames, as 8 hex digits. */
-export function fingerprint(frames: readonly string[]): string | null {
-  if (frames.length === 0) return null;
-  let hash = 0x811c9dc5;
-  for (const char of frames.join("\n")) {
-    hash ^= char.codePointAt(0) ?? 0;
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash.toString(16).padStart(8, "0");
-}
+export { fingerprint, stackFrames };
 
 const stackOf = (error: unknown): string | undefined =>
   typeof error === "object" && error !== null && "stack" in error && typeof error.stack === "string"

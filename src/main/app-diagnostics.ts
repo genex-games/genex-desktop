@@ -1,11 +1,13 @@
 /**
  * Main's own diagnostics, told to the window as typed facts (`UiEvent.AppDiagnostic`): an error
- * main's process caught nowhere (its kind and built-in type, never its words or stack), and how
+ * main's process caught nowhere (its kind, built-in type and the fingerprint of where it was thrown,
+ * never its words or stack), and how
  * long a window stopped answering, once it answers again. Each is also counted in the session's
  * marker (`session-marker.ts`), so a session whose window never heard it still says so at the next
  * launch. Free of Electron: `main/index.ts` wires it to `process` and each window.
  */
 import { MainDiagnostic } from "../shared/app-session.ts";
+import { fingerprint, stackFrames } from "../shared/error-fingerprint.ts";
 import { UiEvent, type UiEventMap } from "../shared/ui-events.ts";
 import type { SessionMarker } from "./session-marker.ts";
 
@@ -35,6 +37,17 @@ export interface AppDiagnostics {
 /** The thrown value's own type name, for the window to check against JavaScript's; nothing else of it. */
 const typeName = (reason: unknown): string | undefined => (reason instanceof Error ? reason.name : undefined);
 
+/** An error main caught nowhere as the window hears it: its kind, and its type and where it was thrown when it has them. */
+function faultPayload(kind: MainFault, reason: unknown): AppDiagnosticPayload {
+  const errorType = typeName(reason);
+  const where = reason instanceof Error ? fingerprint(stackFrames(reason.stack)) : null;
+  return {
+    kind,
+    ...(errorType === undefined ? {} : { errorType }),
+    ...(where === null ? {} : { fingerprint: where }),
+  };
+}
+
 /** Main's diagnostics, told through `push`, counted in `marker` (when this launch keeps one), on `now`'s clock. */
 export function createAppDiagnostics({
   push,
@@ -51,8 +64,7 @@ export function createAppDiagnostics({
       marker?.mainError();
       if (told >= MAIN_FAULT_EVENTS_MAX) return;
       told++;
-      const errorType = typeName(reason);
-      push(errorType === undefined ? { kind } : { kind, errorType });
+      push(faultPayload(kind, reason));
     },
     hangWatch() {
       let since: number | null = null;
