@@ -24,7 +24,7 @@ check a Loop's finish.
 Local Models (Bonsai/Ollama) downloads and deletes. Metered
 [OpenRouter, OpenCode](../connections-and-context.md#openrouter-and-opencode),
 [Grok Build](../connections-and-context.md#grok-build), [Cursor](../connections-and-context.md#cursor),
-[Antigravity](../connections-and-context.md#antigravity) (Mac) and
+[Antigravity](../connections-and-context.md#antigravity) and
 [Genex](../connections-and-context.md#build-with-genex-credits) are never auto-chosen unless Free and alone; OpenRouter, OpenCode and Cursor show three. Local server connects LM
 Studio, llama.cpp or TabbyAPI ([details](../connections-and-context.md#your-own-model-server)).
 

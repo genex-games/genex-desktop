@@ -78,7 +78,7 @@ import {
 import { abortControllerFor, CompletionStop, interruption, partialDelegateResult, STOPPED_BY_USER } from "./common.ts";
 import type { PartialDelegateState } from "./common.ts";
 import { ProcessSandbox, type SandboxOptions, SandboxMachService, shellQuote } from "../spawn.ts";
-import { childEnv } from "../child-env.ts";
+import { childEnv, vendorEnv } from "../child-env.ts";
 import { antigravityHomes, credentialHomes } from "../credential-homes.ts";
 import { killProcessTree } from "../process-tree.ts";
 import { spawnCommand } from "../command-launch.ts";
@@ -1150,21 +1150,13 @@ async function startAntigravity(invocation: AntigravityInvocation): Promise<Anti
   if (!invocation.sandbox) return antigravityOutside(binary, invocation, installation.env);
   const sandbox = await ProcessSandbox.create(invocation.sandbox);
   try {
-    const env = childEnv(installation.env, { base: "contractor", vendor: "antigravity", set: invocation.env });
-    return await antigravityProcess(sandbox, binary, { ...invocation, env: stringEnv(env) }, () =>
-      sandbox.dispose().catch(() => {}),
-    );
+    // Its own variables alone: the sandbox builds the rest from its allow-list, as for Grok Build and Cursor.
+    const env = { ...vendorEnv(installation.env, "antigravity"), ...invocation.env };
+    return await antigravityProcess(sandbox, binary, { ...invocation, env }, () => sandbox.dispose().catch(() => {}));
   } catch (err) {
     await sandbox.dispose().catch(() => {});
     throw err;
   }
-}
-
-/** An environment's set variables alone. */
-export function stringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) if (value !== undefined) out[key] = value;
-  return out;
 }
 
 /**

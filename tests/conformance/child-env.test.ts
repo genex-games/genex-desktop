@@ -17,7 +17,7 @@ import { ClaudeCodeEngine } from "../../src/substrate/engines/claude-code.ts";
 import { absoluteRule, claudeProjectDirName } from "../../src/substrate/engines/claude-permissions.ts";
 import { CodexEngine, type CodexExec } from "../../src/substrate/engines/codex.ts";
 import { codexSubscriptionEnv } from "../../src/substrate/engines/codex-cli.ts";
-import { windowsPowerShellEnv } from "../../src/substrate/child-env.ts";
+import { vendorEnv, windowsPowerShellEnv } from "../../src/substrate/child-env.ts";
 import { ProcessSandbox } from "../../src/substrate/spawn.ts";
 import { ruleDenies } from "../helpers/claude-rules.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -704,5 +704,30 @@ describe("Windows PowerShell builds its own module path", () => {
       assert.deepEqual(parent, before, `${name}: the parent is left as it was`);
     }
     assert.deepEqual(windowsPowerShellEnv({}), {});
+  });
+});
+
+describe("a sandboxed coding CLI's own variables", () => {
+  it("are its vendor's alone, never a credential, and never a name a shell cannot assign (hostile table)", () => {
+    const parent = {
+      GEMINI_DEFAULT_PROJECT: "my-project",
+      AGY_CLI_THEME: "dark",
+      antigravity_gemini_dir: "D:\\gemini",
+      GEMINI_API_KEY: "a key standing in for the account",
+      GOOGLE_GEMINI_BASE_URL: "https://user:hunter2@proxy.example",
+      ANTHROPIC_API_KEY: "another vendor's key",
+      CURSOR_CONFIG_DIR: "another vendor's folder",
+      "ProgramFiles(x86)": "C:\\Program Files (x86)",
+      "CommonProgramFiles(x86)": "C:\\Program Files (x86)\\Common Files",
+      "SENTRY-TRACE": "abc",
+      PATH: "/bin",
+      HOME: "/home/me",
+      UNSET: undefined,
+    };
+    assert.deepEqual(vendorEnv(parent, "antigravity"), {
+      GEMINI_DEFAULT_PROJECT: "my-project",
+      AGY_CLI_THEME: "dark",
+      antigravity_gemini_dir: "D:\\gemini",
+    });
   });
 });

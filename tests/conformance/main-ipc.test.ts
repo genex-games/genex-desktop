@@ -648,7 +648,13 @@ describe("both sign-in paths go through the controllers", () => {
       },
       requireCli: async (provider) => ({
         path: `/bin/${provider}`,
-        env: { PATH: "/bin", OPENCODE_CONFIG: "/oc.json", GEMINI_API_KEY: "key_not_for_genex" },
+        env: {
+          PATH: "/bin",
+          OPENCODE_CONFIG: "/oc.json",
+          GEMINI_API_KEY: "key_not_for_genex",
+          GEMINI_DEFAULT_PROJECT: "my-project",
+          "ProgramFiles(x86)": "C:\\Program Files (x86)",
+        },
         status: {
           provider,
           state: "ready",
@@ -661,8 +667,13 @@ describe("both sign-in paths go through the controllers", () => {
     });
     assert.deepEqual(await antigravityLogin.start(), { started: true });
     assert.equal(boxed[0]?.binary, "/bin/antigravity");
-    assert.equal(boxed[0]?.env.OPENCODE_CONFIG, undefined, "no other vendor's variables reach the sign-in");
-    assert.equal(boxed[0]?.env.GEMINI_API_KEY, undefined, "nor a key standing in for the account");
+    // Flipped: the box is given Antigravity's own variables alone and builds the rest itself; on
+    // Windows it writes each into a shell file, which refused the person's `ProgramFiles(x86)`.
+    assert.deepEqual(
+      boxed[0]?.env,
+      { GEMINI_DEFAULT_PROJECT: "my-project" },
+      "its own variables alone: no other vendor's, no key standing in for the account",
+    );
     assert.equal(opened[0]?.file, "/usr/bin/sandbox-exec", "the terminal starts the boxed command");
     assert.deepEqual(opened[0]?.args.slice(-2), ["acp", "--login"]);
     assert.equal(opened[0]?.kind, "antigravity-login");

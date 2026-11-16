@@ -14,7 +14,7 @@ import { describe, it } from "node:test";
 import { EngineStatusCode } from "../../src/shared/engine-descriptor.ts";
 import { PermissionMode } from "../../src/shared/permissions.ts";
 import { EngineId } from "../../src/shared/providers.ts";
-import { childEnv } from "../../src/substrate/child-env.ts";
+import { vendorEnv } from "../../src/substrate/child-env.ts";
 import { antigravityHome } from "../../src/substrate/credential-homes.ts";
 import {
   AntigravityEngine,
@@ -66,11 +66,8 @@ function startIn(box: Box, said: string[], hosts?: readonly string[]) {
     assert.ok(cli.status.path, `no agy CLI found: ${cli.status.state}`);
     assert.ok(invocation.sandbox, "these sessions are boxed");
     const sandbox = await ProcessSandbox.create(box(invocation.sandbox));
-    const env = childEnv(cli.env, { base: "contractor", vendor: "antigravity" });
-    const set = Object.fromEntries(
-      Object.entries(env).filter((pair): pair is [string, string] => pair[1] !== undefined),
-    );
-    const boxed = { ...invocation, env: set, ...(hosts ? { domains: [...hosts] } : {}) };
+    const env = { ...vendorEnv(cli.env, "antigravity"), ...invocation.env };
+    const boxed = { ...invocation, env, ...(hosts ? { domains: [...hosts] } : {}) };
     const agent = await antigravityProcess(sandbox, cli.status.path, boxed, () => sandbox.dispose().catch(() => {}));
     void agent.exited.then(({ stderr }) => said.push(stderr));
     return agent;

@@ -128,8 +128,8 @@ fails as `unsupported`, never as a download; Grok Build from `x.ai/cli/install.s
 Windows) into `~/.local/bin` (`%LOCALAPPDATA%\cursor-agent` on Windows), updated with
 `cursor-agent update`. Cursor's installer also links `~/.local/bin/agent`, a name Grok Build's
 installer uses too, so discovery looks only for `cursor-agent`. Antigravity's CLI (`agy`) comes from
-`antigravity.google/cli/install.sh` (`install.ps1` on Windows) into `~/.local/bin`, updated with
-`agy update`. Main fetches the script over HTTPS
+`antigravity.google/cli/install.sh` (`install.ps1` on Windows) into `~/.local/bin`
+(`%LOCALAPPDATA%\agy\bin` on Windows), updated with `agy update`. Main fetches the script over HTTPS
 itself, with a program's user agent (cursor.com answers a browser's with its web page), runs it as the person with the
 contractor environment (no keys, none of the other vendor's variables; Codex with
 `CODEX_NON_INTERACTIVE=1` so it asks nothing), keeps only its last output for `studio.log` and
@@ -354,8 +354,8 @@ its own sessions. Tests: `engine-cursor.test.ts` on `tests/fixtures/transcripts/
 ## Antigravity
 
 **Antigravity** ([antigravity.ts](../src/substrate/engines/antigravity.ts)) is a delegated engine
-that runs Google's Antigravity CLI on the person's Google AI plan (Beta, on a Mac only for now:
-`StudioCore` registers it there alone). The only mode Genex starts is `agy acp`, the CLI's Agent
+that runs Google's Antigravity CLI on the person's Google AI plan (Beta, on macOS, Windows and
+Linux). The only mode Genex starts is `agy acp`, the CLI's Agent
 Client Protocol server on stdio ([acp.ts](../src/substrate/engines/acp.ts)): Google's own words are
 that wrapping its print mode (`agy -p`) is not for consumer plans, while any ACP client may launch
 `agy acp`. One turn is one process: `initialize`, `session/new` (or `session/load` to continue a

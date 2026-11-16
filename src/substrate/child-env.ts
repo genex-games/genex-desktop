@@ -106,6 +106,22 @@ export function isCredentialVariable(name: string, value?: string): boolean {
   );
 }
 
+/**
+ * A coding CLI's own variables in `parent` and nothing else, never a credential: what a CLI that
+ * runs in the sandbox is given on top of the sandbox's own allow-list (which builds the rest). The
+ * person's whole environment would not do there: on Windows the sandbox writes each variable into
+ * a shell file, which refuses a name like `ProgramFiles(x86)`.
+ */
+export function vendorEnv(
+  parent: Record<string, string | undefined>,
+  vendor: Exclude<ContractorRequest["vendor"], "none">,
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(parent))
+    if (value !== undefined && VENDOR[vendor].test(key) && !isCredentialVariable(key, value)) env[key] = value;
+  return env;
+}
+
 /** The other vendor's variables a coding CLI's child never sees; a tool of neither vendor sees neither's. */
 const FOREIGN_VENDORS: Record<ContractorRequest["vendor"], readonly RegExp[]> = {
   claude: [VENDOR.codex, VENDOR.opencode, VENDOR.grok, VENDOR.cursor, VENDOR.antigravity],
