@@ -4061,9 +4061,13 @@ export default {
   "This version is too old for Studio.": "이 버전은 너무 오래돼서 Studio에서 쓸 수 없어요.",
   "This video codec could not be played. Try an MP4 (H.264) or WebM export.":
     "이 비디오 코덱은 재생할 수 없어요. MP4(H.264)나 WebM으로 내보내 보세요.",
+  "This {name} comes with the {app} app. Update the {app} app, then check again.":
+    "이 {name}은(는) {app} 앱에 포함되어 있어요. {app} 앱을 업데이트한 다음 다시 확인해 주세요.",
   "This {name} install needs Node.js, which isn't installed. Install the native version instead.":
     "이 {name} 설치에는 Node.js가 필요한데 설치되어 있지 않아요. 대신 네이티브 버전을 설치하세요.",
   Threshold: "임계값",
+  "This {name} is part of a desktop app, so only that app can update it. Update the app, then check again.":
+    "이 {name}은(는) 데스크톱 앱의 일부라서 그 앱만 업데이트할 수 있어요. 앱을 업데이트한 다음 다시 확인해 주세요.",
   "To {folder}. Genex reopens when it’s done.": "{folder} 폴더로 옮기고 있어요. 끝나면 Genex가 다시 열려요.",
   Today: "오늘",
   "Toggle Developer Tools": "개발자 도구",

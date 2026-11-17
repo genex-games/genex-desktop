@@ -31,6 +31,7 @@ it("a manual update never invokes the installer and refuses active work", async 
 });
 
 import { updateCodingCli } from "../../src/substrate/cli-update.ts";
+import { CliInstallProblem } from "../../src/shared/cli-install.ts";
 import { fixtureCodingCli } from "../helpers/external-cli.ts";
 it("CLI update runs only the selected executable then verifies that installation", async () => {
   const calls: string[] = [];
@@ -54,4 +55,51 @@ it("CLI update runs only the selected executable then verifies that installation
     "invalidate",
     "resolve /selected/codex",
   ]);
+});
+
+it("a CLI inside a desktop app is never asked to update itself: the app updates it", async () => {
+  const bundled = [
+    "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+    "/Users/sam/Applications/Codex.app/Contents/Resources/codex-cli/bin/codex",
+    "/Users/sam/Library/Application Support/Claude/claude-code/2.1.0/abc/claude.app/Contents/MacOS/claude",
+  ];
+  for (const executable of bundled) {
+    const ran: string[] = [];
+    const result = await updateCodingCli("codex", executable, {
+      resolve: async (provider) => ({ ...(await fixtureCodingCli(provider)), path: executable }),
+      run: async (binary, args) => {
+        ran.push(`${binary} ${args.join(" ")}`);
+        return { code: 1, stdout: "", stderr: "" };
+      },
+      real: async (file) => file,
+    });
+    assert.equal(!result.ok && result.problem, CliInstallProblem.AppManaged, executable);
+    assert.deepEqual(ran, [], executable);
+  }
+  // A launcher that only points into an app (a link on the PATH) is the app's copy too.
+  const linked = await updateCodingCli("codex", "/usr/local/bin/codex", {
+    resolve: async (provider) => ({ ...(await fixtureCodingCli(provider)), path: "/usr/local/bin/codex" }),
+    run: async () => assert.fail("the app's copy was run"),
+    real: async () => bundled[0],
+  });
+  assert.equal(!linked.ok && linked.problem, CliInstallProblem.AppManaged);
+  // Names that merely look like an app folder are ordinary installs.
+  for (const executable of [
+    "/opt/my.app/bin/codex",
+    "/Users/sam/.application/Contents/codex",
+    "/opt/homebrew/bin/codex",
+  ]) {
+    const ran: string[] = [];
+    const result = await updateCodingCli("codex", executable, {
+      resolve: async (provider) => ({ ...(await fixtureCodingCli(provider)), path: executable }),
+      run: async (binary, args) => {
+        ran.push(`${binary} ${args.join(" ")}`);
+        return { code: 0, stdout: "", stderr: "" };
+      },
+      invalidate: () => {},
+      real: async (file) => file,
+    });
+    assert.deepEqual(result, { ok: true }, executable);
+    assert.deepEqual(ran, [`${executable} update`], executable);
+  }
 });

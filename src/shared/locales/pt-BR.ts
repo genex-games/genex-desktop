@@ -4207,9 +4207,13 @@ export default {
   "This version is too old for Studio.": "Esta versão é antiga demais para o Studio.",
   "This video codec could not be played. Try an MP4 (H.264) or WebM export.":
     "Não foi possível reproduzir este codec de vídeo. Tente exportar em MP4 (H.264) ou WebM.",
+  "This {name} comes with the {app} app. Update the {app} app, then check again.":
+    "Este {name} vem com o app {app}. Atualize o app {app} e verifique de novo.",
   "This {name} install needs Node.js, which isn't installed. Install the native version instead.":
     "Esta instalação de {name} precisa do Node.js, que não está instalado. Instale a versão nativa em vez disso.",
   Threshold: "Limiar",
+  "This {name} is part of a desktop app, so only that app can update it. Update the app, then check again.":
+    "Este {name} faz parte de um app de desktop, e só ele pode atualizá-lo. Atualize o app e verifique de novo.",
   "To {folder}. Genex reopens when it’s done.": "Para {folder}. O Genex abre de novo quando terminar.",
   Today: "Hoje",
   "Toggle Developer Tools": "Ferramentas do desenvolvedor",

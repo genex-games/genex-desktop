@@ -12,7 +12,7 @@ import {
   installsInApp,
 } from "../shared/cli-install.ts";
 import { t } from "../shared/i18n.ts";
-import { providerInfo } from "../shared/providers.ts";
+import { EngineId, providerInfo } from "../shared/providers.ts";
 import { UiEvent } from "../shared/ui-events.ts";
 import { reportCliInstallRefused } from "./analytics/welcome-report.ts";
 import { hostPlatform } from "./platform.ts";
@@ -27,11 +27,32 @@ const PROBLEM: Record<CliInstallProblem, (name: string) => string> = {
   [CliInstallProblem.NotFound]: (name) => t("{name} installed, but Genex can't find it. Try again.", { name }),
   [CliInstallProblem.Unsupported]: (name) =>
     t("Genex can't install {name} on this computer. Install it with its guide, then check again.", { name }),
+  [CliInstallProblem.AppManaged]: (name) =>
+    t("This {name} is part of a desktop app, so only that app can update it. Update the app, then check again.", {
+      name,
+    }),
 };
+
+/** The desktop app that ships each CLI inside itself, by its own name. */
+const SHIPPING_APP: Readonly<Record<string, string>> = {
+  [EngineId.Codex]: "ChatGPT",
+  [EngineId.ClaudeCode]: "Claude",
+};
+
+/** What an update of an app's own copy says: which app to update. */
+function appManagedWords(provider: string): string {
+  const name = providerInfo(provider)?.label ?? provider;
+  if (!Object.hasOwn(SHIPPING_APP, provider)) return PROBLEM[CliInstallProblem.AppManaged](name);
+  return t("This {name} comes with the {app} app. Update the {app} app, then check again.", {
+    name,
+    app: SHIPPING_APP[provider],
+  });
+}
 
 /** What a failed install says, or null when the job did not fail. */
 export function cliInstallProblemWords(job: CliInstallJob | null): string | null {
   if (job?.phase !== CliInstallPhase.Failed || !job.problem) return null;
+  if (job.problem === CliInstallProblem.AppManaged) return appManagedWords(job.provider);
   if (job.operation === CliInstallOperation.Update)
     return t(
       "Could not update this installation. Open the installation guide or use its package manager, then check again.",

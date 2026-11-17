@@ -1,7 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { cliInstallProblemWords, newerReport } from "../../src/renderer/cli-install.ts";
-import { CliInstallPhase, CliInstallProblem, type CliInstallJob } from "../../src/shared/cli-install.ts";
+import {
+  CliInstallOperation,
+  CliInstallPhase,
+  CliInstallProblem,
+  type CliInstallJob,
+} from "../../src/shared/cli-install.ts";
 
 const started: CliInstallJob = {
   provider: "codex",
@@ -42,4 +47,19 @@ test("only a failed install has words, one line per reason, naming the CLI", () 
     ),
     /Claude Code/,
   );
+});
+
+test("a failed update of an app's own copy names the app to update", () => {
+  const failed: CliInstallJob = {
+    ...finished,
+    operation: CliInstallOperation.Update,
+    phase: CliInstallPhase.Failed,
+    problem: CliInstallProblem.AppManaged,
+  };
+  assert.match(String(cliInstallProblemWords(failed)), /Update the ChatGPT app/);
+  assert.match(String(cliInstallProblemWords({ ...failed, provider: "claude-code" })), /Update the Claude app/);
+  const other = String(cliInstallProblemWords({ ...failed, provider: "grok" }));
+  assert.match(other, /Update the app/);
+  const generic = cliInstallProblemWords({ ...failed, problem: CliInstallProblem.Installer });
+  assert.notEqual(cliInstallProblemWords(failed), generic);
 });

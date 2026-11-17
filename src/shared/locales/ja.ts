@@ -4170,9 +4170,13 @@ export default {
   "This version is too old for Studio.": "このバージョンはStudioには古すぎます。",
   "This video codec could not be played. Try an MP4 (H.264) or WebM export.":
     "このビデオコーデックは再生できません。MP4（H.264）かWebMで書き出してみてください。",
+  "This {name} comes with the {app} app. Update the {app} app, then check again.":
+    "この {name} は {app} アプリに付属しています。{app} アプリをアップデートしてから、もう一度確認してください。",
   "This {name} install needs Node.js, which isn't installed. Install the native version instead.":
     "この{name}にはNode.jsが必要ですが、インストールされていません。代わりにネイティブ版をインストールしてください。",
   Threshold: "しきい値",
+  "This {name} is part of a desktop app, so only that app can update it. Update the app, then check again.":
+    "この {name} はデスクトップアプリの一部で、そのアプリだけがアップデートできます。アプリをアップデートしてから、もう一度確認してください。",
   "To {folder}. Genex reopens when it’s done.": "移動先：{folder}。終わるとGenexがもう一度開きます。",
   Today: "今日",
   "Toggle Developer Tools": "デベロッパーツール",

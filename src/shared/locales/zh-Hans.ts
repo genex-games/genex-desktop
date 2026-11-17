@@ -3917,9 +3917,13 @@ export default {
   "This version is too old for Studio.": "此版本太旧，无法用于 Studio。",
   "This video codec could not be played. Try an MP4 (H.264) or WebM export.":
     "无法播放这种视频编码。请尝试导出为 MP4（H.264）或 WebM。",
+  "This {name} comes with the {app} app. Update the {app} app, then check again.":
+    "此 {name} 随 {app} 应用一起提供。请更新 {app} 应用，然后再检查一次。",
   "This {name} install needs Node.js, which isn't installed. Install the native version instead.":
     "此 {name} 安装需要 Node.js，但尚未安装。请改为安装原生版本。",
   Threshold: "阈值",
+  "This {name} is part of a desktop app, so only that app can update it. Update the app, then check again.":
+    "此 {name} 属于某个桌面应用，只有该应用能更新它。请更新该应用，然后再检查一次。",
   "To {folder}. Genex reopens when it’s done.": "目标：{folder}。完成后 Genex 会重新打开。",
   Today: "今天",
   "Toggle Developer Tools": "开发者工具",

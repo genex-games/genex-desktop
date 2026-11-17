@@ -26,6 +26,8 @@ export const CliInstallProblem = {
   NotFound: "not-found",
   /** The vendor publishes no installer Genex can run on this system: the person installs it by its guide. */
   Unsupported: "unsupported",
+  /** An update of the copy a desktop app ships inside itself (Codex in the ChatGPT app): only that app updates it. */
+  AppManaged: "app-managed",
 } as const;
 export type CliInstallProblem = (typeof CliInstallProblem)[keyof typeof CliInstallProblem];
 
