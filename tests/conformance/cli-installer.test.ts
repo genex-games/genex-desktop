@@ -280,3 +280,54 @@ test("an installer that fails or hangs is reported with its last words, and a hu
   assert.equal(existsSync(marker), false);
   assert.deepEqual(readdirSync(tmpRoot), []);
 });
+
+test("a failed installer says what its CLI's download host answered, so a vendor's region block is told apart", {
+  skip: POSIX_ONLY,
+}, async () => {
+  const RELEASES = "https://downloads.claude.ai/claude-code-releases/latest";
+  const failing = "#!/bin/sh\necho 'Failed to get latest version' >&2\nexit 1\n";
+  /** Serves the installer, and answers the download host with `releases`. */
+  const host = (releases: () => Promise<Response>, asked: string[] = []): typeof fetch =>
+    (async (input: string | URL | Request) => {
+      asked.push(String(input));
+      if (String(input) === RELEASES) return releases();
+      return serving(failing)(input);
+    }) as typeof fetch;
+  const cases: [string, () => Promise<Response>, { httpStatus?: number; netError?: string }][] = [
+    ["refused for the region", async () => new Response("blocked", { status: 403 }), { httpStatus: 403 }],
+    [
+      "unreachable",
+      async () => {
+        throw new TypeError("net::ERR_CONNECTION_RESET");
+      },
+      { netError: "ERR_CONNECTION_RESET" },
+    ],
+    ["reachable: the installer failed for another reason", async () => new Response("2.1.0"), {}],
+  ];
+  for (const [name, releases, answered] of cases) {
+    const outcome = await installCodingCli("claude-code", {
+      platform: process.platform,
+      env: PARENT,
+      fetch: host(releases),
+      tmpRoot: await tmpDir("cli-installer-"),
+    });
+    assert.equal(!outcome.ok && outcome.problem, CliInstallProblem.Installer, name);
+    if (outcome.ok) continue;
+    assert.deepEqual(
+      { httpStatus: outcome.httpStatus, netError: outcome.netError },
+      { httpStatus: answered.httpStatus, netError: answered.netError },
+      name,
+    );
+    assert.match(outcome.detail, /Failed to get latest version/, name);
+  }
+
+  const asked: string[] = [];
+  const codex = await installCodingCli("codex", {
+    platform: process.platform,
+    env: PARENT,
+    fetch: host(async () => new Response("", { status: 403 }), asked),
+    tmpRoot: await tmpDir("cli-installer-"),
+  });
+  assert.equal(!codex.ok && codex.problem, CliInstallProblem.Installer);
+  assert.deepEqual(asked, ["https://chatgpt.com/codex/install.sh"], "a CLI with no known download host is not asked");
+});

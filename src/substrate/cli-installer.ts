@@ -37,6 +37,8 @@ const INSTALLER_USER_AGENT = "Genex (coding CLI installer)";
 const OUTPUT_TAIL_CHARS = 4000;
 /** How long an exited installer's output may take to close before it is read as it stands. */
 const EXIT_GRACE_MS = 2 * SECOND_MS;
+/** How long the download host of a failed installer may take to answer. */
+const RELEASES_TIMEOUT_MS = 15 * SECOND_MS;
 
 /** One CLI's installers, the shell its macOS/Linux script is written for, and what keeps it from asking. */
 interface Installer {
@@ -45,6 +47,12 @@ interface Installer {
   windows: string | null;
   shell: string;
   set: Record<string, string>;
+  /**
+   * What the installer itself downloads the CLI from, or null when not known. A failed installer
+   * says only that it failed (Claude Code's exits 1 at every step); asking this host what it answers
+   * tells a vendor refusing the region (403) or an unreachable host apart from the rest.
+   */
+  releases: string | null;
   vendor: "claude" | "codex" | "opencode" | "grok" | "cursor" | "antigravity";
 }
 
@@ -55,6 +63,7 @@ const INSTALLERS = {
     windows: "https://claude.ai/install.ps1",
     shell: "/bin/bash",
     set: {},
+    releases: "https://downloads.claude.ai/claude-code-releases/latest",
     vendor: "claude",
   },
   [EngineId.Codex]: {
@@ -63,6 +72,7 @@ const INSTALLERS = {
     shell: "/bin/sh",
     // Without it the script offers to start Codex, or to remove an npm or Homebrew copy, and waits.
     set: { CODEX_NON_INTERACTIVE: "1" },
+    releases: null,
     vendor: "codex",
   },
   [EngineId.OpenCode]: {
@@ -70,6 +80,7 @@ const INSTALLERS = {
     windows: null,
     shell: "/bin/bash",
     set: {},
+    releases: null,
     vendor: "opencode",
   },
   // Installs into `~/.grok/bin` (`%USERPROFILE%\.grok\bin`), where discovery looks; it asks nothing.
@@ -78,6 +89,7 @@ const INSTALLERS = {
     windows: "https://x.ai/cli/install.ps1",
     shell: "/bin/bash",
     set: {},
+    releases: null,
     vendor: "grok",
   },
   [EngineId.Cursor]: {
@@ -85,6 +97,7 @@ const INSTALLERS = {
     windows: "https://cursor.com/install?win32=true",
     shell: "/bin/bash",
     set: {},
+    releases: null,
     vendor: "cursor",
   },
   // Installs `agy` into `~/.local/bin`, where discovery looks; it asks nothing.
@@ -93,6 +106,7 @@ const INSTALLERS = {
     windows: "https://antigravity.google/cli/install.ps1",
     shell: "/bin/bash",
     set: {},
+    releases: null,
     vendor: "antigravity",
   },
 } as const satisfies Record<CodingProvider, Installer>;
@@ -104,6 +118,8 @@ const MESSAGE = {
   status: (status: number) => `the installer download answered ${status}`,
   size: (bytes: number) => `the installer download was ${bytes} bytes`,
   exited: (code: number | null, output: string) => `the installer exited with ${code}: ${output}`,
+  releases: (url: string, answer: DownloadAnswer) =>
+    `; ${url} answered ${answer.httpStatus ?? answer.netError ?? "no status"}`,
   timedOut: (output: string) => `the installer did not finish in time: ${output}`,
   noInstaller: (provider: string, platform: string) => `${provider} publishes no installer for ${platform}`,
 } as const;
@@ -200,9 +216,8 @@ export async function installCodingCli(
       platform,
     });
     if (exit.timedOut) return { ok: false, problem: CliInstallProblem.TimedOut, detail: MESSAGE.timedOut(exit.output) };
-    if (exit.code !== 0)
-      return { ok: false, problem: CliInstallProblem.Installer, detail: MESSAGE.exited(exit.code, exit.output) };
-    return { ok: true };
+    if (exit.code === 0) return { ok: true };
+    return await installerFailed(installer, exit, options.fetch ?? fetch);
   } finally {
     await rm(folder, { recursive: true, force: true });
   }
@@ -232,6 +247,34 @@ async function download(
   if (bytes.byteLength === 0 || bytes.byteLength > SCRIPT_MAX_BYTES)
     return { ok: false, detail: MESSAGE.size(bytes.byteLength) };
   return { ok: true, text: new TextDecoder().decode(bytes) };
+}
+
+/** A failed installer, with its last words and what its CLI's download host answers. */
+async function installerFailed(
+  installer: Installer,
+  exit: InstallerExit,
+  fetchFn: FetchInstaller,
+): Promise<InstallOutcome> {
+  const detail = MESSAGE.exited(exit.code, exit.output);
+  if (!installer.releases) return { ok: false, problem: CliInstallProblem.Installer, detail };
+  const answer = await releasesAnswer(installer.releases, fetchFn);
+  const heard = answer.httpStatus || answer.netError ? MESSAGE.releases(installer.releases, answer) : "";
+  return { ok: false, problem: CliInstallProblem.Installer, detail: detail + heard, ...answer };
+}
+
+/** What a failed installer's download host answers: its refusal or network error, or nothing when it serves. */
+async function releasesAnswer(url: string, fetchFn: FetchInstaller): Promise<DownloadAnswer> {
+  try {
+    const response = await fetchFn(url, {
+      headers: { "user-agent": INSTALLER_USER_AGENT },
+      signal: AbortSignal.timeout(RELEASES_TIMEOUT_MS),
+    });
+    await response.body?.cancel();
+    return response.ok ? {} : { httpStatus: response.status };
+  } catch (err) {
+    const netError = netErrorOf(err);
+    return netError ? { netError } : {};
+  }
 }
 
 /**

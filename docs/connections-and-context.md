@@ -135,7 +135,9 @@ contractor environment (no keys, none of the other vendor's variables; Codex wit
 `CODEX_NON_INTERACTIVE=1` so it asks nothing), keeps only its last output for `studio.log` and
 stops it after ten minutes. Both installers use folders discovery already searches (`~/.local/bin`;
 Codex's `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin` on Windows). The engine then rechecks, and an
-installer that exits cleanly without a working CLI counts as failed. There is one job per CLI: a
+installer that exits cleanly without a working CLI counts as failed. When Claude Code's installer
+fails, main asks its download host (`downloads.claude.ai`) once and keeps the refusal or network
+error with the failure, as a failed download keeps its own. There is one job per CLI: a
 second press joins it and every button follows it (`cli.install`). The page names only which CLI;
 `studio:cli-install.start` is native, so fixture profiles refuse it. Like the person's own terminal,
 the installer runs outside `ProcessSandbox` ([cli-installer.ts](../src/substrate/cli-installer.ts)).

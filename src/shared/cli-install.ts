@@ -61,7 +61,10 @@ export interface CliInstallJob {
   provider: CodingProvider;
   phase: CliInstallPhase;
   problem?: CliInstallProblem;
-  /** A failed download: the HTTP status it was refused with (a vendor blocking the region answers 403). */
+  /**
+   * A failed download, or the download host of a failed installer: the HTTP status it was refused
+   * with (a vendor blocking the region answers 403).
+   */
   httpStatus?: number;
   /** A failed download that got no answer: Chromium's network error ("ERR_NAME_NOT_RESOLVED"). */
   netError?: string;

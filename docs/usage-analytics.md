@@ -122,7 +122,8 @@ stops recording, opts out and resets the id.
 - **The welcome** keeps the step an unfinished welcome stood on (`studio.analytics.welcomeScreen`),
   so the next launch's `welcome_shown` says it resumed and where. A CLI install whose installer
   download failed says what answered it (`cli_install_finished`'s `http_status`, or Chromium's
-  `net_error`), so a vendor refusing a region (403) reads apart from a machine that is offline.
+  `net_error`), so a vendor refusing a region (403) reads apart from a machine that is offline. A
+  failed Claude Code installer carries what its download host answered the same way.
 - **Long tasks**: `ui_stall_summarized` sums each five minutes of the window's long tasks per
   screen, with `chat_log_events`, the size of the open chat's log then, so a stall that grows
   with a long Loop reads apart from one that does not.
