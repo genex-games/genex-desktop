@@ -9,10 +9,13 @@ const SAMPLE_RATE = 30;
  * this is called. `sourceName` gives the source's bone for a hero bone (or nothing when it has
  * none) and `heroHips` names the hero's hip bone. Every bone's turn is taken in world space,
  * measured from the source's rest pose and applied from the hero's rest pose, after the hero's
- * resting bones are lined up with the source's. The hips also carry the body's travel, scaled to
- * the hero's height.
+ * resting bones are lined up with the source's. The hero's `feet` (and the toes below them) are
+ * the exception: a foot bone points another way inside the foot on every skeleton, so the feet
+ * keep their own resting angle to the ground and a foot that is flat in the source stays flat on
+ * the hero. The hips also carry the body's travel, scaled by the two leg lengths so the planted
+ * foot stays on the ground.
  */
-export function transferClip(clip, source, hero, heroHips, sourceName) {
+export function transferClip(clip, source, hero, heroHips, sourceName, feet) {
   source.updateMatrixWorld(true);
   hero.updateMatrixWorld(true);
   const worldTurn = (object) => object.getWorldQuaternion(new THREE.Quaternion());
@@ -24,7 +27,10 @@ export function transferClip(clip, source, hero, heroHips, sourceName) {
     const from = name ? source.getObjectByName(name) : null;
     if (from) matched.set(bone, { from, fromRest: worldTurn(from), rest: worldTurn(bone), align: new THREE.Quaternion(), values: [] });
   });
+  const footBones = new Set();
+  for (const name of feet) hero.getObjectByName(name).traverse((bone) => footBones.add(bone));
   for (const [bone, entry] of matched) {
+    if (footBones.has(bone)) continue;
     const children = bone.children.filter((child) => matched.has(child));
     if (children.length !== 1) {
       // A hand, a toe or a head has no matched child to point at: it turns with the bone it hangs on.
@@ -41,7 +47,14 @@ export function transferClip(clip, source, hero, heroHips, sourceName) {
   const fromHips = matched.get(hips).from;
   const hipsRest = worldPoint(hips);
   const fromHipsRest = worldPoint(fromHips);
-  const heightRatio = hipsRest.y / fromHipsRest.y;
+  /** The length of the chain of bones from `foot` up to `top`. */
+  const legLength = (foot, top) => {
+    let length = 0;
+    for (let bone = foot; bone !== top; bone = bone.parent) length += worldPoint(bone).distanceTo(worldPoint(bone.parent));
+    return length;
+  };
+  const foot = hero.getObjectByName(feet[0]);
+  const heightRatio = legLength(foot, hips) / legLength(matched.get(foot).from, fromHips);
 
   const mixer = new THREE.AnimationMixer(source);
   const action = mixer.clipAction(clip);
