@@ -2256,16 +2256,15 @@ function cliInstalls(studio: StudioCore) {
  * Keep the installer's own Codex on the latest stable release while the app runs
  * (`cli-auto-update.ts`). A development profile, a smoke run and a test never update anything.
  */
-function startCodexAutoUpdate(installs: CliInstalls): void {
+function startCodexAutoUpdate(studio: StudioCore, installs: CliInstalls): void {
   if (dev || isSmoke || testUserData) return;
   scheduleCliAutoUpdate(
     () =>
       autoUpdateCodex({
+        // The same answer Update acts on, so the check and the update name one file.
         selected: async () => {
-          const { status } = await resolveCodingCli(EngineId.Codex);
-          return status.state === CodingCliState.Ready && status.path
-            ? { path: status.path, version: status.version }
-            : null;
+          const cli = (await studio.engines.get(EngineId.Codex).account?.())?.cli;
+          return cli?.state === CodingCliState.Ready && cli.path ? { path: cli.path, version: cli.version } : null;
         },
         owned: (executable) => installedByCodexInstaller(executable),
         latest: () => latestCodexVersion(net.fetch),
@@ -2415,7 +2414,7 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
   });
   const installs = cliInstalls(studio);
   registerCliInstallIpc(handle, installs);
-  startCodexAutoUpdate(installs);
+  startCodexAutoUpdate(studio, installs);
   registerProjectsIpc(handle, { core: studio, window: () => window, gamesRootLabel, web: playOrigin.web });
   registerDataFolderIpc(handle, dataFolderIpc(studio));
   registerGenexAccountIpc(handle, { account: genexAccountFor(studio), web: playOrigin.web });
