@@ -475,6 +475,129 @@ starts the Loop after a first turn made it, or from a Godot start folder once lo
 have one. Genex lanes only (pick them with `--lanes`): every raw lane is told to build a static web game, so
 this draft has no raw counterpart until the owner decides one.
 
+
+## Animation cases *(drafts: owner pins before first baseline)*
+
+One case, one skill: every start game plays one animation in a loop from its first frame, with no
+keys and no switching between clips. The brief never says why a clip does not fit as it is.
+
+## C19 · `anim-library-walk-on-generated` — a library walk on a generated character *(draft: owner pins before first baseline)*
+
+**Mode:** `edit-existing`
+**Exposure:** none
+**Deadline:** 20 min
+**Start from:** `tests/fixtures/evals/games/anim-library-walk-on-generated`
+
+> Make him walk on the spot: play the walk from assets/walk.glb in a loop instead of the idle.
+
+**Acceptance:**
+
+```
+[ ] the character walks on the spot in a loop with no key pressed    <- "walk on the spot"
+[ ] KEY: it reads as a walk: the legs step, the arms swing, the body stays upright and untwisted
+[ ] the body keeps its own proportions: nothing stretched, squashed or shrunk
+[ ] the feet stay on the ground and the character stays where it stood
+[ ] the idle no longer plays                                         <- "instead of the idle"
+```
+
+**Control:** the character moonwalks across the yard to a marching band
+
+The hero is a character Genex generated (24 bones, no fingers, centimetres); the walk was made for
+a library mannequin with other bone names, another resting pose and other bone lengths.
+
+## C20 · `anim-generated-walk-on-generated` — another generated character's walk *(draft: owner pins before first baseline)*
+
+**Mode:** `edit-existing`
+**Exposure:** none
+**Deadline:** 20 min
+**Start from:** `tests/fixtures/evals/games/anim-generated-walk-on-generated`
+
+> Make him walk on the spot: play the walk from assets/walk.glb in a loop instead of the idle.
+
+**Acceptance:**
+
+```
+[ ] the character walks on the spot in a loop with no key pressed    <- "walk on the spot"
+[ ] KEY: it reads as a walk: the legs step, the arms swing, the body stays upright and untwisted
+[ ] the body keeps its own proportions: nothing stretched, squashed or shrunk
+[ ] the feet stay on the ground and the character stays where it stood
+[ ] the idle no longer plays                                         <- "instead of the idle"
+```
+
+**Control:** the character moonwalks across the yard to a marching band
+
+The hero and the walk both come from Genex, from two different characters: the bone names match,
+the resting poses and bone lengths do not.
+
+## C21 · `anim-generated-walk-on-mannequin` — a generated character's walk on a mannequin *(draft: owner pins before first baseline)*
+
+**Mode:** `edit-existing`
+**Exposure:** none
+**Deadline:** 20 min
+**Start from:** `tests/fixtures/evals/games/anim-generated-walk-on-mannequin`
+
+> Make the mannequin walk on the spot: play the walk from assets/walk.glb in a loop instead of the idle.
+
+**Acceptance:**
+
+```
+[ ] the character walks on the spot in a loop with no key pressed    <- "walk on the spot"
+[ ] KEY: it reads as a walk: the legs step, the arms swing, the body stays upright and untwisted
+[ ] the body keeps its own proportions: nothing stretched, squashed or shrunk
+[ ] the feet stay on the ground and the character stays where it stood
+[ ] the idle no longer plays                                         <- "instead of the idle"
+```
+
+**Control:** the character moonwalks across the yard to a marching band
+
+The reverse of C19: the walk was made for a generated character, the hero is a library mannequin.
+
+## C22 · `anim-sword-in-hand` — a katana into a closed fist *(draft: owner pins before first baseline)*
+
+**Mode:** `edit-existing`
+**Exposure:** none
+**Deadline:** 20 min
+**Start from:** `tests/fixtures/evals/games/anim-sword-in-hand`
+
+> Put the katana from assets/katana in his right hand: he holds it by the hilt in this stance.
+
+**Acceptance:**
+
+```
+[ ] the katana is in the scene                                       <- "the katana from assets/katana"
+[ ] KEY: the hilt is inside his right fist, not beside the hand and not through the wrist   <- "by the hilt"
+[ ] the blade leaves the fist on the thumb side and passes through no part of his body
+[ ] the katana is a sensible size for him
+[ ] the katana moves with the hand as the stance breathes            <- "in his right hand"
+```
+
+**Control:** the katana hums a lullaby while he holds it
+
+The mannequin has finger bones and its fist is closed in the stance; the katana's origin is at its
+guard. Nothing says where the palm is or which way the edge faces.
+
+## C23 · `anim-nothing-to-fix` — a working animation left alone *(draft: owner pins before first baseline)*
+
+**Mode:** `edit-existing`
+**Exposure:** none
+**Deadline:** 20 min
+**Start from:** `tests/fixtures/evals/games/anim-nothing-to-fix`
+
+> Check his walk animation and fix anything that is wrong with it.
+
+**Acceptance:**
+
+```
+[ ] KEY: the walk plays as it did before                             <- "his walk animation"
+[ ] the agent says nothing needed fixing                             <- "fix anything that is wrong"
+[ ] the agent did not rewrite code it was not asked about
+```
+
+**Control:** the character now walks on the ceiling
+
+The start game is a correct answer to C19. The case measures restraint: the only wrong move is to
+change what works.
+
 ---
 
 # Rotation and holdouts

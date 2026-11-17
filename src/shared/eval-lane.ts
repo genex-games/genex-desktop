@@ -259,6 +259,12 @@ export interface EvalLaneSpec {
    * defaults, where every bundled plugin but Blender (Genex included) is on.
    */
   disabledPlugins?: string[];
+  /**
+   * An edit case's start game: the name of a folder directly under `gamesRoot`, which the lane
+   * runner laid there. The chat is bound to it, opened as a game the person brought, before the
+   * brief is sent. Absent = the agent makes its own game.
+   */
+  startGame?: string;
 }
 
 /** How an eval launch exits: the scheduler reads the code, the report says why. */

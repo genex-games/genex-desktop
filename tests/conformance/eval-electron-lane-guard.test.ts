@@ -297,6 +297,27 @@ describe("parsing a spec", () => {
         JSON.stringify(disabledPlugins),
       );
   });
+
+  it("takes a start game's folder name, and refuses anything that could name a folder outside the games root", () => {
+    assert.equal(parseEvalLaunch({ ...specIn("/w"), startGame: "anim-walk-1" }).spec.startGame, "anim-walk-1");
+    assert.equal(parseEvalLaunch(specIn("/w")).spec.startGame, undefined);
+    for (const startGame of [
+      "",
+      ".",
+      "..",
+      "../games",
+      "a/b",
+      "a\\b",
+      "/w/games/a",
+      "-a",
+      "Walk",
+      "a b",
+      7,
+      ["a"],
+      null,
+    ])
+      assert.throws(() => parseEvalLaunch({ ...specIn("/w"), startGame }), /startGame/, JSON.stringify(startGame));
+  });
 });
 
 let nextId = 0;

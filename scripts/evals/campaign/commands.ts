@@ -12,7 +12,7 @@ import { promisify } from "node:util";
 import { ProcessSandbox } from "../../../src/substrate/spawn.ts";
 import { budgetCaps, engineQuotaReader, type QuotaReader, SYSTEM_BUDGET_CLOCK } from "../budget.ts";
 import type { EvalCase } from "../case-types.ts";
-import { readCases, readHoldoutCases } from "../cases.ts";
+import { readCases, readHoldoutCases, resolveStartFrom } from "../cases.ts";
 import { probeBoot } from "../grade/quick-probe.ts";
 import { sandboxedServe } from "../grade/serve.ts";
 import type { ServeSnapshot } from "../grade/types.ts";
@@ -143,6 +143,10 @@ export interface PlanCommandDeps {
 }
 
 /** The public cases and, when the private file exists, the holdouts. */
+/** Where an edit case starts from in this checkout; null for a case built from nothing. */
+const startDirIn = (root: string) => (evalCase: EvalCase) =>
+  evalCase.startFrom === null ? null : resolveStartFrom(root, evalCase);
+
 function allCases(root: string, evalsHome: string): EvalCase[] {
   return [...readCases(root), ...readHoldoutCases(evalsHome)];
 }
@@ -288,6 +292,7 @@ export async function systemRunDeps(env: NodeJS.ProcessEnv = process.env): Promi
     paths,
     layout,
     cases: allCases(root, home),
+    startDir: startDirIn(root),
     registry: readLaneRegistry(root),
     prices: readPriceTable(root),
     clock: SYSTEM_BUDGET_CLOCK,
@@ -366,6 +371,7 @@ async function dryRunDeps(env: NodeJS.ProcessEnv = process.env): Promise<Campaig
     paths,
     layout: evalsLayout(home),
     cases: allCases(root, home),
+    startDir: startDirIn(root),
     registry: readLaneRegistry(root),
     prices: readPriceTable(root),
     clock: SYSTEM_BUDGET_CLOCK,

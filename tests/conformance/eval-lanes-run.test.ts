@@ -227,6 +227,7 @@ function request(laneId: string, root: string, overrides: Partial<LaneRunRequest
     interleaveSeed: "seed",
     coRunLane: null,
     templateDigest: null,
+    startDir: null,
     ...overrides,
   };
 }
@@ -720,6 +721,61 @@ describe("raw Codex lane", () => {
   });
 });
 
+// ── start folders ───────────────────────────────────────────────────────────────────────
+
+/** A small game as a start folder would hold it, outside the run's own folders. */
+const startFolder = (root: string): string => {
+  const dir = path.join(root, "start");
+  fs.mkdirSync(path.join(dir, "src"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "index.html"), "<canvas>");
+  fs.writeFileSync(path.join(dir, "src", "main.js"), "// the game");
+  return dir;
+};
+/** The files under `dir` by relative path; none when the folder is missing. */
+const filesIn = (dir: string): string[] =>
+  fs.existsSync(dir)
+    ? fs
+        .readdirSync(dir, { recursive: true, withFileTypes: true })
+        .filter((entry) => entry.isFile())
+        .map((entry) => path.relative(dir, path.join(entry.parentPath, entry.name)))
+        .sort()
+    : [];
+
+describe("an edit case's start folder", () => {
+  it("is copied into a raw lane's project before the agent starts", async () => {
+    const root = tempDir();
+    const startDir = startFolder(root);
+    let atStart: string[] = [];
+    const machine = fakeMachine({
+      lines: fixtureLines("claude-stream.jsonl"),
+      before: (_args, cwd) => {
+        atStart = filesIn(cwd);
+        fs.mkdirSync(path.join(cwd, "src"), { recursive: true });
+        fs.writeFileSync(path.join(cwd, "src", "main.js"), "// the agent's edit");
+      },
+    });
+    const result = await runRawLane(request("raw-claude", root, { startDir }), rawDeps(machine, root));
+    assert.equal(result.harnessFailure, null);
+    assert.deepEqual(atStart, ["index.html", path.join("src", "main.js")]);
+    // The agent edits its copy: the start folder stays as it was for the next run.
+    assert.equal(fs.readFileSync(path.join(startDir, "src", "main.js"), "utf8"), "// the game");
+  });
+
+  it("leaves a build case's project empty", async () => {
+    const root = tempDir();
+    let atStart: string[] = ["unset"];
+    const machine = fakeMachine({
+      lines: fixtureLines("claude-stream.jsonl"),
+      files: { "index.html": "<canvas>" },
+      before: (_args, cwd) => {
+        atStart = filesIn(cwd);
+      },
+    });
+    await runRawLane(request("raw-claude", root), rawDeps(machine, root));
+    assert.deepEqual(atStart, []);
+  });
+});
+
 // ── the Genex app lane ──────────────────────────────────────────────────────────────────
 
 describe("Genex app lane", () => {
@@ -761,9 +817,14 @@ describe("Genex app lane", () => {
   interface GenexOptions {
     exitCode?: number;
     resolveCli?: CliResolver;
+    /** An edit case's start folder. */
+    startDir?: string;
+    /** Called with the spec the app was launched with, before it reports. */
+    atLaunch?: (spec: EvalLaneSpec) => void;
   }
+  type ReportChange = Partial<EvalLaneReport> | ((spec: EvalLaneSpec) => Partial<EvalLaneReport>) | null;
 
-  async function runGenex(change: Partial<EvalLaneReport> | null, laneId = "genex-claude", options: GenexOptions = {}) {
+  async function runGenex(change: ReportChange, laneId = "genex-claude", options: GenexOptions = {}) {
     const root = tempDir();
     const specs: EvalLaneSpec[] = [];
     const machine = fakeMachine({
@@ -772,13 +833,16 @@ describe("Genex app lane", () => {
         const specArg = args.find((arg) => arg.startsWith("--studio-eval-lane="));
         const spec = JSON.parse(fs.readFileSync(String(specArg).split("=")[1] ?? "", "utf8")) as EvalLaneSpec;
         specs.push(spec);
-        if (change) fs.writeFileSync(spec.reportPath, JSON.stringify(report(spec, change)));
+        options.atLaunch?.(spec);
+        const patch = typeof change === "function" ? change(spec) : change;
+        if (patch) fs.writeFileSync(spec.reportPath, JSON.stringify(report(spec, patch)));
       },
     });
     const home = path.join(root, "home");
     fs.mkdirSync(home);
     const req = request(laneId, root, {
       appBuild: { sha: "a".repeat(40), dir: path.join(root, "build"), dirty: false },
+      startDir: options.startDir ?? null,
     });
     const result = await runGenexAppLane(req, {
       supervisor: machine.deps,
@@ -800,6 +864,33 @@ describe("Genex app lane", () => {
     });
     return { result, spec: specs[0], spawned: machine.spawned[0], req };
   }
+
+  it("lays an edit case's start folder in the games folder and names it in the spec", async () => {
+    const startDir = startFolder(tempDir());
+    let atLaunch: string[] = [];
+    const inStartGame = (spec: EvalLaneSpec) => ({ projectDir: path.join(spec.gamesRoot, String(spec.startGame)) });
+    const { result, spec } = await runGenex(inStartGame, "genex-claude", {
+      startDir,
+      atLaunch: (launched) => {
+        atLaunch = filesIn(path.join(launched.gamesRoot, String(launched.startGame)));
+      },
+    });
+    assert.equal(spec?.startGame, "start");
+    assert.deepEqual(atLaunch, ["index.html", path.join("src", "main.js")]);
+    assert.equal(result.harnessFailure, null);
+  });
+
+  it("fails an edit case whose app worked in another game than the start game", async () => {
+    // An app build from before start folders drops the spec's field and has the agent make a game of its own.
+    const { result } = await runGenex({}, "genex-claude", { startDir: startFolder(tempDir()) });
+    assert.equal(result.harnessFailure, HarnessFailure.AppFailed);
+    assert.equal(result.endedHow, EndedHow.HarnessFailure);
+  });
+
+  it("names no start game in a build case's spec", async () => {
+    const { spec } = await runGenex({});
+    assert.equal(spec && "startGame" in spec, false);
+  });
 
   it("writes the spec from the build's own defaults, launches the smoke sub-runner and reads the report", async () => {
     const { result, spec, spawned, req } = await runGenex({});

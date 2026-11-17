@@ -92,6 +92,7 @@ function request(lane: LaneRegistryRow, root: string): LaneRunRequest {
     interleaveSeed: "seed",
     coRunLane: null,
     templateDigest: null,
+    startDir: null,
   };
 }
 

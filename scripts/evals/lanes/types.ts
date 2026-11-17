@@ -89,6 +89,11 @@ export interface LaneRunRequest {
   coRunLane: string | null;
   /** The seeded template's digest, so `template-untouched` can be detected at stop. */
   templateDigest: string | null;
+  /**
+   * The real folder an edit case starts from (`resolveStartFrom`): the agent begins in a copy of
+   * it. Null for a case built from nothing.
+   */
+  startDir: string | null;
 }
 
 /** Where a lane left its artifacts: inside the run's `workRoot`, or its `laneRoot` until the scheduler moves them. */

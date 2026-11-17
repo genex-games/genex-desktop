@@ -73,7 +73,8 @@ What every lane shares:
 
 ### Raw lanes (B, C)
 
-The agent works in an empty `project/` in the run's lane root. Creating it is refused for a
+The agent works in `project/` in the run's lane root: empty for a build case, a copy of the case's
+start folder (`seedStartFolder`) for an edit case. Creating it is refused for a
 relative path or a `..` segment, an ancestor holding `.git`, `AGENTS.md`, `CLAUDE.md` or
 `CLAUDE.local.md`, an ancestor below `$HOME` holding `.claude`, or an existing non-empty folder,
 judged lexically and on the real path. The look-at-page shim runs an eval-owned copy of the
@@ -189,8 +190,10 @@ Pinned: C1 `medieval-village` (dev-tuned: the seed was iterated on village runs)
 C3 `mini-golf`, C5 `vague-brief` and C8 `canary` (no checklist; its verdict is machine-only).
 C9 `edit-existing`, C10 `follow-up`, C11 `long-horizon` and C12-C18 (projects, engines and the
 Loop's finish: `vague-unreal-on`, `unreal-plugin-off`, `port-to-unreal`, `godot-no-plugin`,
-`loop-finish-check`, `timed-wrap-up`, `godot-loop`; C12-C15 and C18 on Genex lanes only) are drafts
-the owner pins before a first baseline. Private holdouts live in `$GENEX_EVALS_HOME/cases-private.md`, every case
+`loop-finish-check`, `timed-wrap-up`, `godot-loop`; C12-C15 and C18 on Genex lanes only) and the
+animation cases C19-C23 (`anim-library-walk-on-generated`, `anim-generated-walk-on-generated`,
+`anim-generated-walk-on-mannequin`, `anim-sword-in-hand`, `anim-nothing-to-fix`: one skill each, a
+start game that plays one animation in a loop) are drafts the owner pins before a first baseline. Private holdouts live in `$GENEX_EVALS_HOME/cases-private.md`, every case
 marked holdout; holdout rows never enter Git or an export.
 
 Anti-fitting is a static check: `npm run check:isolation` (in `check:static` and CI, public
@@ -611,8 +614,11 @@ five-minute rows read `unknown`); both set `STUDIO_BROWSER_TESTS=1`.
 - No axis compares a lane with its `-plugin-off` twin: every `compare` axis is labelled for
   another question, and pairwise judging never pairs the two. Read them side by side in the
   report, or compare each against its raw lane on the product axis.
-- Edit-existing, follow-up and long-horizon cases run as plain builds: no start-folder seeding or
-  follow-up turns yet.
+- An edit case starts from a copy of its start folder: in a raw lane's `project/`, and in a Genex
+  lane's games folder, where the app opens it as a game the person brought (`EvalLaneSpec.startGame`)
+  and binds the chat to it before the brief. A Genex run whose report names another game is an
+  `app-failed` harness failure: an app build from before start folders ignores the field.
+  Follow-up and long-horizon cases still run as plain builds, with no follow-up turns.
 - The prober writes PNG frames and no video; pairwise rows are never published.
 - The lane root keeps the evals home out of an agent's casual listing, not out of reach: its
   `CLAUDE_CONFIG_DIR` or `CODEX_HOME` still names a folder inside it.

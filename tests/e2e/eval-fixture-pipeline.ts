@@ -406,6 +406,7 @@ async function bindHandlers(options: EvalFixtureOptions, identity: Identity, mod
     paths,
     layout,
     cases,
+    startDir: () => null,
     registry,
     prices: readPriceTable(repo),
     clock: SYSTEM_BUDGET_CLOCK,

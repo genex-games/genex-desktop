@@ -38,6 +38,7 @@ import {
   type SupervisorDeps,
   SYSTEM_SUPERVISOR,
   createRunWorkspace,
+  seedStartFolder,
   superviseProcess,
 } from "./common.ts";
 import type { EvalsLayout } from "./homes.ts";
@@ -579,6 +580,7 @@ export async function runRawLane(request: LaneRunRequest, deps: RawLaneDeps): Pr
   const cli = await deps.resolveCli(engine).catch(() => null);
   if (!cli) return unstarted(request, now(), EndedHow.HarnessFailure, HarnessFailure.CliMissing);
   const workspace = await createRunWorkspace(request.workRoot, deps.home, request.laneRoot);
+  if (request.startDir !== null) await seedStartFolder(request.startDir, workspace.projectDir);
   const artifacts = rawArtifacts(request, workspace);
   const shim = request.lane.browser === BrowserPin.LookAtPage;
   // The shim's folder sits in the lane root, beside the project: nothing on the agent's PATH names the evals home.

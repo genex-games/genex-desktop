@@ -312,6 +312,7 @@ export function campaignWorld(
     paths,
     layout,
     cases: CASES,
+    startDir: () => null,
     registry: REGISTRY,
     prices: PRICES,
     clock: {

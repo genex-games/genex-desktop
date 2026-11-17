@@ -245,6 +245,14 @@ export async function createRunWorkspace(
   return { workRoot, projectDir };
 }
 
+/**
+ * Lay an edit case's start folder into the agent's empty folder, so the agent begins in a copy
+ * and every run of the case begins from the same files. Links are copied as links, never followed.
+ */
+export async function seedStartFolder(startDir: string, into: string): Promise<void> {
+  await cp(startDir, into, { recursive: true, verbatimSymlinks: true });
+}
+
 /** Move one entry, copying then removing it when the two folders are on different volumes. */
 async function moveEntry(from: string, to: string): Promise<void> {
   try {

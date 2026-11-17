@@ -5,6 +5,7 @@
  * sub-runner launch of Electron with the eval homes. The app writes an `EvalLaneReport`; this
  * module reads it back into a `LaneRunResult`.
  */
+import { realpathSync } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
@@ -27,6 +28,7 @@ import { EndedHow, EvalAgent, HarnessFailure } from "../vocabulary.ts";
 import { assertNoBannedArgv, type CliResolver, genexAppArgv, resolveLaneCli } from "./argv.ts";
 import {
   createRunWorkspace,
+  seedStartFolder,
   evalHomesEnv,
   LANE_PID_FILE,
   strippedEnv,
@@ -241,6 +243,7 @@ export function laneSpec(
     fixture: request.lane.fixture,
     ...(executables ? { executables } : {}),
     ...(request.lane.disabledPlugins ? { disabledPlugins: [...request.lane.disabledPlugins] } : {}),
+    ...(request.startDir === null ? {} : { startGame: path.basename(request.startDir) }),
   };
 }
 
@@ -320,16 +323,32 @@ function pluginsOff(report: EvalLaneReport, disabledPlugins: readonly string[]):
   return disabledPlugins.every((id) => report.plugins?.some((plugin) => plugin.id === id && !plugin.enabled));
 }
 
+/** Whether two paths name the same folder, links resolved where the folders exist. */
+function sameFolder(a: string, b: string): boolean {
+  const real = (dir: string) => {
+    try {
+      return realpathSync(dir);
+    } catch {
+      return path.resolve(dir);
+    }
+  };
+  return real(a) === real(b);
+}
+
 /**
- * The guard a lane report trips: the app's lane runner failed, the harness differs from the shipped
- * seed, a plugin the lane turns off was not off, or another model was served.
+ * The guard a lane report trips: the app's lane runner failed, an edit case's agent worked in
+ * another game than its start game (a build from before start folders drops the spec's field), the
+ * harness differs from the shipped seed, a plugin the lane turns off was not off, or another model
+ * was served.
  */
 export function reportHarnessFailure(
   report: EvalLaneReport,
   disabledPlugins: readonly string[] = [],
+  startGameDir: string | null = null,
 ): HarnessFailure | null {
   const failed = laneErrorFailure(report);
   if (failed) return failed;
+  if (startGameDir !== null && !sameFolder(report.projectDir, startGameDir)) return HarnessFailure.AppFailed;
   if (!report.harnessDigest.matches || !pluginsOff(report, disabledPlugins)) return HarnessFailure.Contamination;
   const served = report.modelServed;
   if (!report.fixture && served !== null && !sameModel(served, report.modelRequested))
@@ -409,6 +428,8 @@ export async function runGenexAppLane(request: LaneRunRequest, deps: GenexLaneDe
     return genexResult(request, artifacts, { at: deps.supervisor.clock.now(), railFired: false }, null);
   await createRunWorkspace(request.workRoot, deps.home, request.laneRoot);
   await mkdir(paths.gamesRoot, { recursive: true });
+  const startGame = startGameDir(request);
+  if (request.startDir !== null && startGame !== null) await seedStartFolder(request.startDir, startGame);
   const executables = request.lane.fixture ? undefined : await laneExecutables(deps.resolveCli);
   const spec = laneSpec(request, await productDefaults(build.dir, deps.run), executables);
   await writeFile(paths.specPath, `${JSON.stringify(spec, null, 2)}\n`, "utf8");
@@ -457,6 +478,12 @@ function reportCliVersion(report: EvalLaneReport): string | null {
   return report.engine === EngineId.Codex ? report.cliVersions.codex : report.cliVersions.claude;
 }
 
+/** Where an edit case's start folder is laid in the lane's games folder; null for a case built from nothing. */
+function startGameDir(request: LaneRunRequest): string | null {
+  if (request.startDir === null) return null;
+  return path.join(genexPaths(request.laneRoot).gamesRoot, path.basename(request.startDir));
+}
+
 /** A `LaneRunResult` from the report (null: the app wrote none, or the run was a dry run). */
 function genexResult(
   request: LaneRunRequest,
@@ -466,7 +493,7 @@ function genexResult(
 ): LaneRunResult {
   const disabledPlugins = request.lane.disabledPlugins ?? [];
   const failure = report
-    ? reportHarnessFailure(report, disabledPlugins)
+    ? reportHarnessFailure(report, disabledPlugins, startGameDir(request))
     : missingReportFailure(timing.exitCode ?? null, timing.railFired);
   const cliVersion = report ? reportCliVersion(report) : null;
   const endedHow = request.live ? genexEndedHow(report, timing.railFired, failure) : EndedHow.Cancelled;

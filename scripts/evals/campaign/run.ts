@@ -139,6 +139,8 @@ export interface CampaignRunDeps {
   paths: EvalsPaths;
   layout: EvalsLayout;
   cases: readonly EvalCase[];
+  /** The real folder an edit case starts from; null for a case built from nothing. */
+  startDir: (evalCase: EvalCase) => string | null;
   registry: LaneRegistry;
   prices: PriceTable;
   clock: BudgetClock;
@@ -383,6 +385,7 @@ function laneRequest(
     interleaveSeed: session.plan.seed,
     coRunLane,
     templateDigest: null,
+    startDir: session.deps.startDir(evalCase),
   };
 }
 

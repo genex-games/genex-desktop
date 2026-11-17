@@ -346,6 +346,11 @@ describe("the committed case file", () => {
         ["loop-finish-check", CaseMode.LongHorizon],
         ["timed-wrap-up", CaseMode.LongHorizon],
         ["godot-loop", CaseMode.LongHorizon],
+        ["anim-library-walk-on-generated", CaseMode.EditExisting],
+        ["anim-generated-walk-on-generated", CaseMode.EditExisting],
+        ["anim-generated-walk-on-mannequin", CaseMode.EditExisting],
+        ["anim-sword-in-hand", CaseMode.EditExisting],
+        ["anim-nothing-to-fix", CaseMode.EditExisting],
       ],
     );
     for (const c of cases) assert.equal(c.visibility, CaseVisibility.Public);

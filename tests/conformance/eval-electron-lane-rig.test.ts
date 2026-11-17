@@ -242,6 +242,34 @@ describe("eval lane on a real core", () => {
     assert.equal(report.templateDigest, await seeded);
   });
 
+  it("opens an edit case's start game as a game the person brought and sends the brief into its chat", async () => {
+    const { core, spec, deps } = await laneCore();
+    // The lane runner lays the start folder in the games folder before the app is launched.
+    const startDir = path.join(spec.gamesRoot, "start-game");
+    await mkdir(path.join(startDir, "src"), { recursive: true });
+    await writeFile(
+      path.join(startDir, "index.html"),
+      '<canvas></canvas><script type="module" src="/src/main.js"></script>',
+    );
+    await writeFile(path.join(startDir, "src", "main.js"), "// the start game");
+    const { lane, calls } = recording(core);
+
+    const code = await runEvalLane(lane, { ...spec, startGame: "start-game" }, QUICK_CLOCK, deps);
+
+    assert.equal(code, EVAL_LANE_EXIT.Ok);
+    const report = await readReport(spec);
+    assert.equal(report.projectDir, core.games.dirFor("start-game"));
+    assert.equal(typeof report.templateDigest, "string");
+    assert.deepEqual(calls.slice(0, 3), [
+      "createGameThread",
+      `setPermissionMode:${PermissionMode.AcceptEdits}`,
+      "sendUserMessage",
+    ]);
+    const words = await userWords(core, report.threadId);
+    assert.equal(words[0], `${spec.brief}\n\n${spec.suffix}`);
+    assert.equal((await core.games.list()).length, 1);
+  });
+
   it("at deadline plus grace takes the core's Stop and reports a deadline ending", async () => {
     const { core, spec } = await laneCore({ deadlineMs: 0, graceMs: 0 });
     const { lane, calls } = recording(core);

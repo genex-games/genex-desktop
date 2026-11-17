@@ -252,6 +252,15 @@ The Play film, `play-publish.mp4`, shows game covers from the public genex.games
 (`design/play-publish-video/README.md`); its players and its desk were made with Genex image
 generation for the film.
 
+## Eval start games
+
+The animation cases' start games in `tests/fixtures/evals/games/anim-*` are test fixtures and ship
+with nothing. Their mannequin and the mannequin's clips are from Quaternius's Universal Animation
+Library (Standard), CC0 1.0, cut down to the clips each case plays. The katana is "Antique Katana
+01" from Poly Haven, CC0 1.0, with its 1k textures. The barbarian and his clips, and the walk made
+for another character, were generated with Genex for these cases; the barbarian's textures are
+scaled to 512 pixels.
+
 ## Components under other terms
 
 - Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`) ships in the package. It is not open

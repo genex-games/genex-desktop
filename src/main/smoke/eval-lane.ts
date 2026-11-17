@@ -353,6 +353,17 @@ function disabledPlugins(fields: Fields): Pick<EvalLaneSpec, "disabledPlugins"> 
   return { disabledPlugins: [...value] };
 }
 
+/** A start game's folder name: one plain folder directly under the games root. */
+const START_GAME_NAME = /^[a-z0-9][a-z0-9-]*$/;
+
+/** The optional start game of an edit case, a plain folder name; absent stays absent. */
+function startGame(fields: Fields): Pick<EvalLaneSpec, "startGame"> {
+  const value = fields.startGame;
+  if (value === undefined) return {};
+  if (typeof value !== "string" || !START_GAME_NAME.test(value)) throw new EvalSpecError("startGame");
+  return { startGame: value };
+}
+
 /** The eval-owned CLI homes, both absolute. */
 function cliHomes(fields: Fields): EvalLaneSpec["homes"] {
   const { claude, codex } = object(fields, "homes");
@@ -386,6 +397,7 @@ export function parseEvalLaunch(value: unknown): EvalLaunch {
     fixture: flag(value, "fixture"),
     ...executables(value),
     ...disabledPlugins(value),
+    ...startGame(value),
   };
   return { spec };
 }
@@ -840,8 +852,19 @@ async function buildReport(run: LaneRun, endedHow: EndedHow, deps: EvalLaneDeps)
 }
 
 /**
- * Preflight, the spec's plugins turned off, a fresh game chat in the spec's permission mode (its
- * seeding watched), and the brief sent into it.
+ * An edit case's chat: its start game, which the lane runner laid in the games folder, opened as a
+ * game the person brought. The digest taken now, before the brief, is what `template-untouched` is
+ * judged against.
+ */
+async function startGameChat(run: LaneRun, name: string): Promise<string> {
+  const game = await run.core.games.adopt(path.join(run.spec.gamesRoot, name));
+  run.templateDigest = workspaceDigest(game.dir).catch(() => null);
+  return run.core.createGameThread(game.name);
+}
+
+/**
+ * Preflight, the spec's plugins turned off, a game chat in the spec's permission mode, and the
+ * brief sent into it. The chat is a fresh one whose seeding is watched, or an edit case's start game.
  */
 async function begin(run: LaneRun, deps: EvalLaneDeps): Promise<boolean> {
   const refused =
@@ -851,8 +874,13 @@ async function begin(run: LaneRun, deps: EvalLaneDeps): Promise<boolean> {
     return false;
   }
   try {
-    run.threadId = await run.core.createGameThread();
-    run.unwatchSeed = digestSeededGame(run, deps);
+    const { startGame: startName } = run.spec;
+    if (startName === undefined) {
+      run.threadId = await run.core.createGameThread();
+      run.unwatchSeed = digestSeededGame(run, deps);
+    } else {
+      run.threadId = await startGameChat(run, startName);
+    }
     await run.core.setPermissionMode(run.threadId, run.spec.permissionMode);
     run.promptAt = run.clock.now();
     await run.core.sendUserMessage(`${run.spec.brief}\n\n${run.spec.suffix}`, sendOptions(run));
