@@ -10,7 +10,8 @@ model of the newest generation; older ones switch on in Settings; one in use sta
 Unset picks or effort run the CLI's named default, else a default row. Aliases follow the CLI;
 versions stay pinned.
 
-Settings shows CLI versions; Account rechecks or updates; failed refreshes offer Try again.
+Settings shows CLI versions; Account rechecks or updates; installer-owned Codex self-updates;
+failed refreshes offer Try again.
 Tabs switch [accounts](../connections-and-context.md#several-accounts-per-subscription).
 Unavailable picks block sends; without models, Connect AI model replaces the pill. A
 listing proves no access.

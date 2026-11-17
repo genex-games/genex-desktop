@@ -118,6 +118,10 @@ export function createCliInstalls(deps: CliInstallsDeps) {
       );
       return job;
     },
+    /** Whether an update would be refused now: work is under way, or an install already runs. */
+    busy(): boolean {
+      return running.size > 0 || Boolean(deps.busy?.());
+    },
     /** The latest install of each CLI, running or finished. */
     status(): CliInstallJob[] {
       return [...jobs.values()];

@@ -1,6 +1,6 @@
 import { isClaudeLoginActive } from "../shared/claude-login.ts";
 import { isCodexLoginActive } from "../shared/codex-login.ts";
-import { updateCodingCli } from "../substrate/cli-update.ts";
+import { installedByCodexInstaller, latestCodexVersion, updateCodingCli } from "../substrate/cli-update.ts";
 import { HarnessLogBatch } from "./harness-log-batch.ts";
 import { createDesktopControl } from "./desktop-control-host.ts";
 import { assistGrants } from "./core/desktop-assist.ts";
@@ -131,7 +131,8 @@ import { registerJobsIpc } from "./ipc/jobs.ts";
 import { registerLearningIpc } from "./ipc/learning.ts";
 import { registerLoginIpc } from "./ipc/login.ts";
 import { registerCliInstallIpc } from "./ipc/cli-install.ts";
-import { createCliInstalls } from "./cli-install.ts";
+import { createCliInstalls, type CliInstalls } from "./cli-install.ts";
+import { autoUpdateCodex, scheduleCliAutoUpdate } from "./cli-auto-update.ts";
 import { registerMcpIpc } from "./ipc/mcp.ts";
 import { registerModelsIpc } from "./ipc/models.ts";
 import { hardwareReport } from "./core/hardware-report.ts";
@@ -2235,7 +2236,11 @@ function cliInstalls(studio: StudioCore) {
     update: async (provider) => {
       const engine = studio.engines.get(provider);
       const selected = await engine.account?.();
-      return studio.engines.maintain(provider, () => updateCodingCli(provider, selected?.cli.path));
+      return studio.engines.maintain(provider, () =>
+        updateCodingCli(provider, selected?.cli.path, {
+          install: (owned) => installCodingCli(owned, { fetch: net.fetch }),
+        }),
+      );
     },
     found: async (provider) => {
       await subscription(provider)?.recheckLogin();
@@ -2245,6 +2250,38 @@ function cliInstalls(studio: StudioCore) {
     pushUiEvent,
     log: (line) => studioLog.write("main", line),
   });
+}
+
+/**
+ * Keep the installer's own Codex on the latest stable release while the app runs
+ * (`cli-auto-update.ts`). A development profile, a smoke run and a test never update anything.
+ */
+function startCodexAutoUpdate(installs: CliInstalls): void {
+  if (dev || isSmoke || testUserData) return;
+  scheduleCliAutoUpdate(
+    () =>
+      autoUpdateCodex({
+        selected: async () => {
+          const { status } = await resolveCodingCli(EngineId.Codex);
+          return status.state === CodingCliState.Ready && status.path
+            ? { path: status.path, version: status.version }
+            : null;
+        },
+        owned: (executable) => installedByCodexInstaller(executable),
+        latest: () => latestCodexVersion(net.fetch),
+        busy: () => installs.busy(),
+        update: async (provider, operation) => {
+          installs.start(provider, operation);
+          return installs.settled(provider);
+        },
+        log: (line) => studioLog.write("main", line),
+      }),
+    {
+      setTimeout: (fn, ms) => setTimeout(fn, ms).unref(),
+      setInterval: (fn, ms) => setInterval(fn, ms).unref(),
+      clear: (timer: NodeJS.Timeout) => clearTimeout(timer),
+    },
+  );
 }
 
 /** Every IPC channel, registered once per launch by its domain's registrar in `./ipc/`. */
@@ -2376,7 +2413,9 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
     pushUiEvent,
     busy: () => keepAwake.held || (core?.budget.userInFlight ?? 0) > 0,
   });
-  registerCliInstallIpc(handle, cliInstalls(studio));
+  const installs = cliInstalls(studio);
+  registerCliInstallIpc(handle, installs);
+  startCodexAutoUpdate(installs);
   registerProjectsIpc(handle, { core: studio, window: () => window, gamesRootLabel, web: playOrigin.web });
   registerDataFolderIpc(handle, dataFolderIpc(studio));
   registerGenexAccountIpc(handle, { account: genexAccountFor(studio), web: playOrigin.web });
