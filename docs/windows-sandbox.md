@@ -95,8 +95,10 @@ the setup screen opens on `git-missing`. What differs from macOS:
   which runs. Reading account rights needs an administrator, so nothing says so before a start is
   refused: the session then raises a setup problem (`sandboxLogonTypeRefused`,
   `WindowsSetupNeed.LogonRight`) in plain words, and the log keeps srt-win's. The start runs behind
-  the open studio, so main shows the setup screen over it (`showAgentsSetup`), as for any failed
-  agents' start that Set up fixes. Set up gives the account `SeInteractiveLogonRight` and takes its
+  the open studio, so main shows the setup screen over it (`showAgentsSetup`), for this need only,
+  and the screen waits for its Set up button instead of raising the prompt by itself. A prompt that
+  is dismissed, or a Set up that fails, brings the studio back with the sidebar's line saying why
+  (the hold's `leave`), and its Try again shows the setup screen again. Set up gives the account `SeInteractiveLogonRight` and takes its
   own entry off `SeDenyInteractiveLogonRight` through the LSA calls, which touch that account's
   entry only ([`windows-logon-right.ts`](../src/substrate/windows-logon-right.ts)), in an elevated
   Windows PowerShell behind a prompt of its own ([`windows-elevated.ts`](../src/substrate/windows-elevated.ts)),

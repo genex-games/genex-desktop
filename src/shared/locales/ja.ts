@@ -217,8 +217,6 @@ export default {
   "A worker is busy in your game folder right now — try again once it has finished.":
     "今ワーカーがゲームフォルダーで作業中です。終わってからもう一度試してください。",
   "A worker wants to run {job} in the background": "ワーカーが{job}をバックグラウンドで実行しようとしています",
-  'A rule on this PC keeps Genex\'s agents from signing in. Ask its administrator, or check your security program, to allow the account "srt-sandbox" to log on locally, then try again.':
-    "このPCのルールにより、Genexのエージェントがサインインできません。管理者に頼むか、セキュリティソフトを確認して、アカウント「srt-sandbox」のローカルログオンを許可してから、もう一度試してください。",
   "A sand garden where you rake patterns around stones": "石のまわりに砂紋を描く砂の庭",
   "API key": "APIキー",
   "API key (optional)": "APIキー（任意）",
@@ -4538,7 +4536,7 @@ export default {
   "Windows app": "Windowsアプリ",
   "Windows didn't get permission to install. Press Do it for me again and choose Yes when Windows asks.":
     "Windowsでインストールが許可されませんでした。もう一度「おまかせ」を押して、Windowsに聞かれたら「はい」を選んでください。",
-  "Windows doesn't let Genex's agents sign in on this PC. Set up allows it.":
+  "Windows doesn’t let Genex’s agents sign in on this PC. Set up allows it.":
     "このPCでは、WindowsがGenexのエージェントのサインインを許可していません。「セットアップ」で許可します。",
   "Windows needs a one-time setup of the protected workspace, approved by an administrator.":
     "Windowsでは、保護されたワークスペースの初回セットアップに管理者の承認が必要です。",

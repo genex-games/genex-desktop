@@ -388,13 +388,22 @@ const NEED_LINES = [WindowsSetupNeed.LogonService, WindowsSetupNeed.LogonRight] 
 
 /**
  * What Set up does about a need Windows itself holds back (a disabled Secondary Logon service, a
- * sandbox user it will not sign in), and after a Set up that could not, what to do by hand.
+ * sandbox user it will not sign in). After a Set up that could not, the service's line says what to
+ * do by hand; the sandbox user's goes, as the studio's sidebar says why once the window is back.
  */
-function NeedLine({ need, step }: { need: (typeof NEED_LINES)[number]; step: WindowsStep }): JSX.Element {
-  const words = need === WindowsSetupNeed.LogonService ? WORDS.windows.logonService : WORDS.windows.logonRight;
+function NeedLine({ need, step }: { need: (typeof NEED_LINES)[number]; step: WindowsStep }): JSX.Element | null {
+  const failed = step === WindowsStep.Failed;
+  if (need === WindowsSetupNeed.LogonRight) {
+    return failed ? null : (
+      <p data-windows-need={need} className="text-ink-2">
+        {WORDS.windows.logonRight.line}
+      </p>
+    );
+  }
+  const words = WORDS.windows.logonService;
   return (
     <p data-windows-need={need} className="text-ink-2">
-      {step === WindowsStep.Failed ? words.fix : words.line}
+      {failed ? words.fix : words.line}
     </p>
   );
 }

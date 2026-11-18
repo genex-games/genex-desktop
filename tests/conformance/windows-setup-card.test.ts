@@ -168,13 +168,12 @@ function escaped(text: string): string {
 const RIGHT_WORDS = SANDBOX_SETUP_WORDS.windows.logonRight;
 const RIGHT_LINE = /data-windows-need="logon-right"/;
 
-test("a sandbox user Windows will not sign in: the card says Set up allows it, and after a failed one what to do by hand", async () => {
+test("a sandbox user Windows will not sign in: the card says Set up allows it, and a failed one drops the line", async () => {
   const held = problem([WindowsSetupNeed.LogonRight]);
   const waiting = await renderCard(held, { settingUp: false, error: null });
   assert.match(waiting, RIGHT_LINE);
   assert.ok(waiting.includes(escaped(RIGHT_WORDS.line)));
   assert.doesNotMatch(waiting, SERVICE_LINE, "the service is not what is wrong");
   const failed = await renderCard(held, { settingUp: false, error: "a policy holds it out" });
-  assert.ok(failed.includes(escaped(RIGHT_WORDS.fix)));
-  assert.ok(!failed.includes(escaped(RIGHT_WORDS.line)));
+  assert.doesNotMatch(failed, RIGHT_LINE);
 });

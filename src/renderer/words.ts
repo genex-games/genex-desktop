@@ -4704,10 +4704,7 @@ export const SANDBOX_SETUP_WORDS = {
     },
     /** Windows will not sign the sandbox user in ("Allow log on locally" was taken from it). */
     logonRight: {
-      line: t("Windows doesn't let Genex's agents sign in on this PC. Set up allows it."),
-      fix: t(
-        'A rule on this PC keeps Genex\'s agents from signing in. Ask its administrator, or check your security program, to allow the account "srt-sandbox" to log on locally, then try again.',
-      ),
+      line: t("Windows doesn’t let Genex’s agents sign in on this PC. Set up allows it."),
     },
   },
   /** A Windows window opened before the core: what the start is doing, by `StartStep`. */

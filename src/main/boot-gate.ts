@@ -10,7 +10,9 @@
  * words (`agentsFailed`): the studio stays, and its Try again works the same way.
  *
  * On Windows the missing piece is a one-time install behind an administrator prompt, which Set up
- * runs (`installSandbox`); once installed it retries, and a dismissed prompt changes nothing.
+ * runs (`installSandbox`); once installed it retries, and a dismissed prompt changes nothing. A
+ * hold put over an open studio names its way back (`leave`): a Set up that was dismissed or failed
+ * takes it, so the studio returns instead of the setup screen staying.
  */
 import {
   BootFailure,
@@ -35,6 +37,9 @@ export interface SandboxInstall {
   cancelled: boolean;
 }
 
+/** The way off a setup screen whose Set up did nothing: `error` is why it failed, null when it was dismissed. */
+export type SetupLeave = (error: unknown) => void;
+
 export interface BootGateOptions {
   /** Set up what `problem` needs (an administrator prompt per step); throws when a step fails. */
   installSandbox?: (problem: SandboxProblem) => Promise<SandboxInstall>;
@@ -51,8 +56,12 @@ export interface BootGate {
   progress(step: StartStep): void;
   /** The core started: the studio itself, with nothing left to retry. */
   ready(): void;
-  /** Show the setup screen for `problem`; `attempt` re-runs startup and throws while the sandbox is still unavailable. */
-  hold(problem: SandboxProblem, attempt: () => Promise<void>): void;
+  /**
+   * Show the setup screen for `problem`; `attempt` re-runs startup and throws while the sandbox is
+   * still unavailable. With `leave`, a Set up that was dismissed (`null`) or failed (its error) calls
+   * it and answers with the state it left, instead of staying on the setup screen.
+   */
+  hold(problem: SandboxProblem, attempt: () => Promise<void>, leave?: SetupLeave): void;
   /** Show that the studio would not start, with `error`; Try again runs `attempt`, and a failure there shows its own words. */
   fail(error: string, attempt: () => Promise<void>): void;
   /**
@@ -146,6 +155,57 @@ function startLog() {
   };
 }
 
+/** What Set up reads of its gate: the state now, the retry, and the held screen's way back to an open studio. */
+interface SetUpGate {
+  state(): BootState;
+  retry(): Promise<BootState>;
+  leave(): SetupLeave | null;
+}
+
+/** A gate's Set up: the install behind the administrator prompt, then the gate's retry. */
+function setUpRunner(options: BootGateOptions, gate: SetUpGate) {
+  let installing: Promise<SandboxSetupResult> | null = null;
+  // The install went through but the startup after it failed: the sandbox is there, so the next
+  // Set up only starts again, without another administrator prompt.
+  let installed = false;
+  // Set once Set up first runs: a window that loads again does not run it by itself again.
+  let tried = false;
+  // Nothing was set up: the screen's way back taken when it has one, and the state after.
+  const notSetUp = (left: SetupLeave | null, error: unknown): SandboxSetupResult => {
+    left?.(error);
+    return { outcome: SandboxSetupOutcome.Cancelled, state: gate.state() };
+  };
+  const install = async (run: () => Promise<SandboxInstall>, left: SetupLeave | null): Promise<SandboxSetupResult> => {
+    const { cancelled } = await (installed ? ALREADY_INSTALLED : run)();
+    if (cancelled) return notSetUp(left, null);
+    installed = true;
+    const after = await gate.retry();
+    // Still waiting on its install after one: the next Set up installs again.
+    installed = !waitsOnInstall(after);
+    return { outcome: SandboxSetupOutcome.Installed, state: after };
+  };
+  const run = (): Promise<SandboxSetupResult> => {
+    if (installing) return installing;
+    const state = gate.state();
+    const installSandbox = options.installSandbox;
+    if (!installSandbox || !waitsOnInstall(state)) return Promise.reject(new Error(MESSAGE.nothingToSetUp()));
+    tried = true;
+    const problem = state.sandbox;
+    const left = gate.leave();
+    installing = install(() => installSandbox(problem), left)
+      .catch((error: unknown) => {
+        options.setUpFailed?.(error);
+        if (!left) throw error;
+        return notSetUp(left, error);
+      })
+      .finally(() => {
+        installing = null;
+      });
+    return installing;
+  };
+  return { run, tried: () => tried };
+}
+
 /** A gate for this launch's `platform`, starting Ready. */
 export function createBootGate(platform: string, options: BootGateOptions = {}): BootGate {
   const ready: BootState = { platform, phase: BootPhase.Ready, sandbox: null };
@@ -155,17 +215,16 @@ export function createBootGate(platform: string, options: BootGateOptions = {}):
   // start after the sandbox did) keeps it, rather than opening the studio over it.
   let holds = 0;
   let running: Promise<BootState> | null = null;
-  let installing: Promise<SandboxSetupResult> | null = null;
-  // The install went through but the startup after it failed: the sandbox is there, so the next
-  // Set up only starts again, without another administrator prompt.
-  let installed = false;
+  // The held setup screen's way back to an open studio, when it has one.
+  let leave: SetupLeave | null = null;
   const start = startLog();
 
   // Every screen with a Try again: its state, and the attempt the Try again runs.
-  const holdOn = (next: BootState, run: () => Promise<void>): void => {
+  const holdOn = (next: BootState, run: () => Promise<void>, way: SetupLeave | null = null): void => {
     holds++;
     state = next;
     attempt = run;
+    leave = way;
   };
   // A screen that shows a failure: its code beside what it shows, and the attempt its Try again runs.
   const failOn = (failureCode: BootFailureCode, shown: FailureScreen, run: () => Promise<void>): void => {
@@ -202,20 +261,9 @@ export function createBootGate(platform: string, options: BootGateOptions = {}):
     return running;
   };
 
-  const install = async (run: () => Promise<SandboxInstall>): Promise<SandboxSetupResult> => {
-    const { cancelled } = await (installed ? ALREADY_INSTALLED : run)();
-    if (cancelled) return { outcome: SandboxSetupOutcome.Cancelled, state };
-    installed = true;
-    const after = await retry();
-    // Still waiting on its install after one: the next Set up installs again.
-    installed = !waitsOnInstall(after);
-    return { outcome: SandboxSetupOutcome.Installed, state: after };
-  };
-
-  // Set once Set up first runs: a window that loads again does not run it by itself again.
-  let tried = false;
+  const setUp = setUpRunner(options, { state: () => state, retry, leave: () => leave });
   return {
-    state: () => (tried ? { ...state, setupTried: true } : state),
+    state: () => (setUp.tried() ? { ...state, setupTried: true } : state),
     starting(step) {
       state = { platform, phase: BootPhase.Starting, sandbox: null, step };
     },
@@ -226,7 +274,7 @@ export function createBootGate(platform: string, options: BootGateOptions = {}):
       attempt = null;
       state = ready;
     },
-    hold: (problem, next) => holdOn({ platform, phase: BootPhase.SandboxSetup, sandbox: problem }, next),
+    hold: (problem, next, way) => holdOn({ platform, phase: BootPhase.SandboxSetup, sandbox: problem }, next, way),
     fail: (error, next) => failOn(BootFailure.CoreFailed, { phase: BootPhase.Failed, failure: error }, next),
     agentsFailed: (error, next, code = BootFailure.HarnessFailed) =>
       holdOn({ ...ready, failure: error, failureCode: code }, next),
@@ -242,22 +290,7 @@ export function createBootGate(platform: string, options: BootGateOptions = {}):
       return true;
     },
     retry,
-    setUp() {
-      if (installing) return installing;
-      const run = options.installSandbox;
-      if (!run || !waitsOnInstall(state)) return Promise.reject(new Error(MESSAGE.nothingToSetUp()));
-      tried = true;
-      const problem = state.sandbox;
-      installing = install(() => run(problem))
-        .catch((error: unknown) => {
-          options.setUpFailed?.(error);
-          throw error;
-        })
-        .finally(() => {
-          installing = null;
-        });
-      return installing;
-    },
+    setUp: setUp.run,
     started: () => start.facts(),
   };
 }

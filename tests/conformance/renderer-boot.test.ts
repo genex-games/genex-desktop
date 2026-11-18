@@ -211,6 +211,18 @@ describe("Set up on Windows", () => {
     assert.equal(fake.callsOf("setUpSandbox").length, 1);
   });
 
+  it("waits for the press where Windows will not sign the sandbox user in, and a dismissed prompt opens the studio back", async () => {
+    const refused = { ...NOT_PROVISIONED, windowsNeeds: [WindowsSetupNeed.LogonRight] };
+    const back: BootState = { ...WINDOWS_READY, failure: "Windows does not let the sandbox user sign in" };
+    const { controller, fake, started } = windowsBoot([{ outcome: SandboxSetupOutcome.Cancelled, state: back }]);
+    fake.stub("bootState", async () => ({ ...WINDOWS_SETUP, sandbox: refused }));
+    await controller.start();
+    assert.equal(fake.callsOf("setUpSandbox").length, 0, "the studio was open: no prompt out of nowhere");
+    await controller.setUp();
+    assert.equal(bootView(controller.store.getState()), BootView.Studio);
+    assert.equal(started(), 1);
+  });
+
   it("starts nothing by itself where Set up is not offered: a ready start, or Linux", async () => {
     for (const first of [READY, SETUP]) {
       const { controller, fake } = boot(first);

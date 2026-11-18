@@ -199,8 +199,6 @@ export default {
   "A worker is busy in your game folder right now — try again once it has finished.":
     "有助手正在你的游戏文件夹里工作——等它完成后再试。",
   "A worker wants to run {job} in the background": "一个助手想在后台运行 {job}",
-  'A rule on this PC keeps Genex\'s agents from signing in. Ask its administrator, or check your security program, to allow the account "srt-sandbox" to log on locally, then try again.':
-    "这台电脑上的一条规则不让 Genex 的智能体登录。请让管理员处理，或检查你的安全软件：允许账户“srt-sandbox”本地登录，然后重试。",
   "A sand garden where you rake patterns around stones": "在石头周围耙出图案的沙之庭园",
   "API key": "API 密钥",
   "API key (optional)": "API 密钥（可选）",
@@ -4267,7 +4265,7 @@ export default {
   "Windows app": "Windows 应用",
   "Windows didn't get permission to install. Press Do it for me again and choose Yes when Windows asks.":
     "Windows 没有获得安装许可。请再按一次“帮我完成”，并在 Windows 询问时选“是”。",
-  "Windows doesn't let Genex's agents sign in on this PC. Set up allows it.":
+  "Windows doesn’t let Genex’s agents sign in on this PC. Set up allows it.":
     "Windows 不允许 Genex 的智能体在这台电脑上登录。“设置”会允许它。",
   "Windows needs a one-time setup of the protected workspace, approved by an administrator.":
     "Windows 需要一次性设置受保护的工作区，并由管理员批准。",

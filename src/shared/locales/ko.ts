@@ -214,8 +214,6 @@ export default {
   "A worker is busy in your game folder right now — try again once it has finished.":
     "지금 작업자가 게임 폴더에서 작업 중이에요 — 끝나면 다시 시도하세요.",
   "A worker wants to run {job} in the background": "작업자가 백그라운드에서 {job} 실행을 요청해요",
-  'A rule on this PC keeps Genex\'s agents from signing in. Ask its administrator, or check your security program, to allow the account "srt-sandbox" to log on locally, then try again.':
-    "이 PC의 규칙 때문에 Genex 에이전트가 로그인하지 못해요. 관리자에게 부탁하거나 보안 프로그램을 확인해서 ‘srt-sandbox’ 계정의 로컬 로그온을 허용한 뒤 다시 시도해 주세요.",
   "A sand garden where you rake patterns around stones": "돌 주위 모래에 갈퀴로 무늬를 그리는 모래 정원",
   "API key": "API 키",
   "API key (optional)": "API 키(선택)",
@@ -4423,7 +4421,7 @@ export default {
   "Windows app": "Windows 앱",
   "Windows didn't get permission to install. Press Do it for me again and choose Yes when Windows asks.":
     "Windows가 설치 권한을 받지 못했어요. '대신 해 주기'를 다시 누르고 Windows가 물어보면 '예'를 고르세요.",
-  "Windows doesn't let Genex's agents sign in on this PC. Set up allows it.":
+  "Windows doesn’t let Genex’s agents sign in on this PC. Set up allows it.":
     "Windows가 이 PC에서 Genex 에이전트의 로그인을 막고 있어요. ‘설정하기’를 누르면 허용돼요.",
   "Windows needs a one-time setup of the protected workspace, approved by an administrator.":
     "Windows에서는 관리자 승인을 받아 보호된 작업 공간을 한 번 설정해야 해요.",

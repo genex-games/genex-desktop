@@ -240,8 +240,6 @@ export default {
   "A worker is busy in your game folder right now — try again once it has finished.":
     "Сейчас в папке игры работает помощник — попробуй снова, когда он закончит.",
   "A worker wants to run {job} in the background": "Помощник хочет запустить {job} в фоне",
-  'A rule on this PC keeps Genex\'s agents from signing in. Ask its administrator, or check your security program, to allow the account "srt-sandbox" to log on locally, then try again.':
-    "Правило на этом компьютере не даёт агентам Genex войти в систему. Попроси администратора или проверь антивирус: учётной записи «srt-sandbox» нужно разрешить локальный вход. Потом попробуй снова.",
   "A sand garden where you rake patterns around stones": "Сад камней, где ты граблями рисуешь узоры на песке",
   "API key": "API-ключ",
   "API key (optional)": "API-ключ (необязательно)",
@@ -4500,7 +4498,7 @@ export default {
   "Windows app": "Windows-приложение",
   "Windows didn't get permission to install. Press Do it for me again and choose Yes when Windows asks.":
     "Windows не получил разрешения на установку. Нажми «Сделать за меня» ещё раз и выбери «Да», когда Windows спросит.",
-  "Windows doesn't let Genex's agents sign in on this PC. Set up allows it.":
+  "Windows doesn’t let Genex’s agents sign in on this PC. Set up allows it.":
     "Windows не даёт агентам Genex войти в систему на этом компьютере. «Настроить» это разрешит.",
   "Windows needs a one-time setup of the protected workspace, approved by an administrator.":
     "Windows нужно один раз настроить защищённое рабочее пространство с разрешения администратора.",

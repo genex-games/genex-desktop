@@ -317,6 +317,54 @@ describe("Set up (Windows)", () => {
     assert.equal(counts.attempts, 0);
   });
 
+  it("a setup screen over an open studio goes back to it when the prompt is dismissed, saying the agents did not start", async () => {
+    const left: unknown[] = [];
+    const gate = createBootGate(StudioPlatform.Windows, { installSandbox: async () => ({ cancelled: true }) });
+    const start = async () => {};
+    gate.hold(NOT_PROVISIONED, start, (error) => {
+      left.push(error);
+      gate.agentsFailed("Windows does not let the sandbox user sign in", start, SandboxProblemCode.NotProvisioned);
+    });
+    assert.deepEqual(await gate.setUp(), {
+      outcome: SandboxSetupOutcome.Cancelled,
+      state: {
+        platform: StudioPlatform.Windows,
+        phase: BootPhase.Ready,
+        sandbox: null,
+        failure: "Windows does not let the sandbox user sign in",
+        failureCode: SandboxProblemCode.NotProvisioned,
+      },
+    });
+    assert.deepEqual(left, [null]);
+  });
+
+  it("a setup screen over an open studio goes back to it when the install fails, with the install's error", async () => {
+    const failures: string[] = [];
+    const gate = createBootGate(StudioPlatform.Windows, {
+      installSandbox: async () => {
+        throw new Error("exit 22: a policy holds the right");
+      },
+      setUpFailed: (error) => void failures.push(String(error)),
+    });
+    const start = async () => {};
+    gate.hold(NOT_PROVISIONED, start, (error) => gate.agentsFailed(String(error), start));
+    const answer = await gate.setUp();
+    assert.equal(answer.state.phase, BootPhase.Ready);
+    assert.match(answer.state.failure ?? "", /exit 22/);
+    assert.equal(failures.length, 1, "the log still hears why");
+    await assert.rejects(gate.setUp(), /nothing to set up/, "the studio's Try again is what is left");
+  });
+
+  it("an attempt that ends on the agents' failure after an install keeps the studio with it", async () => {
+    const gate = createBootGate(StudioPlatform.Windows, { installSandbox: async () => ({ cancelled: false }) });
+    const start = async () => gate.agentsFailed("a policy still refuses the sandbox user", start);
+    gate.hold(NOT_PROVISIONED, start, () => assert.fail("the install went through"));
+    const answer = await gate.setUp();
+    assert.equal(answer.outcome, SandboxSetupOutcome.Installed);
+    assert.equal(answer.state.phase, BootPhase.Ready);
+    assert.equal(answer.state.failure, "a policy still refuses the sandbox user");
+  });
+
   it("tells the log why a Set up failed, the install or the startup after it, and nothing for a cancel", async () => {
     const failures: string[] = [];
     const setUpFailed = (error: unknown) => void failures.push(String(error));
