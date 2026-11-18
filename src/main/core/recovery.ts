@@ -28,7 +28,12 @@ import {
 import { type TypeCheckResult, diagnosticsFor, typeCheckText, TypeCheckFailure } from "../../substrate/type-gate.ts";
 import type { ForkBoot } from "./self-edit-gate.ts";
 import { archiveArtifacts, seedMoveMemory } from "../seed-upgrade-notice.ts";
-import { type SnapshotRecord, checkOutNewRepo, HARNESS_WORKSPACE } from "../../substrate/snapshots.ts";
+import {
+  type SnapshotRecord,
+  checkOutNewRepo,
+  HARNESS_WORKSPACE,
+  pathEverCommitted,
+} from "../../substrate/snapshots.ts";
 import type { ThreadFold } from "../../substrate/event-store.ts";
 import { interruptedTurnsIn } from "../../substrate/turns.ts";
 import { type InboxState, foldInbox, inboxOf } from "./inbox.ts";
@@ -325,6 +330,7 @@ export class RecoveryService {
       updatesDir: this.#core.layout.updates,
       ...(this.#core.options.appVersion ? { appVersion: this.#core.options.appVersion } : {}),
       laySeed: layHarnessSeed,
+      everHeld: (rel) => pathEverCommitted(this.#core.layout.harnessWs, rel),
     };
   }
 

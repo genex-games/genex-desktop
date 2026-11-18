@@ -481,6 +481,11 @@ moved and retired:
 - The manifest keeps entries for paths the booting seed does not ship, so an older build cannot
   orphan a newer file; a file the manifest does not know is re-owned when its bytes match a
   backed-up seed vintage.
+- A shipped file the agent deleted stays deleted. A missing file the app took itself is laid down
+  again, since the same boot brings the files that import it up to date: one the harness
+  repository's history never held (a rewind to before the seed shipped it, `everHeld`), and a
+  retired path where the seed now ships a different file (the same bytes are an older build's seed
+  and stay out).
 - A retired path (`RETIRED_SEED_PATHS`) is backed up and removed only when its bytes match a
   vintage; its entry stays, marked retired, and nothing retires without a backup directory. The
   one pre-manifest pass retires too and writes the entry as it removes the file.

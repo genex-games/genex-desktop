@@ -21,11 +21,11 @@ import { pathExists } from "../../src/substrate/fsx.ts";
 import { StudioCore } from "../../src/main/studio-core.ts";
 import { makeResources } from "../helpers/resources.ts";
 import { coreLite } from "../helpers/core-lite.ts";
-import { git, STUDIO_COMMITTER } from "../../src/substrate/snapshots.ts";
+import { ensureRepo, git, pathEverCommitted, STUDIO_COMMITTER } from "../../src/substrate/snapshots.ts";
 import { cloneSeededWorkspace } from "../helpers/seed-upgrade-fixture.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import { readdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { studioActivity } from "../../src/shared/studio-activity.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
 import type { EventEnvelope } from "../../src/substrate/types.ts";
@@ -239,6 +239,76 @@ describe("manifest reconcile after a harness restore", () => {
     });
     assert.deepEqual(reconciled, []);
   });
+
+  /** Seeded on v1 and committed, then upgraded to a v2 whose main imports a module v2 adds, committed too. */
+  async function rigWithHistory() {
+    const { seed, ws, manifest } = await rig();
+    const updates = path.join(path.dirname(ws), "updates");
+    const options = {
+      seedDir: seed,
+      workspaceDir: ws,
+      manifestFile: manifest,
+      updatesDir: updates,
+      everHeld: (rel: string) => pathEverCommitted(ws, rel),
+    };
+    await applySeed(options);
+    await ensureRepo(ws);
+    const firstCommit = (await git(ws, ["rev-parse", "HEAD"])).trim();
+    await writeFile(path.join(seed, "loop", "work-time.mjs"), "export const WORK = 1;\n");
+    await writeFile(path.join(seed, "loop", "main.mjs"), 'import { WORK } from "./work-time.mjs";\nexport { WORK };\n');
+    await applySeed({ ...options, backupDir: path.join(updates, "seed-backup-1") });
+    await git(ws, ["add", "-A"]);
+    await git(ws, ["commit", "-q", "-m", "seed upgrade baseline"]);
+    return { ws, options, updates, firstCommit };
+  }
+
+  it("lays a seed file down again when a rewind went back past it, so the files that import it still load", async () => {
+    // A Windows PC after an app update: the harness had been rewound to a save point older than
+    // loop/work-time.ts, the next start brought start-autopilot.ts up to date and left work-time.ts
+    // out as "deleted by the agent", and the harness died on ERR_MODULE_NOT_FOUND.
+    const { ws, options, updates, firstCommit } = await rigWithHistory();
+    await git(ws, ["reset", "-q", "--hard", firstCommit]);
+    await git(ws, ["clean", "-qfd"]);
+    assert.equal(await pathExists(path.join(ws, "loop", "work-time.mjs")), false, "the rewind took the newer file");
+    await reconcileManifestWithSeedVintages(options);
+
+    const report = await applySeed({ ...options, backupDir: path.join(updates, "seed-backup-2") });
+
+    assert.deepEqual(report.added, ["loop/work-time.mjs"]);
+    assert.deepEqual(report.updated, ["loop/main.mjs"]);
+    assert.deepEqual(report.kept, []);
+    const loaded: { WORK: number } = await import(pathToFileURL(path.join(ws, "loop", "main.mjs")).href);
+    assert.equal(loaded.WORK, 1, "the upgraded main finds the module it imports");
+  });
+
+  it("still leaves out a seed file the agent deleted in the history the workspace stands on", async () => {
+    const { ws, options, updates } = await rigWithHistory();
+    await rm(path.join(ws, "package.json"));
+    await git(ws, ["add", "-A"]);
+    await git(ws, ["commit", "-q", "-m", "the agent drops package.json"]);
+
+    const report = await applySeed({ ...options, backupDir: path.join(updates, "seed-backup-2") });
+
+    assert.deepEqual(report.kept, ["package.json"], "deleting is an edit too");
+    assert.equal(await pathExists(path.join(ws, "package.json")), false);
+  });
+
+  it("keeps a missing seed file out when the workspace's history cannot be read", async () => {
+    const { seed, ws, manifest } = await rig();
+    const options = {
+      seedDir: seed,
+      workspaceDir: ws,
+      manifestFile: manifest,
+      everHeld: (rel: string) => pathEverCommitted(ws, rel),
+    };
+    await applySeed(options);
+    await rm(path.join(ws, "package.json"));
+
+    const report = await applySeed(options);
+
+    assert.deepEqual(report.kept, ["package.json"], "no repository: nothing says a rewind took it");
+    assert.equal(await pathExists(path.join(ws, "package.json")), false);
+  });
 });
 
 describe("the first launch's harness repository", () => {
@@ -315,6 +385,44 @@ describe("seed upgrade baseline at boot", () => {
     } finally {
       await second.stop();
     }
+  });
+});
+
+describe("seed upgrade at the boot after a harness rewind", () => {
+  it("brings back a shipped file the rewind went back past, beside the files that import it", async () => {
+    const resources = await makeResources();
+    const userData = path.join(await tmpDir("seed-rewind-"), "userData");
+    const boot = async () => {
+      const core = new StudioCore({
+        paths: { userData, resources },
+        engines: [],
+        sandbox: false,
+        execPath: process.execPath,
+      });
+      await core.init();
+      return core;
+    };
+    const first = await boot();
+    const ws = first.layout.harnessWs;
+    const seeded = (await git(ws, ["rev-parse", "HEAD"])).trim();
+
+    // The app ships a module and a line in an existing file that imports it.
+    const seedLoop = path.join(resources, "harness-seed", "loop");
+    await writeFile(path.join(seedLoop, "shipped-later.ts"), "export const SHIPPED_LATER = true;\n");
+    await appendFile(path.join(seedLoop, "main.ts"), 'import "./shipped-later.ts";\n');
+    const second = await boot();
+    assert.ok(await pathExists(path.join(ws, "loop", "shipped-later.ts")));
+
+    // A rewind to the save point from before that upgrade, as the watchdog and Rewind do it.
+    await git(ws, ["reset", "-q", "--hard", seeded]);
+    await git(ws, ["clean", "-qfd"]);
+    await second.reconcileSeedManifest();
+    assert.equal(await pathExists(path.join(ws, "loop", "shipped-later.ts")), false);
+
+    await boot();
+
+    assert.match(await readFile(path.join(ws, "loop", "main.ts"), "utf8"), /shipped-later\.ts/);
+    assert.ok(await pathExists(path.join(ws, "loop", "shipped-later.ts")), "the module main.ts imports is there");
   });
 });
 
@@ -428,6 +536,30 @@ describe("retiring a seed file the app no longer ships", () => {
     await writeFile(path.join(seed, rel), "# an older build shipped this\n");
     const older = await applySeed({ seedDir: seed, workspaceDir: ws, manifestFile: manifest, backupDir: backup });
     assert.ok(older.kept.includes(rel), "the older build keeps it deleted");
+    assert.equal(await pathExists(path.join(ws, rel)), false);
+  });
+
+  it("lays down a path the app retired when a later seed ships a new file there, so its importers load", async () => {
+    // loop/completion-policy.ts went with the archive epoch and came back, rewritten, two days
+    // later beside loop/work-time.ts, which imports it: read as "the agent deleted it", it stayed
+    // out and the harness died on ERR_MODULE_NOT_FOUND at every start.
+    const { seed, ws, manifest, backup, rel } = await retiredRig();
+    await applySeed({ seedDir: seed, workspaceDir: ws, manifestFile: manifest, backupDir: backup });
+
+    await writeFile(path.join(seed, rel), "# a later build ships a new file at this path\n");
+    const report = await applySeed({ seedDir: seed, workspaceDir: ws, manifestFile: manifest, backupDir: backup });
+
+    assert.deepEqual(report.added, [rel]);
+    assert.deepEqual(report.kept, []);
+    assert.equal(await readFile(path.join(ws, rel), "utf8"), "# a later build ships a new file at this path\n");
+    const written = JSON.parse(await readFile(manifest, "utf8")) as { retired?: Record<string, string> };
+    assert.equal(written.retired?.[rel], undefined, "back in the seed, it is no longer retired");
+
+    // From here it is an ordinary seed file: the agent's deletion of it stands.
+    await rm(path.join(ws, rel));
+    await writeFile(path.join(seed, rel), "# and a newer one still\n");
+    const later = await applySeed({ seedDir: seed, workspaceDir: ws, manifestFile: manifest, backupDir: backup });
+    assert.deepEqual(later.kept, [rel]);
     assert.equal(await pathExists(path.join(ws, rel)), false);
   });
 
