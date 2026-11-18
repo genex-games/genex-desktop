@@ -407,6 +407,23 @@ describe("Set up (Windows)", () => {
     assert.deepEqual({ ...counts, attempts }, { installs: 1, attempts: 2 }, "one administrator prompt");
   });
 
+  it("a setup screen held later on another problem is installed for, after an earlier install went through", async () => {
+    const installedFor: SandboxProblem[] = [];
+    const gate = createBootGate(StudioPlatform.Windows, {
+      installSandbox: async (problem) => {
+        installedFor.push(problem);
+        return { cancelled: false };
+      },
+    });
+    const start = async () => {};
+    gate.hold(NOT_PROVISIONED, async () => gate.agentsFailed("the harness would not start", start));
+    await gate.setUp();
+    const refused = { ...NOT_PROVISIONED, details: ["Windows will not sign the sandbox user in"] };
+    gate.hold(refused, start);
+    await gate.setUp();
+    assert.deepEqual(installedFor, [NOT_PROVISIONED, refused]);
+  });
+
   it("a sandbox still waiting on its install after one is installed again by the next Set up", async () => {
     let installs = 0;
     const gate = createBootGate(StudioPlatform.Windows, {

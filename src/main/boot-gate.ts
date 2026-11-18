@@ -165,9 +165,10 @@ interface SetUpGate {
 /** A gate's Set up: the install behind the administrator prompt, then the gate's retry. */
 function setUpRunner(options: BootGateOptions, gate: SetUpGate) {
   let installing: Promise<SandboxSetupResult> | null = null;
-  // The install went through but the startup after it failed: the sandbox is there, so the next
-  // Set up only starts again, without another administrator prompt.
-  let installed = false;
+  // The install for this problem went through but the startup after it failed: the sandbox is
+  // there, so the next Set up only starts again, without another administrator prompt. A screen
+  // held later on another problem is installed for.
+  let installedFor: SandboxProblem | null = null;
   // Set once Set up first runs: a window that loads again does not run it by itself again.
   let tried = false;
   // Nothing was set up: the screen's way back taken when it has one, and the state after.
@@ -175,13 +176,17 @@ function setUpRunner(options: BootGateOptions, gate: SetUpGate) {
     left?.(error);
     return { outcome: SandboxSetupOutcome.Cancelled, state: gate.state() };
   };
-  const install = async (run: () => Promise<SandboxInstall>, left: SetupLeave | null): Promise<SandboxSetupResult> => {
-    const { cancelled } = await (installed ? ALREADY_INSTALLED : run)();
+  const install = async (
+    problem: SandboxProblem,
+    run: () => Promise<SandboxInstall>,
+    left: SetupLeave | null,
+  ): Promise<SandboxSetupResult> => {
+    const { cancelled } = await (installedFor === problem ? ALREADY_INSTALLED : run)();
     if (cancelled) return notSetUp(left, null);
-    installed = true;
+    installedFor = problem;
     const after = await gate.retry();
     // Still waiting on its install after one: the next Set up installs again.
-    installed = !waitsOnInstall(after);
+    if (waitsOnInstall(after)) installedFor = null;
     return { outcome: SandboxSetupOutcome.Installed, state: after };
   };
   const run = (): Promise<SandboxSetupResult> => {
@@ -192,7 +197,7 @@ function setUpRunner(options: BootGateOptions, gate: SetUpGate) {
     tried = true;
     const problem = state.sandbox;
     const left = gate.leave();
-    installing = install(() => installSandbox(problem), left)
+    installing = install(problem, () => installSandbox(problem), left)
       .catch((error: unknown) => {
         options.setUpFailed?.(error);
         if (!left) throw error;
