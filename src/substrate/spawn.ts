@@ -606,11 +606,12 @@ export function claudeFoldersIn(folders: readonly string[]): string[] {
 }
 
 /**
- * Write denies on a game's own settings for a provider's CLI (`.grok`, `.cursor`, `opencode.json`):
- * a later session in the game loads them, so no session may plant them. On Linux sandbox-runtime
- * guards a deny path that is not there with a stand-in device file in its place while the session
- * runs, and the build's `git add -A` refuses a path that is no regular file: so there only a path
- * that exists now is denied, as {@link claudeFolderDenyWrites} names `.claude`.
+ * Write denies on a game's own settings for a provider's CLI (`.grok`, `.cursor`, `opencode.json`,
+ * `.opencode`, `.agents`): a later session in the game loads them, so no session may plant them.
+ * On Linux sandbox-runtime guards a deny path that is not there with a stand-in device file in its
+ * place while the session runs, and the build's `git add -A` refuses a path that is no regular
+ * file: so there only a path that exists now is denied, as {@link claudeFolderDenyWrites} names
+ * `.claude`, and nothing there stops a session making settings a game does not have yet.
  */
 export function gameSettingsDenyWrites(
   paths: readonly string[],

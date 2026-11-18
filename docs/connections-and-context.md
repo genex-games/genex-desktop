@@ -273,7 +273,8 @@ denies writing a game's own `.grok`, and reaches only xAI's hosts (`api.x.ai`,
 `cli-chat-proxy.grok.com`, `auth.x.ai`, `accounts.x.ai`, `grok.com`). On Linux a provider's
 sandbox denies a game's own settings (`.grok`, `.cursor`, `opencode.json`, `.opencode`, `.agents`)
 only when they exist (`gameSettingsDenyWrites`): sandbox-runtime guards a missing deny path with a
-stand-in device file in the game, which the build's `git add -A` refuses. A chat the person set to
+stand-in device file in the game, which the build's `git add -A` refuses. So on Linux nothing
+stops a session making such settings in a game that has none; macOS and Windows deny them either way. A chat the person set to
 Bypass runs its builds outside that sandbox, as the person, as Codex's Bypass does
 (`runsAsPerson`, `grokOutside`): in their environment less every credential and other vendors'
 variables, with the studio's toolchain PATH, on Grok's own sign-in, which it renews itself. A
@@ -340,7 +341,7 @@ Cursor's sandbox cannot start inside Genex's, so each turn runs in `ProcessSandb
 is Cursor's hosts (`*.cursor.sh`, `*.cursorapi.com`, `cursor.com`); Cursor's agent connection reads
 the sandbox's proxy itself and `NODE_USE_ENV_PROXY=1` covers Node's own requests. It writes the
 workspace (a read-only session, Plan or a reviewer runs from a scratch folder), Cursor's own folders and a Node compile cache, never a game's
-`.cursor` (its rules, hooks and MCP servers). Two options `--help` does not list are passed, checked
+`.cursor` (its rules, hooks and MCP servers; on Linux only one that exists, as Grok Build's `.grok`). Two options `--help` does not list are passed, checked
 on 2026.10.22: `--disable-auto-update` (its updater rewrites `~/.local/bin/agent`) and
 `--single-turn` (a turn ends with its reply instead of waiting on a dev server left in the
 background, which kept `--print` from exiting). A judge's answer runs in `--mode ask` from an empty
@@ -401,7 +402,7 @@ terminal sandbox leaves its file tools out, and its permission rules do not reac
 so each turn runs in `ProcessSandbox` with `antigravitySandbox` (a build for a chat the person set to
 Bypass runs as them outside it, `runsAsPerson`, as Codex's and Grok Build's do): the workspace (a read-only
 session, Plan or a reviewer runs from a scratch folder) is all it writes, the network is Google's
-hosts (`ANTIGRAVITY_HOSTS`), a game's `.agents` folder is not the session's to write, and inside
+hosts (`ANTIGRAVITY_HOSTS`), a game's `.agents` folder is not the session's to write (on Linux only one that exists), and inside
 the box every tool call the agent asks about is allowed, except a command the never-touch screen
 stops (`antigravityPermission`, `neverTouchVerdict`): macOS's keychain tool, a command the screen
 cannot read and a command with no command line are refused, as a worker's hook refuses them. Its sandbox alone is given `~/.gemini`
