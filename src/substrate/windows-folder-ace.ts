@@ -140,6 +140,8 @@ const MESSAGE = {
   Refused: "refused",
   TimedOut: (ms: number) => `Windows was still passing the entries down after ${Math.round(ms / SECOND_MS)} s`,
   NotReached: (ms: number) => `not reached: the batch ran out of time after ${Math.round(ms / SECOND_MS)} s`,
+  /** What a failed icacls call adds when its deadline stopped it. */
+  IcaclsStopped: (ms: number) => `stopped after ${Math.round(ms / SECOND_MS)} s (it walks everything under the folder)`,
 } as const;
 
 /** How long one PowerShell batch or one `icacls` call may take. */
@@ -567,10 +569,16 @@ export function icaclsArgs(edit: FolderAceEdit): string[] {
     : [edit.dir, "/remove:g", `*${edit.sid}`];
 }
 
-/** A failed icacls call's own words: Node's message names only the command, icacls writes to stdout. */
+/**
+ * A failed icacls call's own words: Node's message names only the command, icacls writes to stdout.
+ * One stopped for time says so: icacls walks everything under the folder, so a large one (AppData)
+ * can outlast {@link TOOL_TIMEOUT_MS}, and its message alone reads like any other failure.
+ */
 function icaclsFailure(error: unknown): string {
-  const stdout = typeof error === "object" && error !== null && "stdout" in error ? String(error.stdout).trim() : "";
-  return [errorMessage(error), stdout].filter(Boolean).join(": ");
+  const fields = typeof error === "object" && error !== null ? error : {};
+  const stdout = "stdout" in fields ? String(fields.stdout).trim() : "";
+  const stopped = "killed" in fields && fields.killed === true ? MESSAGE.IcaclsStopped(TOOL_TIMEOUT_MS) : "";
+  return [errorMessage(error), stopped, stdout].filter(Boolean).join(": ");
 }
 
 /** What an editor runs; each default is the real program, with `env` (default: this process's). */

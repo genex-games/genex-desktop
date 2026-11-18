@@ -534,6 +534,18 @@ describe("an entry on one folder alone", () => {
     ]);
   });
 
+  it("says when icacls was stopped for time, since it walks everything under the folder", async () => {
+    const editor = folderAceEditor({
+      env: { SystemRoot: "C:\\Windows" },
+      powershell: async () => Promise.reject(new Error("Cannot invoke method")),
+      icacls: async () =>
+        Promise.reject(Object.assign(new Error("Command failed: icacls"), { killed: true, stdout: "" })),
+    });
+    const [outcome] = await editor(edits);
+    assert.equal(outcome?.ok, false);
+    assert.match(outcome && !outcome.ok ? outcome.error : "", /^Command failed: icacls: stopped after 15 s/);
+  });
+
   it("answers a batch PowerShell ran past its deadline on as timed out, and one it could not run as nothing", async () => {
     const edit: FolderOwnEdit = {
       dir: "C:\\x",
