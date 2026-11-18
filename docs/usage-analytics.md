@@ -84,7 +84,9 @@ stops recording, opts out and resets the id.
   removal (`PluginInstallProblem`, `PluginStateRefusal`) on `plugin_install_finished`,
   `plugin_action_finished` and the sidebar's update toasts, while `plugin_updates_run` counts
   `failed` and `declined` apart and `plugin_failed` says how a running plugin failed
-  (`PluginChange.failure`, a `PluginFailure`).
+  (`PluginChange.failure`, a `PluginFailure`). A catalog plugin's call names the tool it asked for
+  (`plugin_tool_finished.plugin_tool`, such as Godot's `run-scene`); a plugin the person brought
+  stays unnamed.
   A game's asset inventory that could not be read crosses with the file system's why
   (`AssetInventoryFailure`: a held file, access refused, a missing file, too many open files);
   `assets_inventory_failed` says it as `code`, at the 1st, 2nd, 4th… failure in a row of its

@@ -535,6 +535,29 @@ describe("chat builds, jobs and plugin calls from the log", () => {
       ],
     );
   });
+  it("names the tool a catalog plugin's call asked for, never a local plugin's or a name shaped like words", () => {
+    const plugins = () => [
+      { manifest: { id: "godot" }, source: PluginSourceKind.Bundled },
+      { manifest: { id: "my-tools" }, source: PluginSourceKind.Local },
+    ];
+    const call = (pluginId: string, tool: unknown, ms: number) =>
+      record(CustomEvent.PluginTool, { pluginId, tool, ok: false, failure: PluginCallFailure.Plugin, images: 0 }, ms);
+    const found = read(memoryWith(plugins), [
+      call("godot", "run-scene", 0),
+      call("godot", "web_export", 1),
+      call("my-tools", "alice-secret", 2),
+      call("godot", "C:\\Users\\alice", 3),
+      call("godot", "", 4),
+      call("godot", undefined, 5),
+    ]);
+    assert.deepEqual(
+      found.map((item) => {
+        assert.equal(item.event, BuildsEvent.PluginToolFinished);
+        return item.properties.plugin_tool;
+      }),
+      ["run-scene", "web_export", null, null, null, null],
+    );
+  });
 });
 
 describe("main's run events", () => {

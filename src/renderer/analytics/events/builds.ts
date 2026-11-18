@@ -28,6 +28,7 @@ import { GenexTool, MakingKind, type MakingPhase, type MakingJob } from "../../.
 import { JobRole, JobState, JobStopper } from "../../../shared/jobs.ts";
 import { type LiveLoadFailure, type PreviewGone, ReadyVia } from "../../../shared/preview-contract.ts";
 import { LoopProfile } from "../../../shared/project-facts.ts";
+import { MCP_TOOL_NAME } from "../../../shared/mcp.ts";
 import { EngineId } from "../../../shared/providers.ts";
 import {
   CompletionPolicy,
@@ -454,6 +455,8 @@ export type BuildsEventProperties = {
     plugin_ref: PluginRef;
     kind: MakingKind | Unlisted;
     tool: GenexTool | Unlisted | null;
+    /** The tool a catalog plugin's call asked for (`run-scene`), as its manifest names it; null for one the person brought. */
+    plugin_tool: string | null;
     ok: boolean;
     cut_off: CallCutOff | null;
     blocked: GenexBlocked | null;
@@ -1007,6 +1010,11 @@ function retryOfFailed(memory: BuildsMemory, call: { key: string; ok: boolean; a
   return !call.ok && before !== undefined && call.at - before <= RETRY_OF_FAILED_MS;
 }
 
+/** A tool name shaped as a manifest declares one, never words or a path; null otherwise. */
+function toolNameOf(value: unknown): string | null {
+  return typeof value === "string" && MCP_TOOL_NAME.test(value) ? value : null;
+}
+
 /** A plugin call's end: whose, what it made, and how it ended. The tool is named only for a plugin that may be named. */
 const pluginTool: Reader = (payload, at, memory) => {
   const ref = pluginRef(payload.pluginId, memory.plugins());
@@ -1021,6 +1029,7 @@ const pluginTool: Reader = (payload, at, memory) => {
       plugin_ref: ref,
       kind,
       tool,
+      plugin_tool: named ? toolNameOf(payload.tool) : null,
       ok,
       cut_off: oneOf(CallCutOff, payload.cutOff),
       blocked: oneOf(GenexBlocked, payload.blocked),
