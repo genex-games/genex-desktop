@@ -362,7 +362,9 @@ export function WindowsSetup({
       title={words.title}
     >
       <p className={step === WindowsStep.Failed ? "text-orange" : "text-ink-2"}>{words.line}</p>
-      {problem.windowsNeeds?.includes(WindowsSetupNeed.LogonService) && <LogonServiceLine step={step} />}
+      {NEED_LINES.filter((need) => problem.windowsNeeds?.includes(need)).map((need) => (
+        <NeedLine key={need} need={need} step={step} />
+      ))}
       <BootUpdate update={update} onUpdate={onUpdate} />
       {step === WindowsStep.SettingUp && (
         <WorkingLine text={reinstall ? WORDS.windows.reinstall.updating : WORDS.windows.settingUp.step} />
@@ -381,14 +383,17 @@ export function WindowsSetup({
   );
 }
 
+/** The needs the card names in a line of their own, in the order shown. */
+const NEED_LINES = [WindowsSetupNeed.LogonService, WindowsSetupNeed.LogonRight] as const;
+
 /**
- * Windows' Secondary Logon service is disabled: Set up turns it back on, and after a Set up that
- * could not, the line says how to do it by hand.
+ * What Set up does about a need Windows itself holds back (a disabled Secondary Logon service, a
+ * sandbox user it will not sign in), and after a Set up that could not, what to do by hand.
  */
-function LogonServiceLine({ step }: { step: WindowsStep }): JSX.Element {
-  const words = WORDS.windows.logonService;
+function NeedLine({ need, step }: { need: (typeof NEED_LINES)[number]; step: WindowsStep }): JSX.Element {
+  const words = need === WindowsSetupNeed.LogonService ? WORDS.windows.logonService : WORDS.windows.logonRight;
   return (
-    <p data-windows-need={WindowsSetupNeed.LogonService} className="text-ink-2">
+    <p data-windows-need={need} className="text-ink-2">
       {step === WindowsStep.Failed ? words.fix : words.line}
     </p>
   );

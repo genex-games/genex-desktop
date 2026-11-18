@@ -69,6 +69,8 @@ const MESSAGE = {
     [SandboxLaunchCode.ProxyPortsRefused]: `Windows did not let Genex's sandbox use its network ports (${SRT_PROXY_PORTS}). Hyper-V, WSL or Docker often reserve them. Restart the PC, or run "net stop winnat" and then "net start winnat" in a terminal opened as administrator, and try again.`,
     [SandboxLaunchCode.SandboxUserRefused]:
       "Windows would not start Genex's sandbox user. Restart the PC, then try again.",
+    [SandboxLaunchCode.LogonRightRefused]:
+      'A policy on this PC does not let Genex\'s sandbox user sign in, and Set up could not change that. Ask the PC\'s administrator, or check your security program: the account "srt-sandbox" needs "Allow log on locally" and must not be under "Deny log on locally" (Local Security Policy, User Rights Assignment). Then restart Genex.',
   } satisfies Record<SandboxLaunchCode, string>,
 } as const;
 
@@ -129,6 +131,16 @@ export function sandboxStartFailureCode(error: unknown): BootFailureCode | null 
   return null;
 }
 
+/** The setup problem a failed start is, read from the error or the causes it wraps; null for any other failure. */
+export function sandboxSetupProblem(error: unknown): SandboxProblem | null {
+  let current = error;
+  for (let depth = 0; depth < CAUSE_DEPTH_MAX && current instanceof Error; depth++) {
+    if (current instanceof SandboxUnavailableError) return current.problem;
+    current = current.cause;
+  }
+  return null;
+}
+
 /** What the sandbox checks found, before `initialize`. */
 export interface SandboxCheck {
   platform: string;
@@ -172,6 +184,18 @@ export function windowsSetupProblem(error: unknown, details: string[] = []): San
     installCommands: [],
     details,
     ...(need ? { windowsNeeds: [need] } : {}),
+  };
+}
+
+/** Windows: the sandbox is installed and Set up still has `need` to do, with the words for Details. */
+export function windowsNeedProblem(need: WindowsSetupNeed, details: string[] = []): SandboxProblem {
+  return {
+    code: SandboxProblemCode.NotProvisioned,
+    platform: StudioPlatform.Windows,
+    missingTools: [],
+    installCommands: [],
+    details,
+    windowsNeeds: [need],
   };
 }
 

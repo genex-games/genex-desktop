@@ -11,11 +11,13 @@
  * Where the Secondary Logon service is disabled, Set up first turns it back on, behind a prompt of
  * its own (`windows-logon-service.ts`): srt-win elevates itself, so the two cannot share one.
  * A PC an earlier Genex set up for another srt-win release runs the same install again, which
- * upgrades it in place.
+ * upgrades it in place. Where Windows will not sign the sandbox user in, Set up gives it that right
+ * (`windows-logon-right.ts`), behind a prompt of its own too.
  */
 import path from "node:path";
 import { type SandboxProblem, WindowsSetupNeed } from "../shared/boot.ts";
 import { MINUTE_MS } from "../shared/duration.ts";
+import { allowSandboxLogon } from "./windows-logon-right.ts";
 import { enableLogonService, logonServiceStartType, ServiceStartType } from "./windows-logon-service.ts";
 
 /** Past the ~2 minutes after which Windows dismisses an unanswered UAC prompt on its own. */
@@ -68,12 +70,15 @@ async function installSrtSandbox(): Promise<{ cancelled: boolean }> {
 export interface WindowsSetupSteps {
   logonServiceStartType: () => Promise<ServiceStartType | null>;
   enableLogonService: () => Promise<{ cancelled: boolean }>;
+  /** Give the sandbox user its right to sign in on this PC (`windows-logon-right.ts`). */
+  allowSandboxLogon: () => Promise<{ cancelled: boolean }>;
   installSandbox: () => Promise<{ cancelled: boolean }>;
 }
 
 const SETUP_STEPS: WindowsSetupSteps = {
   logonServiceStartType: () => logonServiceStartType(),
   enableLogonService: () => enableLogonService(),
+  allowSandboxLogon: () => allowSandboxLogon(),
   installSandbox: installSrtSandbox,
 };
 
@@ -89,8 +94,9 @@ async function logonServiceStillOff(needs: readonly WindowsSetupNeed[], steps: W
 
 /**
  * Set up what `problem` needs (the sandbox install when it does not say): the Secondary Logon
- * service first, then srt-win's install, for a first install or again over another release's;
- * `cancelled` when an approval prompt was dismissed, which leaves the rest undone.
+ * service first, then srt-win's install, for a first install or again over another release's, then
+ * the sandbox user's right to sign in; `cancelled` when an approval prompt was dismissed, which
+ * leaves the rest undone.
  */
 export async function installWindowsSandbox(
   problem: SandboxProblem,
@@ -102,6 +108,10 @@ export async function installWindowsSandbox(
     if (cancelled) return { cancelled };
   }
   const installs = needs.includes(WindowsSetupNeed.Sandbox) || needs.includes(WindowsSetupNeed.Reinstall);
-  if (!installs) return { cancelled: false };
-  return steps.installSandbox();
+  if (installs) {
+    const { cancelled } = await steps.installSandbox();
+    if (cancelled) return { cancelled };
+  }
+  // After the install: the right is the account's, which a first install has yet to make.
+  return needs.includes(WindowsSetupNeed.LogonRight) ? steps.allowSandboxLogon() : { cancelled: false };
 }

@@ -397,6 +397,8 @@ function windowsGapProblem(gaps: readonly WindowsSetupGap[]): SandboxProblem | n
  * check does not explain, or a check that fails itself, stays the error it was.
  */
 async function asWindowsSetupProblem(error: unknown, setupGaps: () => Promise<WindowsSetupGap[]>): Promise<unknown> {
+  // The session already named what Set up does (a sandbox user Windows will not sign in).
+  if (error instanceof SandboxUnavailableError) return error;
   const typed = asSetupProblem(error);
   if (typed !== error) return typed;
   const problem = windowsGapProblem(await setupGaps().catch((): WindowsSetupGap[] => []));

@@ -295,11 +295,16 @@ import {
   type BootFailureCode,
   BootPhase,
   type SandboxProblem,
+  SandboxProblemCode,
   StartPassage,
   StartStep,
   StudioPlatform,
 } from "../shared/boot.ts";
-import { SandboxUnavailableError, sandboxStartFailureCode } from "../substrate/sandbox-unavailable.ts";
+import {
+  SandboxUnavailableError,
+  sandboxSetupProblem,
+  sandboxStartFailureCode,
+} from "../substrate/sandbox-unavailable.ts";
 import { type Painter, paintWhileUsed } from "../substrate/paint-while-used.ts";
 import {
   type DetachedSpawn,
@@ -3147,17 +3152,27 @@ async function startHarness(studio: StudioCore): Promise<boolean> {
     return true;
   } catch (err) {
     if (dev || isSmoke) throw err;
-    const code = sandboxStartFailureCode(err) ?? BootFailure.HarnessFailed;
-    showAgentsFailure(
-      errorMessage(err),
-      async () => {
-        await studio.start();
-        announceReady(userDataRoot);
-      },
-      code,
-    );
+    const retry = async () => {
+      await studio.start();
+      announceReady(userDataRoot);
+    };
+    const setup = sandboxSetupProblem(err);
+    if (setup?.code === SandboxProblemCode.NotProvisioned) await showAgentsSetup(setup, retry);
+    else showAgentsFailure(errorMessage(err), retry, sandboxStartFailureCode(err) ?? BootFailure.HarnessFailed);
     return false;
   }
+}
+
+/**
+ * The studio's window is open, and its agents would not start for something Set up fixes (Windows
+ * will not sign the sandbox user in, found only when the sandbox starts behind the window): the
+ * window shows the setup screen, whose Set up then starts the agents (`retry`) and brings the
+ * studio back.
+ */
+async function showAgentsSetup(problem: SandboxProblem, retry: () => Promise<void>): Promise<void> {
+  studioLog.write("main", `sandbox unavailable: ${problem.code} ${problem.details.join("; ")}`);
+  bootGate.hold(problem, retry);
+  await reshowBoot();
 }
 
 /**

@@ -81,6 +81,11 @@ export const SandboxLaunchCode = {
   ProxyPortsRefused: "proxy-ports-refused",
   /** Windows: Windows kept refusing to start srt-win as the sandbox user, after Genex tried again. */
   SandboxUserRefused: "sandbox-user-refused",
+  /**
+   * Windows: a policy still refuses the sandbox user's sign-in ("Allow log on locally") after Set
+   * up gave it that right, so only the PC's administrator or its security program can lift it.
+   */
+  LogonRightRefused: "logon-right-refused",
 } as const;
 export type SandboxLaunchCode = (typeof SandboxLaunchCode)[keyof typeof SandboxLaunchCode];
 
@@ -157,6 +162,11 @@ export const WindowsSetupNeed = {
    * this one starts nothing on that install until it is upgraded in place.
    */
   Reinstall: "reinstall",
+  /**
+   * Give the sandbox user the right to sign in on this PC ("Allow log on locally"): a policy or a
+   * security program took it, so Windows refuses each start as that user.
+   */
+  LogonRight: "logon-right",
 } as const;
 export type WindowsSetupNeed = (typeof WindowsSetupNeed)[keyof typeof WindowsSetupNeed];
 

@@ -157,5 +157,24 @@ test("a start that failed offers it too", async () => {
 
 /** Text as React's server renderer writes it. */
 function escaped(text: string): string {
-  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+  return text
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#x27;");
 }
+
+const RIGHT_WORDS = SANDBOX_SETUP_WORDS.windows.logonRight;
+const RIGHT_LINE = /data-windows-need="logon-right"/;
+
+test("a sandbox user Windows will not sign in: the card says Set up allows it, and after a failed one what to do by hand", async () => {
+  const held = problem([WindowsSetupNeed.LogonRight]);
+  const waiting = await renderCard(held, { settingUp: false, error: null });
+  assert.match(waiting, RIGHT_LINE);
+  assert.ok(waiting.includes(escaped(RIGHT_WORDS.line)));
+  assert.doesNotMatch(waiting, SERVICE_LINE, "the service is not what is wrong");
+  const failed = await renderCard(held, { settingUp: false, error: "a policy holds it out" });
+  assert.ok(failed.includes(escaped(RIGHT_WORDS.fix)));
+  assert.ok(!failed.includes(escaped(RIGHT_WORDS.line)));
+});

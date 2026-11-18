@@ -5,28 +5,25 @@
  * denied"). Manual is enough: Windows starts the service when the call needs it.
  *
  * Its start type is read from `sc qc seclogon`, which needs no administrator; Set up turns it back
- * on (`sc config seclogon start= demand`) behind Windows' approval prompt, which Windows
- * PowerShell raises (`Start-Process -Verb RunAs`): srt-win's own install elevates itself, so the
- * service cannot join its prompt.
+ * on (`sc config seclogon start= demand`) behind Windows' approval prompt (`windows-elevated.ts`):
+ * srt-win's own install elevates itself, so the service cannot join its prompt.
  */
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
-import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
-import { windowsPowerShell } from "./windows-folder-ace.ts";
+import { SECOND_MS } from "../shared/duration.ts";
+import { ELEVATION_CANCELLED_EXIT, type ElevatedAnswer, runElevated } from "./windows-elevated.ts";
 
 const run = promisify(execFile);
 
 /** How long `sc qc` may take. */
 const QUERY_TIMEOUT_MS = 15 * SECOND_MS;
-/** Past the ~2 minutes after which Windows dismisses an unanswered approval prompt on its own. */
-const ENABLE_TIMEOUT_MS = 3 * MINUTE_MS;
 
 /** The service's name, as `sc` takes it. */
 const LOGON_SERVICE = "seclogon";
 
-/** The elevated step's exit status for a dismissed approval prompt (srt-win's install uses the same). */
-export const LOGON_SERVICE_CANCELLED_EXIT = 10;
+/** The elevated step's exit status for a dismissed approval prompt. */
+export const LOGON_SERVICE_CANCELLED_EXIT = ELEVATION_CANCELLED_EXIT;
 
 /** How Windows starts a service, from `sc qc`'s START_TYPE. */
 export const ServiceStartType = {
@@ -50,31 +47,6 @@ const START_TYPE_BY_NUMBER: readonly ServiceStartType[] = [
 
 /** `sc qc`'s START_TYPE line, by its number: the word after it is localized. */
 const START_TYPE_LINE = /^\s*START_TYPE\s*:\s*(\d+)\b/m;
-
-/** ERROR_CANCELLED: the person dismissed the approval prompt. */
-const ERROR_CANCELLED = 1223;
-
-/**
- * Turns the service back on as an administrator: one approval prompt, then `sc config`, whose exit
- * status it answers with ({@link LOGON_SERVICE_CANCELLED_EXIT} when the prompt was dismissed). The
- * elevated `sc` writes nowhere Genex can read, so its status is all there is.
- */
-const ENABLE_SCRIPT = `
-$ErrorActionPreference = 'Stop'
-$sc = Join-Path $env:SystemRoot 'System32\\sc.exe'
-try {
-  $process = Start-Process -FilePath $sc -ArgumentList 'config ${LOGON_SERVICE} start= demand' -Verb RunAs -WindowStyle Hidden -PassThru
-} catch {
-  for ($e = $_.Exception; $e; $e = $e.InnerException) {
-    if ($e -is [System.ComponentModel.Win32Exception] -and $e.NativeErrorCode -eq ${ERROR_CANCELLED}) { exit ${LOGON_SERVICE_CANCELLED_EXIT} }
-  }
-  throw
-}
-# The handle, taken before the process ends, keeps its exit code readable.
-$null = $process.Handle
-$process.WaitForExit()
-exit $process.ExitCode
-`;
 
 const MESSAGE = {
   NotEnabled: (status: number, stderr: string) =>
@@ -107,34 +79,8 @@ export async function logonServiceStartType(
   return query().then(serviceStartType, () => null);
 }
 
-/** What the elevated step answered: its exit status and what it wrote to stderr. */
-export interface ElevatedAnswer {
-  status: number;
-  stderr: string;
-}
-
-/** A process's exit status from execFile's error; null when it never exited by itself (not started, timed out). */
-function exitStatus(error: unknown): number | null {
-  const code = typeof error === "object" && error !== null && "code" in error ? error.code : null;
-  return typeof code === "number" ? code : null;
-}
-
-async function runElevatedEnable(): Promise<ElevatedAnswer> {
-  const script = Buffer.from(ENABLE_SCRIPT, "utf16le").toString("base64");
-  const args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", script];
-  const running = run(windowsPowerShell(), args, { timeout: ENABLE_TIMEOUT_MS, windowsHide: true, encoding: "utf8" });
-  // PowerShell may wait for its input to end before it exits; it reads none.
-  running.child.stdin?.end();
-  try {
-    await running;
-    return { status: 0, stderr: "" };
-  } catch (error) {
-    const status = exitStatus(error);
-    if (status === null) throw error;
-    const stderr = typeof error === "object" && error !== null && "stderr" in error ? String(error.stderr) : "";
-    return { status, stderr: stderr.trim() };
-  }
-}
+/** Turns the service back on as an administrator: one approval prompt, then `sc config`. */
+const runElevatedEnable = (): Promise<ElevatedAnswer> => runElevated("sc.exe", `config ${LOGON_SERVICE} start= demand`);
 
 /**
  * Set the Secondary Logon service to Manual, behind one approval prompt: `cancelled` when the

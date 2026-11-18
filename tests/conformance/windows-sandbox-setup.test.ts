@@ -30,7 +30,13 @@ function problem(needs?: WindowsSetupNeed[]): SandboxProblem {
 }
 
 /** Set up's steps as recorders: the service's start type now, and each step's answer. */
-function steps(options: { startType?: ServiceStartType | null; enable?: { cancelled: boolean } | Error } = {}) {
+function steps(
+  options: {
+    startType?: ServiceStartType | null;
+    enable?: { cancelled: boolean } | Error;
+    allow?: { cancelled: boolean } | Error;
+  } = {},
+) {
   const ran: string[] = [];
   const recorded: WindowsSetupSteps = {
     logonServiceStartType: async () => {
@@ -41,6 +47,11 @@ function steps(options: { startType?: ServiceStartType | null; enable?: { cancel
       ran.push("enable");
       if (options.enable instanceof Error) throw options.enable;
       return options.enable ?? { cancelled: false };
+    },
+    allowSandboxLogon: async () => {
+      ran.push("allow");
+      if (options.allow instanceof Error) throw options.allow;
+      return options.allow ?? { cancelled: false };
     },
     installSandbox: async () => {
       ran.push("install");
@@ -141,4 +152,24 @@ test("a dismissed approval for the service is a cancelled Set up that installs n
 test("a service Windows would not turn on fails Set up with its words", async () => {
   const run = steps({ enable: new Error("could not turn on seclogon (sc exited 5)") });
   await assert.rejects(installWindowsSandbox(problem([WindowsSetupNeed.LogonService]), run.steps), /exited 5/);
+});
+
+test("Set up lets the sandbox user sign in, and installs nothing a set-up PC has", async () => {
+  const run = steps();
+  assert.deepEqual(await installWindowsSandbox(problem([WindowsSetupNeed.LogonRight]), run.steps), {
+    cancelled: false,
+  });
+  assert.deepEqual(run.ran, ["allow"]);
+});
+
+test("a dismissed approval for the sign-in right is a cancelled Set up", async () => {
+  const run = steps({ allow: { cancelled: true } });
+  assert.deepEqual(await installWindowsSandbox(problem([WindowsSetupNeed.LogonRight]), run.steps), {
+    cancelled: true,
+  });
+});
+
+test("a sign-in right Windows would not give fails Set up with its words", async () => {
+  const run = steps({ allow: new Error("could not let srt-sandbox sign in: exit 22") });
+  await assert.rejects(installWindowsSandbox(problem([WindowsSetupNeed.LogonRight]), run.steps), /exit 22/);
 });

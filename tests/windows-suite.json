@@ -382,6 +382,7 @@
   "tests/conformance/windows-install.test.ts",
   "tests/conformance/windows-labels.test.ts",
   "tests/conformance/windows-live-input.test.ts",
+  "tests/conformance/windows-logon-right.test.ts",
   "tests/conformance/windows-logon-service.test.ts",
   "tests/conformance/windows-processes.test.ts",
   "tests/conformance/windows-sandbox-setup.test.ts",
