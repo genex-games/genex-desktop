@@ -5,6 +5,7 @@
  * assertion here is about that promise being mechanically true, not merely intended.
  */
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { chmod, mkdir, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -138,6 +139,48 @@ async function harnessWorkspace(): Promise<{ engine: SnapshotEngine; dir: string
   await engine.init();
   return { engine, dir, games };
 }
+
+/**
+ * Git 2.43.0 (Ubuntu 24.04's own) refuses `reset --hard --end-of-options <commit>`; newer and older
+ * Gits take it. The stand-in below is the Git on PATH with that one refusal, so the restore is
+ * proved on every runner's Git, not only where 2.43.0 happens to be installed.
+ */
+it("restores under a Git that refuses --end-of-options on reset (2.43.0)", {
+  skip: process.platform === "win32",
+}, async () => {
+  const realGit = execFileSync("/bin/sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  const bin = await tmpDir();
+  const refusal = "fatal: option '--end-of-options' must come before non-option arguments";
+  await writeFile(
+    path.join(bin, "git"),
+    [
+      "#!/bin/sh",
+      "reset=0; guarded=0",
+      'for arg in "$@"; do',
+      '  [ "$arg" = reset ] && reset=1',
+      '  [ "$arg" = --end-of-options ] && guarded=1',
+      "done",
+      `if [ "$reset" = 1 ] && [ "$guarded" = 1 ]; then echo "${refusal}" >&2; exit 128; fi`,
+      `exec "${realGit}" "$@"`,
+      "",
+    ].join("\n"),
+  );
+  await chmod(path.join(bin, "git"), 0o755);
+  const { engine, dir, games } = await harnessWorkspace();
+  const good = await engine.snapshot({ scope: SnapshotScope.Both, gameWorkspace: "pong", reason: "before" });
+  await writeFile(path.join(dir, "loop.mjs"), "broken\n");
+  await writeFile(path.join(games, "stray.js"), "stray\n");
+  const pathBefore = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${pathBefore ?? ""}`;
+  try {
+    await assert.rejects(() => git(dir, ["reset", "--end-of-options", "HEAD"]), /must come before non-option/);
+    await engine.restore(good, { gameWorkspace: "pong" });
+  } finally {
+    process.env.PATH = pathBefore;
+  }
+  assert.equal(await readFile(path.join(dir, "loop.mjs"), "utf8"), "export const version = 1;\n");
+  assert.equal(await exists(path.join(games, "stray.js")), false);
+});
 
 describe("snapshot engine", () => {
   it("commits, tags and restores a workspace exactly", async () => {

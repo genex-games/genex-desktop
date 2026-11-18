@@ -735,7 +735,9 @@ export class SnapshotEngine {
    */
   async #resetTo(name: string, dir: string, commit: string): Promise<void> {
     const kept = name === HARNESS_WORKSPACE ? [] : (this.#ruleLines.get(dir) ?? []);
-    await git(dir, ["reset", "-q", "--hard", "--end-of-options", commit]);
+    // Not `--end-of-options`: Git 2.43.0 (Ubuntu 24.04's) refuses it on `reset`. The resolved hash
+    // cannot be read as an option, and the closing `--` keeps it from being read as a path.
+    await git(dir, ["reset", "-q", "--hard", await resolveCommit(dir, commit), "--"]);
     if (kept.length > 0) await this.keepIgnoring?.({ name, dir }, kept).catch(() => {});
     await git(dir, ["clean", "-qfd", ...kept.flatMap((line) => ["-e", line])]);
     await this.afterRestore?.({ name, dir });
