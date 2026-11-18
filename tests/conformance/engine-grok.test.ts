@@ -455,7 +455,10 @@ describe("Grok Build sessions", () => {
     assert.equal(env.GROK_DISABLE_AUTOUPDATER, "1");
     assert.equal(env.RUST_LOG, "error", "its error log names a failed call's status");
     const { engine, seen } = await engineWith(() => replay([]), { home });
-    await engine.delegate({ cwd: await game(), prompt: "x" });
+    const cwd = await game();
+    // Linux denies only settings that are there: a deny on a missing path leaves a stand-in file.
+    await mkdir(path.join(cwd, ".grok"));
+    await engine.delegate({ cwd, prompt: "x" });
     const sandbox = seen[0]?.sandbox;
     assert.deepEqual(sandbox?.ownHome, [home], "its own home: the sign-in it reads and the sessions it keeps");
     assert.ok(

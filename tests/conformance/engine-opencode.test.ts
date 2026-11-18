@@ -753,6 +753,8 @@ describe("OpenCode's sandbox and config", () => {
       secretPaths: [path.join(home, "secrets")],
       env: {},
       home,
+      // Linux denies only settings that are there (game-settings-sandbox.test.ts).
+      platform: "darwin",
     });
     assert.deepEqual(options.writableRoots, [
       path.join(home, "AI Games", "space"),

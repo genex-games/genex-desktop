@@ -19,7 +19,7 @@ import { CatalogError } from "./model-catalog.ts";
 import { ModelContextSource, type EngineModel } from "./types.ts";
 import { spawnCommand } from "../command-launch.ts";
 import { stopChild } from "../process-tree.ts";
-import type { SandboxOptions } from "../spawn.ts";
+import { gameSettingsDenyWrites, type SandboxOptions } from "../spawn.ts";
 import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { ModelCatalogProblemCode } from "../../shared/model-catalog.ts";
 import { ReasoningEffort } from "../../shared/model-preferences.ts";
@@ -576,6 +576,9 @@ export function grokSandbox(input: {
   secretPaths: string[];
   home: string;
   toolPath?: () => Promise<string>;
+  platform?: NodeJS.Platform;
+  /** Whether a path is there now; the disk's answer when not given. */
+  exists?: (file: string) => boolean;
 }): SandboxOptions {
   return {
     writableRoots: [input.runDir, ...input.gitDirs],
@@ -583,7 +586,7 @@ export function grokSandbox(input: {
     secretPaths: input.secretPaths,
     ownHome: [input.home],
     // A game's own Grok settings (its MCP servers, permissions and hooks) are never the session's to plant.
-    denyWrite: [path.join(input.gameDir, ".grok")],
+    denyWrite: gameSettingsDenyWrites([path.join(input.gameDir, ".grok")], input.platform, input.exists),
     ...(input.toolPath ? { toolPath: input.toolPath } : {}),
   };
 }

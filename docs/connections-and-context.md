@@ -270,7 +270,10 @@ is the context reading. Compact now runs Grok's own `/compact` on the resumed se
 (`auto_compact_completed`). Its sandbox writes the workspace (a scratch folder when read-only) and
 Grok's home (`ownHome`; on Windows the studio's sandbox grants it at start, as OpenCode's folders),
 denies writing a game's own `.grok`, and reaches only xAI's hosts (`api.x.ai`,
-`cli-chat-proxy.grok.com`, `auth.x.ai`, `accounts.x.ai`, `grok.com`). A chat the person set to
+`cli-chat-proxy.grok.com`, `auth.x.ai`, `accounts.x.ai`, `grok.com`). On Linux a provider's
+sandbox denies a game's own settings (`.grok`, `.cursor`, `opencode.json`, `.opencode`, `.agents`)
+only when they exist (`gameSettingsDenyWrites`): sandbox-runtime guards a missing deny path with a
+stand-in device file in the game, which the build's `git add -A` refuses. A chat the person set to
 Bypass runs its builds outside that sandbox, as the person, as Codex's Bypass does
 (`runsAsPerson`, `grokOutside`): in their environment less every credential and other vendors'
 variables, with the studio's toolchain PATH, on Grok's own sign-in, which it renews itself. A

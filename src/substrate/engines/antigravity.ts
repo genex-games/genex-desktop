@@ -78,7 +78,13 @@ import {
 } from "./types.ts";
 import { abortControllerFor, CompletionStop, interruption, partialDelegateResult, STOPPED_BY_USER } from "./common.ts";
 import type { PartialDelegateState } from "./common.ts";
-import { ProcessSandbox, type SandboxOptions, SandboxMachService, shellQuote } from "../spawn.ts";
+import {
+  gameSettingsDenyWrites,
+  ProcessSandbox,
+  type SandboxOptions,
+  SandboxMachService,
+  shellQuote,
+} from "../spawn.ts";
 import { childEnv, vendorEnv } from "../child-env.ts";
 import { StudioPlatform } from "../../shared/boot.ts";
 import { antigravityHomes, credentialHomes } from "../credential-homes.ts";
@@ -950,6 +956,9 @@ export function antigravitySandbox(input: {
   scratchDir: string;
   secretPaths: string[];
   toolPath?: () => Promise<string>;
+  platform?: NodeJS.Platform;
+  /** Whether a path is there now; the disk's answer when not given. */
+  exists?: (file: string) => boolean;
 }): SandboxOptions {
   return {
     writableRoots: [input.runDir, ...input.gitDirs],
@@ -962,7 +971,7 @@ export function antigravitySandbox(input: {
     // checker, and with that unreachable it cannot renew its sign-in and answers "sign in".
     machServices: [SandboxMachService.Trust],
     // A game's own Antigravity hooks, plugins and MCP servers are never the session's to plant.
-    denyWrite: [path.join(input.gameDir, ".agents")],
+    denyWrite: gameSettingsDenyWrites([path.join(input.gameDir, ".agents")], input.platform, input.exists),
     ...(input.toolPath ? { toolPath: input.toolPath } : {}),
   };
 }

@@ -56,7 +56,7 @@ import {
 } from "./types.ts";
 import { abortControllerFor, CompletionStop, interruption, partialDelegateResult, STOPPED_BY_USER } from "./common.ts";
 import type { PartialDelegateState } from "./common.ts";
-import { ProcessSandbox, type SandboxOptions, shellQuote } from "../spawn.ts";
+import { gameSettingsDenyWrites, ProcessSandbox, type SandboxOptions, shellQuote } from "../spawn.ts";
 import { childEnv } from "../child-env.ts";
 import { credentialHomes, openCodeDataHome } from "../credential-homes.ts";
 import { spawnCommand } from "../command-launch.ts";
@@ -633,6 +633,9 @@ export function openCodeSandbox(input: {
   scratchDir: string;
   secretPaths: string[];
   toolPath?: () => Promise<string>;
+  platform?: NodeJS.Platform;
+  /** Whether a path is there now; the disk's answer when not given. */
+  exists?: (file: string) => boolean;
   env?: Record<string, string | undefined>;
   home?: string;
 }): SandboxOptions {
@@ -647,7 +650,11 @@ export function openCodeSandbox(input: {
     secretPaths: input.secretPaths,
     ownHome: [openCodeDataHome(env, home)],
     // A game's own OpenCode config and plugins are never the session's to plant.
-    denyWrite: [path.join(input.gameDir, "opencode.json"), path.join(input.gameDir, ".opencode")],
+    denyWrite: gameSettingsDenyWrites(
+      [path.join(input.gameDir, "opencode.json"), path.join(input.gameDir, ".opencode")],
+      input.platform,
+      input.exists,
+    ),
     ...(input.toolPath ? { toolPath: input.toolPath } : {}),
   };
 }

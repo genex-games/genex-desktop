@@ -60,7 +60,7 @@ import {
 } from "./types.ts";
 import { abortControllerFor, CompletionStop, interruption, partialDelegateResult, STOPPED_BY_USER } from "./common.ts";
 import type { PartialDelegateState } from "./common.ts";
-import { ProcessSandbox, type SandboxOptions, shellQuote } from "../spawn.ts";
+import { gameSettingsDenyWrites, ProcessSandbox, type SandboxOptions, shellQuote } from "../spawn.ts";
 import { childEnv } from "../child-env.ts";
 import { credentialHomes, cursorHomes } from "../credential-homes.ts";
 import { killProcessTree } from "../process-tree.ts";
@@ -608,6 +608,9 @@ export function cursorSandbox(input: {
   compileCache: string;
   secretPaths: string[];
   toolPath?: () => Promise<string>;
+  platform?: NodeJS.Platform;
+  /** Whether a path is there now; the disk's answer when not given. */
+  exists?: (file: string) => boolean;
 }): SandboxOptions {
   return {
     writableRoots: [input.runDir, ...input.gitDirs, input.compileCache],
@@ -616,7 +619,7 @@ export function cursorSandbox(input: {
     // Cursor's settings, chats and sign-in file: its own to read and write in this sandbox alone.
     ownHome: cursorHomes(),
     // A game's own Cursor settings, rules, hooks and MCP servers are never the session's to plant.
-    denyWrite: [path.join(input.gameDir, ".cursor")],
+    denyWrite: gameSettingsDenyWrites([path.join(input.gameDir, ".cursor")], input.platform, input.exists),
     ...(input.toolPath ? { toolPath: input.toolPath } : {}),
   };
 }

@@ -559,6 +559,7 @@ export class GrokEngine implements Engine {
           scratchDir: path.join(this.#scratchRoot, TEMPORARY_DIR),
           secretPaths: [...this.#protectedPaths, ...denyReads],
           home: this.#home,
+          platform: this.#platform,
           ...(this.#toolPath ? { toolPath: this.#toolPath } : {}),
         });
     return {

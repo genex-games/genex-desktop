@@ -8,7 +8,7 @@
  * cancelled turn's answer, a loaded session's replayed history and Google's quota error.
  */
 import assert from "node:assert/strict";
-import { readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -440,6 +440,8 @@ describe("an Antigravity build", () => {
   it("starts `agy acp` in the game, boxed: only the game and Antigravity's own folders, Google's hosts", async () => {
     const { engine, agents, root } = await engineWith();
     const cwd = await game();
+    // Linux denies only settings that are there: a deny on a missing path leaves a stand-in file.
+    await mkdir(path.join(cwd, ".agents"));
     await engine.delegate({ cwd, prompt: "go", denyReads: ["/Users/me/private"] });
     const invocation = agents[0]?.invocation;
     assert.ok(invocation);
@@ -790,6 +792,8 @@ describe("Antigravity's box", () => {
       gitDirs: ["/games/.git/worktrees/pong"],
       scratchDir: "/scratch/tmp",
       secretPaths: ["/studio/secrets"],
+      // Linux denies only settings that are there (game-settings-sandbox.test.ts).
+      platform: "darwin",
     });
     assert.deepEqual(sandbox.writableRoots, ["/games/pong", "/games/.git/worktrees/pong"]);
     assert.deepEqual(sandbox.secretPaths, ["/studio/secrets"]);
