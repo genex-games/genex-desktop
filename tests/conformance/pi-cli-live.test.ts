@@ -6,19 +6,25 @@
  * Pi folder of the test's own (`PI_CODING_AGENT_DIR`), signed in with a made-up key. The scripted
  * turn runs one `node` command in the session's folder; other turns continue a chat through Plan and
  * back, and carry a picture. On macOS and Linux every turn runs on a folder of its own that stands
- * for Pi's (`pi-agent-view.ts`), on Windows on Pi's own. Nothing reaches a provider and no account
- * is used. Opt-in, like every test that needs this machine's own programs: `STUDIO_PI_CLI_TESTS=1`
+ * for Pi's (`pi-agent-view.ts`), on Windows on Pi's own. The last case gives the real CLI the
+ * command Genex renews a sign-in with, on a made-up sign-in that holds. Nothing reaches a provider
+ * and no account is used. Opt-in, like every test that needs this machine's own programs: `STUDIO_PI_CLI_TESTS=1`
  * with a `pi` the engine can find (or `STUDIO_PI_BIN`).
  */
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
+import { promisify } from "node:util";
+import { HOUR_MS } from "../../src/shared/duration.ts";
 import { EngineStatusCode } from "../../src/shared/engine-descriptor.ts";
 import { EngineId } from "../../src/shared/providers.ts";
 import { resolveCodingCli } from "../../src/substrate/engines/external-cli.ts";
 import { PiEngine, piEvents, type PiExec } from "../../src/substrate/engines/pi.ts";
+import { piRenewalArgs, renewPiSignIn } from "../../src/substrate/engines/pi-sign-in.ts";
+import { RENEWAL_WAIT_MS } from "../../src/substrate/engines/sign-in-renewal.ts";
 import { ProcessSandbox } from "../../src/substrate/spawn.ts";
 import {
   FAKE_CHAT_DONE_TEXT,
@@ -264,5 +270,31 @@ describe("Pi with the real CLI", { skip: !LIVE && "set STUDIO_PI_CLI_TESTS=1" },
     assert.equal(result.ok, true, result.errorText);
     assert.doesNotMatch(fake.commandOutput() ?? "", /genex-secret-words/, "the secret never reached the model");
     assert.match(fake.commandOutput() ?? "", /EPERM|EACCES|ENOENT|not permitted|denied/i);
+  });
+
+  it("the real Pi takes the command Genex renews a sign-in with: one that holds stays as it is, and Pi ends by itself", {
+    skip: process.platform === "win32" && "a Windows session runs on Pi's own folder and renews Pi's own file",
+    timeout: TURN_TIMEOUT_MS,
+  }, async () => {
+    // A made-up subscription sign-in with ten hours left: Pi has nothing to renew and calls no one.
+    const folder = path.join(root, "renewal-home", "agent");
+    await mkdir(folder, { recursive: true });
+    const file = path.join(folder, "auth.json");
+    const entry = {
+      type: "oauth",
+      access: FAKE_KEY,
+      refresh: "genex-fake-refresh",
+      expires: Date.now() + 10 * HOUR_MS,
+    };
+    const signIn = JSON.stringify({ anthropic: entry });
+    await writeFile(file, signIn);
+    const renewal = { provider: "anthropic", expires: entry.expires, minExpirySeconds: 300 };
+    const env = { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", [PI_FOLDER]: folder };
+    const printed = await promisify(execFile)(binary, piRenewalArgs(renewal), { env, cwd: root });
+    assert.equal(printed.stdout.trim(), FAKE_KEY, "Pi knows the command, and what it prints is the token");
+    const started = Date.now();
+    await renewPiSignIn(binary, { env, cwd: root, renewal });
+    assert.ok(Date.now() - started < RENEWAL_WAIT_MS, "Pi ended by itself, well inside a session's wait");
+    assert.equal(await readFile(file, "utf8"), signIn, "a sign-in that holds is left as it is");
   });
 });

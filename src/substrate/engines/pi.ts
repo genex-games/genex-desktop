@@ -2,8 +2,9 @@
  * Pi: a delegated harness, driven through `pi --mode json`.
  *
  * Pi runs its own agent loop on whichever providers the person signed it in to (`/login` in its
- * TUI) and keeps those sign-ins in its own store, which the studio never looks into: a session
- * gets a copy of the file (`pi-agent-view.ts`). It has no OS
+ * TUI) and keeps those sign-ins in its own store, of which the studio reads only when a
+ * subscription sign-in expires: a session gets a copy of the file (`pi-agent-view.ts`), and the
+ * person's own Pi renews one that would not outlast it first (`pi-sign-in.ts`). It has no OS
  * sandbox of its own, so every session starts inside ProcessSandbox. The prompt goes in on stdin;
  * each stdout line is one JSON event (`pi-events.ts`); a session is continued by its id, or forked
  * into the turn's folder when it was made in another (`pi-sessions.ts`).
@@ -24,6 +25,16 @@ import { gitMetadataDirs } from "./session-commands.ts";
 import { builtInPiHosts, parsePiModels, PI_LIST_MODELS_ARGS, readPiProviderHosts } from "./pi-cli.ts";
 import { findPiSession, PI_SESSIONS_DIR, piSessionArgs, samePiFolder, type PiSessionFile } from "./pi-sessions.ts";
 import { closePiView, openPiView, type PiView } from "./pi-agent-view.ts";
+import {
+  type PiSignInRenewal,
+  piModelProvider,
+  piRenewsSignIn,
+  piSignInExpiry,
+  piSignInRenewal,
+  readPiSignIn,
+  renewPiSignIn,
+} from "./pi-sign-in.ts";
+import { RENEWAL_RETRY_MS } from "./sign-in-renewal.ts";
 import { parsePiLine, translatePiEvent, type Translated } from "./pi-events.ts";
 import {
   type CompleteRequest,
@@ -138,6 +149,9 @@ export interface PiEngineOptions {
   home?: string;
   /** The platform the sessions run on; this computer's when not given. */
   platform?: NodeJS.Platform;
+  clock?: () => number;
+  /** Test seam: the person's own Pi renewing its sign-in (`renewPiSignIn`). */
+  renewSignIn?: (renewal: PiSignInRenewal) => Promise<void>;
 }
 
 interface PiRun {
@@ -217,6 +231,14 @@ export class PiEngine implements Engine {
   readonly #env: Record<string, string | undefined>;
   readonly #home: string;
   readonly #platform: NodeJS.Platform;
+  readonly #clock: () => number;
+  readonly #renewSignIn: ((renewal: PiSignInRenewal) => Promise<void>) | undefined;
+  /** The renewals of the person's sign-ins under way, by provider: every session starting meanwhile waits on its own. */
+  readonly #renewals = new Map<string, Promise<void>>();
+  /** A provider's sign-in a renewal left as it was, and when: not tried again until it changes or a while passed. */
+  readonly #unrenewed = new Map<string, { expires: number; at: number }>();
+  /** How long a provider's new token lasts, as its last renewal showed. */
+  readonly #tokenLives = new Map<string, number>();
   #hosts = new Map<string, string[]>();
   #signedIn = false;
 
@@ -232,6 +254,8 @@ export class PiEngine implements Engine {
     this.#env = options.env ?? process.env;
     this.#home = options.home ?? os.homedir();
     this.#platform = options.platform ?? process.platform;
+    this.#clock = options.clock ?? Date.now;
+    this.#renewSignIn = options.renewSignIn;
   }
 
   async status(): Promise<EngineStatus> {
@@ -312,7 +336,7 @@ export class PiEngine implements Engine {
     const partial = (): PartialDelegateState => partialState(run, startedAt, request.model, bridge, request);
     let view: PiView | null = null;
     try {
-      view = await this.#openView();
+      view = await this.#openView(request.model);
       const invocation = await this.#invocation(request, {
         cwd,
         runDir,
@@ -390,7 +414,7 @@ export class PiEngine implements Engine {
     let view: PiView | null = null;
     try {
       scratch = await this.#scratch("answer-");
-      view = await this.#openView();
+      view = await this.#openView(request.model);
       const invocation = await this.#invocation(
         { model: request.model, effort: request.effort, denyReads: [] },
         {
@@ -454,12 +478,63 @@ export class PiEngine implements Engine {
   }
 
   /**
-   * The folder this session's Pi runs on in place of Pi's own (`pi-agent-view.ts`); none on
-   * Windows, where a session runs on Pi's folder itself.
+   * The folder this session's Pi runs on in place of Pi's own (`pi-agent-view.ts`), with a copy of
+   * a sign-in that outlasts the session where the person's own Pi could renew it; none on Windows,
+   * where a session runs on Pi's folder itself.
    */
-  async #openView(): Promise<PiView | null> {
+  async #openView(model: string | undefined): Promise<PiView | null> {
     if (this.#platform === StudioPlatform.Windows) return null;
-    return openPiView(piAgentDir(this.#env, this.#home));
+    const agent = piAgentDir(this.#env, this.#home);
+    await this.#renewDue(agent, model).catch(() => {});
+    return openPiView(agent);
+  }
+
+  /**
+   * Has the person's own Pi renew the sign-in `model` runs on when it would not outlast a session
+   * (`piSignInRenewal`): what a session renews stays in its copy. Sessions starting meanwhile wait
+   * on the same renewal; a sign-in a renewal left as it was waits `RENEWAL_RETRY_MS` before another try.
+   */
+  async #renewDue(agent: string, model: string | undefined): Promise<void> {
+    const now = this.#clock();
+    const renewal = piSignInRenewal((await readPiSignIn(agent)) ?? "", {
+      now,
+      provider: piModelProvider(model),
+      life: (provider) => this.#tokenLives.get(provider),
+    });
+    if (!renewal || this.#waitsToRetry(renewal, now)) return;
+    const { provider, expires } = renewal;
+    const under = this.#renewals.get(provider);
+    if (under) return under;
+    const renewed = this.#renew(renewal)
+      .catch(() => {})
+      .then(async () => {
+        const after = piSignInExpiry(await readPiSignIn(agent), provider);
+        this.#renewals.delete(provider);
+        if (after === null || after <= expires) {
+          this.#unrenewed.set(provider, { expires, at: now });
+          return;
+        }
+        this.#unrenewed.delete(provider);
+        this.#tokenLives.set(provider, after - this.#clock());
+      });
+    this.#renewals.set(provider, renewed);
+    await renewed;
+  }
+
+  /** Is this the sign-in a renewal left as it was, too lately to try again? */
+  #waitsToRetry(renewal: PiSignInRenewal, now: number): boolean {
+    const last = this.#unrenewed.get(renewal.provider);
+    return last !== undefined && last.expires === renewal.expires && now - last.at < RENEWAL_RETRY_MS;
+  }
+
+  /** The person's own Pi, on the host with the model listing's environment, renewing a sign-in. */
+  async #renew(renewal: PiSignInRenewal): Promise<void> {
+    if (this.#renewSignIn) return this.#renewSignIn(renewal);
+    const cli = await this.#resolveCli();
+    if (!cli.path || !piRenewsSignIn(cli.version)) return;
+    await mkdir(this.#scratchRoot, { recursive: true });
+    const env = childEnv(this.#env, { base: "contractor", vendor: "pi" });
+    await renewPiSignIn(cli.path, { env, cwd: this.#scratchRoot, renewal });
   }
 
   /** The session has ended: its folder goes, with what the session left in it. */

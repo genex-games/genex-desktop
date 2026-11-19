@@ -11,7 +11,8 @@
  * gets a folder of its own, `<agent>/genex/agent-<process>-<name>`, which stands for the person's:
  *
  * - `auth.json` and `models-store.json` (Pi's cache of its providers' catalogs) are copies of the
- *   person's. Nothing is copied back: a sign-in renewed in a session lasts that session.
+ *   person's. Nothing is copied back: a sign-in renewed in a session lasts that session, so the
+ *   person's own Pi renews one that would not outlast it before the copy is made (`pi-sign-in.ts`).
  * - every other entry is a link to the person's, which a session reads and cannot write.
  *   `sessions` is granted, so transcripts stay where Pi keeps them.
  *
@@ -41,6 +42,7 @@ import path from "node:path";
 import { StudioPlatform } from "../../shared/boot.ts";
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { PI_MODEL_STORE } from "./pi-cli.ts";
+import { PI_SIGN_IN } from "./pi-sign-in.ts";
 import { PI_SESSIONS_DIR } from "./pi-sessions.ts";
 
 /** Genex's own folder inside Pi's folder: the sessions' folders and the work folder beside them. */
@@ -48,7 +50,6 @@ const OWN_DIR = "genex";
 const WORK_DIR = "work";
 /** A session folder's name: the Genex process that made it, and a name of its own. */
 const VIEW_NAME = /^agent-(\d+)-[0-9a-f-]{36}$/;
-const SIGN_IN = "auth.json";
 /** proper-lockfile's lock folders: `<file>.lock`, made and removed while Pi runs. */
 const LOCK_SUFFIX = ".lock";
 /** Pi's own mode for its folder and its sign-in file. */
@@ -103,7 +104,7 @@ export async function openPiView(agent: string, host: PiViewHost = {}): Promise<
     for (const name of (await readdir(real)).filter(isMirrored))
       await symlink(path.join(real, name), path.join(view, name));
     // No sign-in file: none in the session's folder either. No model store: an empty one, which Pi fills.
-    await copyInto(path.join(real, SIGN_IN), path.join(view, SIGN_IN), null);
+    await copyInto(path.join(real, PI_SIGN_IN), path.join(view, PI_SIGN_IN), null);
     await copyInto(path.join(real, PI_MODEL_STORE), path.join(view, PI_MODEL_STORE), EMPTY_STORE);
   } catch (err) {
     await closePiView(view);
@@ -134,7 +135,7 @@ async function ownFolder(dir: string): Promise<string> {
 
 /** An entry of Pi's folder a session reads through a link: all but the two it gets a copy of, Pi's locks and Genex's own folder. */
 function isMirrored(name: string): boolean {
-  if (name === OWN_DIR || name === SIGN_IN || name === PI_MODEL_STORE) return false;
+  if (name === OWN_DIR || name === PI_SIGN_IN || name === PI_MODEL_STORE) return false;
   return !name.endsWith(LOCK_SUFFIX);
 }
 

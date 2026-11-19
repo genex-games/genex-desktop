@@ -1,7 +1,7 @@
 /**
  * What the studio reads from the `pi` CLI outside a session: the models `pi --list-models`
- * prints, and the hosts those providers answer on (for the sandbox). The studio never reads Pi's
- * credentials; a listing is how it knows a sign-in can run.
+ * prints, and the hosts those providers answer on (for the sandbox). Nothing here reads Pi's
+ * credentials; a listing is how the studio knows a sign-in can run.
  */
 import { readFile } from "node:fs/promises";
 import path from "node:path";

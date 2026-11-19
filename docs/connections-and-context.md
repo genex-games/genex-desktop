@@ -234,8 +234,9 @@ signed in the picker starts OpenCode's GPT models with the ones Codex lists (`ru
 (OpenCode 1.18 and 2.0.20).
 
 **Pi** ([pi.ts](../src/substrate/engines/pi.ts)) is the Pi coding agent (`pi --mode json`), not the
-`pi-ai` HTTP client. Sign in and `--list-models` run with `--no-extensions --offline`; studio never
-looks into Pi's sign-in (a session gets a copy of the file, below). Ready once `--list-models` lists
+`pi-ai` HTTP client. Sign in and `--list-models` run with `--no-extensions --offline`; of Pi's
+sign-in studio reads only which providers hold a subscription sign-in and when each expires, never a
+token (a session gets a copy of the file, below). Ready once `--list-models` lists
 a model; a Pi whose help lacks an option a session passes shows "Update needed" with Pi's guide
 (Genex runs `pi update` only for a Pi that is ready), and one that cannot start (no Node for its
 launcher) says it did not answer. Sessions run in `ProcessSandbox` (`readableHome`: `~/.pi`) with
@@ -264,15 +265,23 @@ system gives it that (`piWrites`):
   writes, and removed there, so nothing is built or removed through a name a session could have
   changed and nothing one session left reaches another. A folder whose Genex is gone is taken out
   the same way when the next session starts. The person's own Pi never reads any of this. Two
-  things follow. A sign-in Pi renews during a session lasts that session: where the provider retires
-  the old one, the person's file is then out of date and a later session says to sign in to Pi
-  again. And a session's lock is not the person's Pi's: a session reads settings the person's Pi may
-  be writing at that moment. Linux denies a game's `.pi` only when it exists
-  (`gameSettingsDenyWrites`).
+  things follow. A sign-in Pi renews during a session lasts that session, and where the provider
+  takes each refresh token once the person's file would then hold a spent one. So before the copy
+  is made, when the subscription sign-in of the session's provider has less than two hours left (or
+  half a token's life, once a renewal showed how long one lasts), the person's own Pi renews it on
+  the host ([pi-sign-in.ts](../src/substrate/engines/pi-sign-in.ts): `pi auth print-bearer-token
+  --provider <id> --min-expiry <n>s`, the lead reaching just past that expiry; Pi 0.83.0 and later).
+  Pi writes its own file under its own lock and prints the token, which Genex never reads. A session
+  waits 20 s at most; Pi gets two minutes and is not stopped before, and a sign-in a renewal left
+  unchanged waits five minutes before another try. A session that outlasts its copy's sign-in still
+  renews it in the copy alone, and a later session then says to sign in to Pi again. And a
+  session's lock is not the person's Pi's: a session reads settings the person's Pi may be writing
+  at that moment. Linux denies a game's `.pi` only when it exists (`gameSettingsDenyWrites`).
 - **Windows** has no link a session's user can read through, runs a session as the sandbox's own
   user, grants whole folders and stamps no deny inside a sandboxed CLI's home, so there a session
   can write all of Pi's folder, its settings, `models.json` and `auth.json` included
-  ([windows-sandbox.md](windows-sandbox.md)).
+  ([windows-sandbox.md](windows-sandbox.md)). A sign-in it renews is the person's own, so Genex asks
+  for no renewal there.
 
 Pi files a session under the folder it was started in, and its `--session-id` looks only there. A
 build runs in the game and a Plan or read-only turn in a folder of its own, so the turn that follows
