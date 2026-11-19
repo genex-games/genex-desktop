@@ -1199,8 +1199,13 @@ What differs on 5.9 beyond that table:
   build tool's sandbox may create folders, never files, under `<engine>/Engine/Intermediate/Build`
   (`foldersOnly` in `ubt-sandbox.ts`): a fresh 5.9 lacks the folder its first build writes into.
 - 5.9 builds games for the web (its Wasm platform), which `package-game` makes with
-  `system: "web"` on a computer whose Unreal includes that platform. The Mac launcher build of 5.9
-  holds none, so the call is refused there.
+  `system: "web"` on a computer whose Unreal includes that platform (the Mac launcher build from
+  Preview 2; Preview 1's held none, and the call is refused there). A game with no C++ module is
+  packaged from the engine's own web game where the install holds one (`engineHoldsWebGame`: from
+  Preview 2), and refused with what to do where it doesn't. The emsdk folder is named by
+  `WASM_EMSDK_ROOT` or `EMSDK`: on Windows as the registry holds them, elsewhere as Genex's own
+  environment has them and then as the login shell does (`readLoginVariable`), since an app started
+  from the Dock inherits no terminal's variables.
 
 The confirmed `setup` step does four things, each one only if it is needed:
 - switches a project made with an older Unreal (5.7 or before) to the newest supported engine by

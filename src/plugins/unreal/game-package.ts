@@ -5,7 +5,7 @@
  * `unreal/Builds/<Mac|Windows|Linux>/`, where Publish finds it (`main/core/native-builds.ts`). A web
  * build (`system: "web"`, Unreal's Wasm platform) is the whole site, staged in `unreal/Builds/Wasm/`
  * and then made the game's web version in `web/`, on either system by an engine that builds for the
- * web (`web-build.ts`), from a game with a C++ module, with the emsdk the person installed, its
+ * web (`web-build.ts`), with the emsdk the person installed, its
  * content split into files a host that caps a file's size takes. Unreal
  * makes a Mac app only on a Mac and a Windows one only on Windows; Linux it cross-compiles from
  * Windows with Epic's Linux toolchain, which the person installs (Epic's installer sets
@@ -47,6 +47,7 @@ import {
   EMSDK_VARIABLE,
   emscriptenFor,
   emsdkHolds,
+  engineHoldsWebGame,
   engineBuildsWeb,
   ensureWebSettings,
   GAME_WEB_FOLDER,
@@ -179,10 +180,14 @@ const MESSAGE = {
     `Unreal couldn't save its open work (${why}), so Genex packaged nothing: the app would miss it. Save in Unreal, or quit it, then package again.`,
   NoWebPlatform: (version: string) =>
     `Unreal ${version} on this computer can't build for the web: its install has no web (Wasm) platform, which Unreal has from 5.9 in installs that include it. Genex packaged nothing; say so to the user and offer this computer's own app instead.`,
-  WebNeedsCpp:
-    "A web build needs the game's C++ module: Unreal builds web games from C++ projects only. Call unreal__add-cpp-module (the user confirms it), then package again. Genex packaged nothing.",
-  NeedsEmsdk: (version: string) =>
-    `A web build needs emscripten ${version}, exactly, in an emsdk folder this computer names. Give the user these steps: clone https://github.com/emscripten-core/emsdk to a plain local folder, run "emsdk install ${version}" and "emsdk activate ${version}" in it, and set the ${EMSDK_VARIABLE} environment variable to that folder; then package again. Genex packaged nothing.`,
+  WebNeedsCpp: (version: string) =>
+    `This computer's Unreal ${version} builds a web version only of a game with a C++ module: its install has no ready-made web game for a game made of Blueprints alone, which Unreal 5.9 has from Preview 2. Either the user updates Unreal ${version} in the Epic Games Launcher, or call unreal__add-cpp-module (the user confirms it); then package again. Genex packaged nothing.`,
+  NeedsEmsdk: (version: string, windows: boolean) =>
+    `A web build needs emscripten ${version}, exactly, in an emsdk folder this computer names. Give the user these steps: clone https://github.com/emscripten-core/emsdk to a plain local folder, run ${
+      windows
+        ? `"emsdk install ${version}" and "emsdk activate ${version}" in it, and set the ${EMSDK_VARIABLE} environment variable to that folder`
+        : `"./emsdk install ${version}" and "./emsdk activate ${version}" in it, and add the line "export ${EMSDK_VARIABLE}=<that folder>" to the file their shell reads at login (~/.zprofile for zsh)`
+    }; then package again. Genex packaged nothing.`,
   WebFolderTaken:
     "The game's web/ folder holds other files, and a web build is the game's whole web/ folder. Move or remove what is in web/ (ask the user first), then package again. Genex packaged nothing.",
   NoWebSettings: (config: string, code: string) =>
@@ -449,7 +454,7 @@ async function assertRunnable(deps: GamePackageDeps, target: Target): Promise<Re
 
 /**
  * Refuses a web build this computer can't make, each with what would let it: an engine whose install
- * builds for the web, the game's C++ module (Unreal builds web games from C++ projects only), and an
+ * builds for the web, the engine's own web game for a game with no C++ module (`engineHoldsWebGame`), and an
  * emsdk folder with exactly the emscripten that engine names, which RunUAT is handed in the first
  * variable Unreal's build tool reads; and a `web/` folder in the game that holds other files. Emscripten compiles the game, so neither Xcode nor Microsoft's
  * tools are asked for.
@@ -457,11 +462,14 @@ async function assertRunnable(deps: GamePackageDeps, target: Target): Promise<Re
 async function assertWeb(deps: GamePackageDeps, target: Target): Promise<Record<string, string>> {
   const wanted = (await engineBuildsWeb(target.engineDir)) ? await emscriptenFor(target.engineDir) : undefined;
   if (!wanted) throw new Error(MESSAGE.NoWebPlatform(target.engineVersion));
-  if (!(await projectModule(target.projectFile).catch(() => undefined))) throw new Error(MESSAGE.WebNeedsCpp);
+  const hasCpp = (await projectModule(target.projectFile).catch(() => undefined)) !== undefined;
+  if (!hasCpp && !(await engineHoldsWebGame(target.engineDir)))
+    throw new Error(MESSAGE.WebNeedsCpp(target.engineVersion));
   if ((await webFolderOf(target.gameDir)) === WebFolder.Taken) throw new Error(MESSAGE.WebFolderTaken);
   const root = ((await deps.emsdk?.().catch(() => undefined)) ?? "").replace(TRAILING_SEPARATORS, "");
   const carried = deps.platform !== WINDOWS || cmdCarries([root]);
-  if (!carried || !(await emsdkHolds(root, wanted))) throw new Error(MESSAGE.NeedsEmsdk(wanted));
+  if (!carried || !(await emsdkHolds(root, wanted)))
+    throw new Error(MESSAGE.NeedsEmsdk(wanted, deps.platform === WINDOWS));
   return { [EMSDK_VARIABLE]: root };
 }
 

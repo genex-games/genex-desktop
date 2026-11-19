@@ -76,6 +76,21 @@ export async function engineBuildsWeb(engineDir: string): Promise<boolean> {
   return false;
 }
 
+/** The receipt of the web game an installed engine ships ready-made, which a game with no C++ runs as it is. */
+const READY_WEB_GAME = [
+  "Engine",
+  "Binaries",
+  WEB_PLATFORM,
+  `UnrealGame-${WEB_PLATFORM}-${PACKAGED.Configuration}.target`,
+];
+
+/**
+ * Whether the engine in `engineDir` holds its own ready-made web game, which Unreal packages a game
+ * with no C++ module from (5.9 from Preview 2; Preview 1 built web games from C++ projects only).
+ */
+export const engineHoldsWebGame = (engineDir: string): Promise<boolean> =>
+  isPlainFile(path.join(engineDir, ...READY_WEB_GAME));
+
 /** The emscripten version the engine in `engineDir` builds web games with; undefined when it names none. */
 export async function emscriptenFor(engineDir: string): Promise<string | undefined> {
   const text = await readFile(path.join(engineDir, ...WEB_SDK_FILE), "utf8").catch(() => "");

@@ -216,29 +216,30 @@ export interface ToolchainDeps {
   developerDir?: HostGitProbe["developerDir"];
 }
 
+/** A variable's name as a shell reads it bare: letters, digits and underscores, no digit first. */
+const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** What the login shell prints before a variable's value, so an empty value still has a line of its own. */
+const VARIABLE_MARK = "genex-variable:";
+
 /**
- * Resolve the toolchain once. `-lic` (login **and** interactive) is the same incantation
+ * The last line the user's login shell prints for one fixed command, or null when the shell can't
+ * be asked or prints nothing. `-lic` (login **and** interactive) is the same incantation
  * `claude-cli.ts` and `codex-cli.ts` already use to find their binaries: nvm and Volta hook
- * themselves into `.zshrc`, which a non-interactive login shell never reads. Windows has no
- * login shell to ask: null, at once.
+ * themselves into `.zshrc`, which a non-interactive login shell never reads.
  */
-export async function readLoginPath(
-  timeoutMs = LOGIN_PATH_TIMEOUT_MS,
-  signal?: AbortSignal,
-  platform: NodeJS.Platform = process.platform,
+function askLoginShell(
+  command: (shellName: string) => string,
+  timeoutMs: number,
+  signal: AbortSignal | undefined,
 ): Promise<string | null> {
-  signal?.throwIfAborted();
-  if (isWindows(platform)) return null;
   let shell = DEFAULT_LOGIN_SHELL;
   try {
     shell = os.userInfo().shell || shell;
   } catch {
     /* Standard macOS fallback. */
   }
-  // Fixed commands only; never accept shell instructions from a game or agent.
-  const command = path.basename(shell) === "fish" ? "string join : $PATH" : 'echo "$PATH"';
   return new Promise((resolve) => {
-    const child = spawn(shell, ["-lic", command], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(shell, ["-lic", command(path.basename(shell))], { stdio: ["ignore", "pipe", "pipe"] });
     let done = false;
     let out = "";
     let timer: ReturnType<typeof setTimeout>;
@@ -263,6 +264,40 @@ export async function readLoginPath(
     if (signal?.aborted) abort();
     else signal?.addEventListener("abort", abort, { once: true });
   });
+}
+
+/**
+ * Resolve the toolchain once: the PATH of the user's login shell ({@link askLoginShell}). Windows
+ * has no login shell to ask: null, at once.
+ */
+export async function readLoginPath(
+  timeoutMs = LOGIN_PATH_TIMEOUT_MS,
+  signal?: AbortSignal,
+  platform: NodeJS.Platform = process.platform,
+): Promise<string | null> {
+  signal?.throwIfAborted();
+  if (isWindows(platform)) return null;
+  // Fixed commands only; never accept shell instructions from a game or agent.
+  return askLoginShell((shell) => (shell === "fish" ? "string join : $PATH" : 'echo "$PATH"'), timeoutMs, signal);
+}
+
+/**
+ * One variable as the user's login shell has it, which an app started from the Dock or a desktop
+ * menu never inherits; null when the shell sets none, can't be asked, or on Windows (whose
+ * variables the registry holds: {@link readRegistryVariable}). Only a plain variable name is
+ * asked for, so nothing but the name ever reaches the shell.
+ */
+export async function readLoginVariable(
+  name: string,
+  platform: NodeJS.Platform = process.platform,
+  timeoutMs = LOGIN_PATH_TIMEOUT_MS,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  signal?.throwIfAborted();
+  if (isWindows(platform) || !VARIABLE_NAME.test(name)) return null;
+  const line = await askLoginShell(() => `echo "${VARIABLE_MARK}$${name}"`, timeoutMs, signal);
+  const value = line?.startsWith(VARIABLE_MARK) ? line.slice(VARIABLE_MARK.length).trim() : "";
+  return value === "" ? null : value;
 }
 
 /** `%NAME%` references expanded from `env`, case-insensitively; an unknown name stays as written. */

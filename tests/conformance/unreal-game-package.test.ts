@@ -539,8 +539,13 @@ const uatOf = (engineDir: string) => [
  * `.uproject` is `uproject` when given, else names `association`. Answers how RunUAT was started.
  */
 /** An engine folder as an Unreal 5.9 install that lists the web platform (or, with `web` false, only a Mac). */
-async function engineFor(web: boolean) {
+async function engineFor(web: boolean, webGame = false) {
   const directory = await tmpDir("unreal-package-engine-");
+  if (webGame) {
+    // The ready-made web game Unreal 5.9 installs from Preview 2, which a game with no C++ runs as it is.
+    await mkdir(path.join(directory, "Engine", "Binaries", "Wasm"), { recursive: true });
+    await writeFile(path.join(directory, "Engine", "Binaries", "Wasm", "UnrealGame-Wasm-Shipping.target"), "{}");
+  }
   const line = (platform: string) =>
     `+InstalledPlatformConfigurations=(PlatformName="${platform}", Configuration="Shipping", PlatformType="Game", ProjectType="Any")`;
   await mkdir(path.join(directory, "Engine", "Config"), { recursive: true });
@@ -776,14 +781,14 @@ describe("packaging an Unreal game for the web", () => {
       says: /Unreal 5\.9 on this computer can't build for the web/,
     },
     {
-      name: "a game in Blueprints only",
+      name: "a game in Blueprints only on an Unreal with no ready-made web game",
       cpp: false,
-      says: /needs the game's C\+\+ module.*unreal__add-cpp-module/,
+      says: /only of a game with a C\+\+ module.*updates Unreal 5\.9.*unreal__add-cpp-module/,
     },
     {
       name: "no emsdk named",
       emsdk: async () => undefined,
-      says: /emscripten 6\.0\.10.*emsdk install 6\.0\.10.*WASM_EMSDK_ROOT/,
+      says: /emscripten 6\.0\.10.*"\.\/emsdk install 6\.0\.10".*export WASM_EMSDK_ROOT=.*~\/\.zprofile/,
     },
     {
       name: "an emsdk of another emscripten",
@@ -804,6 +809,28 @@ describe("packaging an Unreal game for the web", () => {
       assert.deepEqual([launches, saves], [[], []]);
       assert.deepEqual(await readdir(path.join(game, "unreal")), ["Dust.uproject"], "no build folder was made");
     });
+
+  it("names the emsdk steps as Windows runs them on a Windows PC", async () => {
+    const { game, project } = await gameWithCpp();
+    const { deps } = depsFor(project, stagesWeb, { engine: await engineFor(true), platform: "win32" });
+    await assert.rejects(
+      createGamePackageTools(deps).handlers["package-game"](web, contextIn(game), "/s"),
+      /"emsdk install 6\.0\.10" and "emsdk activate 6\.0\.10" in it, and set the WASM_EMSDK_ROOT environment variable/,
+    );
+  });
+
+  it("packages a game in Blueprints only from an Unreal that holds its own web game", async () => {
+    const { game, project } = await gameWithProject();
+    const emsdk = await emsdkOf("6.0.10");
+    const { deps, launches } = depsFor(project, stagesWeb, { engine: await engineFor(true, true), emsdk });
+    const tools = createGamePackageTools(deps);
+    const context = contextIn(game);
+    assert.deepEqual(await tools.handlers["package-game"](web, context, "/s"), { started: true, system: "Wasm" });
+    const done = await settled(() => tools.handlers["package-status"](web, context, "/s"));
+    assert.equal(done.state, GamePackageState.Done, done.line);
+    assert.equal(done.app, "web/index.html");
+    assert.ok(launches[0]?.includes("-platform=Wasm"));
+  });
 
   it("an Unreal older than the web platform is told so, not sent for emscripten", async () => {
     const { game, project } = await gameWithCpp();
