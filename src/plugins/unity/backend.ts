@@ -241,7 +241,7 @@ const MESSAGE = {
   FirstScene:
     "Its first scene is Assets/Scenes/Main.unity, with a camera and a light, and the game keeps running while Unity is behind other windows.",
   NoFirstScene: (why: string) =>
-    `Its first scene could not be made (${why}): the open scene is untitled, so before anything else call create_scene with a path such as Scenes/Main.unity and template default.`,
+    `Its first scene could not be made (${why}): the open scene is untitled, so before anything else call scene create (create_scene where list_commands names it so) with a path such as Scenes/Main.unity and template default.`,
   SetUp: (version: string) => `Added Unity's Pipeline package (${version}) to this project's Packages/manifest.json`,
   AlreadySetUp: (version: string) => `This project already asks for Unity's Pipeline package (${version})`,
   NoPipeline: "This game's Unity project has no Pipeline package yet: call unity__setup first.",

@@ -3250,9 +3250,12 @@ yet opens one (the system save panel), and Pipeline does not see it: `/api/statu
 operation timed out". Three things keep an unattended agent out of it, and the lead learns when
 it is stuck:
 
-- **No such save is sent.** The connector lists the open scenes before a `save_all`, or a
-  `save_scene` with no `path` (alone or in a `batch`), and refuses it while a scene has no file.
-  Genex's own save (`saveWork`) never calls `save_all`: it saves each named scene with unsaved work
+- **No such save is sent.** The connector lists the open scenes before an `editor save_all`, or a
+  `scene save` with no `path` (alone or in a `job batch`; `save_all`, `save_scene` and `batch` on
+  0.8), and refuses it while a scene has no file, saying how to give it one on either version
+  (`NAME_THE_SCENE`): 0.8's `save_scene` takes a new path, while 1.0.0's `scene save` saves a scene
+  only under the path it has and fails such a save itself, with no panel.
+  Genex's own save (`saveWork`) never calls `editor save_all`: it saves each named scene with unsaved work
   by its path, then `AssetDatabase.SaveAssets()`, and counts an unsaved untitled scene as work it
   could not save. `new-game` leaves no untitled scene behind.
 - **A stall is read as one.** Before each command the connector looks at the main thread
@@ -3294,8 +3297,8 @@ it is stuck:
 The `editor` lock (`per: project`) has `editor-activity` as its `personFirst` probe: the person is
 using the editor while it plays a game the agent did not start, and `unsaved` is the open scenes
 with unsaved work. The connector marks the agent's own play (`agent-play.ts`: a marker in its
-folder written before its `editor_play`, alone or in a batch, reaches the editor, removed on its
-`editor_stop`), so the agent's play never makes its own calls wait. The probe notes each time it
+folder written before its `editor.playmode start`, alone or in a batch, reaches the editor, removed
+on its `editor.playmode stop`; `editor_play` and `editor_stop` on 0.8), so the agent's play never makes its own calls wait. The probe notes each time it
 sees that play running (`seenAt`), and believes a marker for half an hour after it was written or
 last seen; it forgets one once it sees the editor play nothing, but not while the editor reloads its
 scripts to enter Play mode, nor, while no probe has seen it running, within 30 s of the play being
@@ -3323,9 +3326,26 @@ runs: Genex chooses and keeps no port. Requests go to `127.0.0.1` with the beare
 redirect (`pipeline.ts`). A call waits up to a minute for an editor that is busy (503: importing, a
 dialog of Unity's own), reloading (nothing listens) or restarted (401: the descriptor is read again,
 once), then says which. A command is never sent twice: one that was sent and got no answer is
-recorded as outcome unknown. A captured picture (`capture_game_view`, `capture_scene_view`, in a
+recorded as outcome unknown.
+
+The plugin asks for Pipeline 1.0.0 (`PIPELINE_VERSION`), whose commands are a group and a name
+(`scene save`, `editor.playmode stop`, `job batch`); through 0.8 each was one flat word
+(`save_scene`, `editor_stop`, `batch`), and 0.9 on refuses those. An editor's descriptor says which
+it speaks (the `exec.commandTimeouts` capability, there since 0.9), and `pipeline-commands.ts` holds
+the commands Genex itself runs or reads closely in both spellings (`EditorCommand`): Genex's own
+calls are spelled for the editor they go to, and a name from an agent is read as the command it is
+on either. What the commands answer changed too and is read both ways: open scenes are a bare list
+since 1.0.0 (`listedScenes`), and `script eval` answers the value itself where 0.8 wrapped it
+(`evaluated`). A project whose manifest still asks for a version Genex itself pinned earlier
+(`PAST_PIPELINE_VERSIONS`) is moved to the current one when `open-editor` launches it
+(`moveToCurrentPipeline`; the setup record follows, so `undo-setup` still works); any other version
+is the person's and stays, as does a project an editor already has open, which keeps working over
+the flat names until it is next opened by Genex. The rest of this section names commands as 1.0.0
+does.
+
+A captured picture (`capture game_view`, `capture scene_view`, in a
 batch too) is handed over as an MCP image, at most four an answer, with a note in place of its
-base64 text. A `capture_game_view` that names no `width` or `height` is sent with the size of
+base64 text. A `capture game_view` that names no `width` or `height` is sent with the size of
 Genex's own looks at the game (`ENGINE_PLAY_VIEW`, 1280×720, in whichever of the two the editor's
 catalogue lists): unsized, Unity captures the Game view at its full Retina size, and every picture
 stays in the agent's transcript. Each command the connector sends is noted in its folder
@@ -3347,34 +3367,44 @@ opened with no run under way, is the person's and has no record. The plugin's **
 unless turned off) is read at each run's end.
 
 Before a command is sent the gate (`pipeline-gate.ts`) checks it against the catalogue just read.
-It refuses a name the editor does not list; the commands agents never run (`eval`, `eval_file`,
-`quit`, `set_authoring_root`, `set_runtime_pipeline_settings`, and the pre-0.8 `add_package` and
+It refuses a name that is not exactly one the editor's catalogue lists (since 0.9 the editor also
+runs a command by its last word alone, by a dotted name, or from `argv` and `commandLine`: `eval`,
+`script.eval`, `set_root`, `invoke_menu`; none of those is a listed name, so none passes, and the
+catalogue is keyed by an entry's whole `command`, not the bare `name` 0.9 added); the commands
+agents never run (`script eval`, `script eval_file`, `editor quit`, `runtime quit`,
+`authoring set_root`, `settings.runtime_pipeline set`, and under their older names `eval`,
+`eval_file`, `quit`, `set_authoring_root`, `set_runtime_pipeline_settings`, `add_package` and
 `remove_package`; `list_commands` leaves them out and `describe_command` describes none); and a
 file outside the game's folder once links are resolved. Agents do what a person does in the
-editor: `package_add`, `package_remove`, `package_resolve` and `package_embed` (a `file:` package's
+editor: `package add`, `package remove`, `package resolve` and `package embed` (a `file:` package's
 folder, relative to the project's `Packages/`, must be inside the game, and any other reach to a
-disk path such as `git+file:` is refused), `switch_build_target`, `build` (only with an `outputPath`
-inside the game, since Unity otherwise builds into the person's last build folder; the skill names
-`Builds/`, which Genex leaves out of history) and `menu`, except an item with a `Quit`, `Exit`,
+disk path such as `git+file:` is refused; the package is read from the parameter the catalogue
+lists, `name` on 1.0.0 and `identifier` before), `build.target switch`, `build run` (only with an
+output path inside the game, `output-path` on 1.0.0 and `outputPath` before, since Unity otherwise
+builds into the person's last build folder; the skill names
+`Builds/`, which Genex leaves out of history) and `editor invoke_menu`, except an item with a `Quit`, `Exit`,
 `New Project`, `Open Project` or `Open Recent` segment, which would end the editor or open another
-project in it. `run_script` stays available: it compiles
+project in it. `script run` stays available: it compiles
 and runs a C# file of the game's own folder, which the game's checkpoints keep, and is how a scene
 is built with code. Which parameters name files comes from the catalogue's own types: a text
-parameter (`String`, `String[]`) named `path`, `paths`, `save_path`, `output`, `outputPath`,
-`file`, `filename`, `assemblyDir`, `source`, `destination` or `scene_path` is one, relative to the
+parameter (`String`, `String[]`) on the gate's list (`FILE_PARAMETERS`: `path`, `paths`, `file`,
+`output-path`, `assembly-dir`, `scene-path`, `source`, `destination`… and 0.8's `save_path`,
+`outputPath`, `assemblyDir`, `scene_path`) is one, relative to the
 Unity project, while an `ObjectRef` (an asset path, a GUID, a hierarchy path such as `/Player`) is
 Unity's to resolve inside the project. The bound is the game's folder, not only the Unity project
-in it, so `import_asset` can take a file of the game's own `assets/`. Every operation of a `batch`
+in it, so an asset import can take a file of the game's own `assets/`. Every operation of a `job batch`
 (`{id?, command, params}`) is held to the same rules, a batch inside a batch is refused, and so is
 a file named by an earlier operation's answer (`$0.field`), which no check can read ahead of time.
 Project settings and the build's scene list stay available: a game needs its tags, layers, input
 and scenes. The gate is a guardrail for the person's editor, not a sandbox: C# an agent writes into
-the project compiles and runs in that editor, and Genex's own steps run `eval` there themselves
+the project compiles and runs in that editor, and Genex's own steps run `script eval` there themselves
 (to save assets, to set Run In Background, to exit).
 
 Not there yet: a still of every camera (only the main one), and a dialog of Unity's own
 (`blocked_by_dialog`) answered for the person: it is waited out, then ends in the same restart. All of the above was run against Pipeline 0.8.0-exp.1 on Unity 6000.3.10f1
-(2026-10-14) with the built package.
+(2026-10-14) with the built package, and the commands, the gate's spellings and the move between
+versions against Pipeline 1.0.0 and 0.8.0-exp.1 on Unity 6000.6.0f1 (Unity 6.6) on a Mac
+(2026-11-19, `unity-live.test.ts`).
 
 ## Panels and trusted approval
 

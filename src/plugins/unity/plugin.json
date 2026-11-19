@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "unity",
-  "version": "0.8.13",
+  "version": "0.9.0",
   "icon": "icon.svg",
   "name": "Unity",
   "publisher": "Genex",
@@ -299,7 +299,7 @@
     {
       "name": "unity-editor",
       "facts": ["unity-project"],
-      "summary": "How to build this Unity game in the person's open editor: the unity-editor commands, C# scripts and recompiles, .meta files, scenes and prefabs changed and saved through commands, run_script for levels, captures, packages and builds.",
+      "summary": "How to build this Unity game in the person's open editor: the unity-editor commands, C# scripts and recompiles, .meta files, scenes and prefabs changed and saved through commands, script run for levels, captures, packages, builds and web builds with WebGPU.",
       "file": "skills/unity-editor.md"
     }
   ],

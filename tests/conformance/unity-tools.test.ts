@@ -101,7 +101,7 @@ describe("new-game", () => {
     const failed = json(400, { success: false, error: "Command Execution Failed", errorDetails: "Disk full" });
     const { call } = await backendOn(["6000.3.10f1"], [ready(), look(), ok(), ok(), failed]);
     const answer = String(await call(UnityTool.NewGame));
-    assert.match(answer, /first scene could not be made \(Command Execution Failed: Disk full\).* create_scene/);
+    assert.match(answer, /first scene could not be made \(Command Execution Failed: Disk full\).* scene create/);
   });
 
   it("says Unity is still starting when it is not ready within the wait, without failing", async () => {

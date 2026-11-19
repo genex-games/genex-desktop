@@ -149,7 +149,8 @@ the damage to its own state.
 ## 4. Relay: build, check and test
 
 - **WebGL:** build into `web/` at the game's root with **Compression Format: Disabled**, because
-  Genex hosting serves no compressed files. The published page gives the build its player; in
+  Genex hosting serves no compressed files (the unity-editor skill has the web build's other
+  settings, WebGPU among them). The published page gives the build its player; in
   Genex's preview there is none, so online play says it's unavailable and offline play stays.
 - **Testing on the web:** publish a draft (`genex__publish`) and open its `draftPlayUrl` (from
   `genex__publish-status`) as two *different* players: a normal and a private window, or a friend.

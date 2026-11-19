@@ -26,7 +26,7 @@ import { manifestOf, withProject } from "../helpers/unity-backend.ts";
 import { pluginContext } from "../helpers/unity-editor-stand-in.ts";
 
 const LIVE = process.env.STUDIO_UNITY_LIVE === "1";
-/** A first open imports the project and downloads the package: generous for a cold computer. */
+/** One case's limit: a first open imports the project and downloads the package, slow on a cold computer. */
 const LIVE_TIMEOUT_MS = 20 * 60 * 1000;
 const EDITOR_WAIT_MS = 10 * 60 * 1000;
 const PLAY_WAIT_MS = 2 * 60 * 1000;
@@ -98,68 +98,80 @@ async function refusesWhatAgentsNeverRun(live: Live, names: string[]): Promise<v
   assert.equal(await editorRuns(live.root, live.deps), true, "no refused command reached the editor");
 }
 
-describe("the Unity plugin on this computer's Unity", { skip: !LIVE, timeout: LIVE_TIMEOUT_MS }, () => {
-  it("makes a game on the current Pipeline package, builds in it through the connector and quits it", async () => {
-    const live = await liveGame();
-    try {
-      const made = await live.tool(UnityTool.NewGame);
-      assert.equal((await manifestOf(live.root)).dependencies[PIPELINE_PACKAGE], PIPELINE_VERSION);
-      assert.equal(await waitForEditor(live.root, live.deps.pipeline, { waitMs: EDITOR_WAIT_MS }), "ready", made);
-      assert.equal((await readDescriptor(live.root))?.grouped, true, "1.0.0 groups its commands");
-      assert.match(made, /first scene/i, made);
-      assert.equal(existsSync(path.join(live.root, "Assets", "Scenes", "Main.unity")), true, made);
+/** A closed project asking for Pipeline 0.8, as Genex set projects up before 1.0.0, for `editor`. */
+async function projectOnPipeline08(live: Live, version: string): Promise<void> {
+  await withProject(live.game, version, { [PIPELINE_PACKAGE]: PIPELINE_0_8 });
+  // Unity takes a folder for a project only once it holds Assets.
+  await mkdir(path.join(live.root, "Assets"), { recursive: true });
+}
 
-      const names = await live.listed();
-      for (const name of ["scene save", "editor save_all", "capture game_view", "script run", "job batch"])
-        assert.ok(names.includes(name), `${name} is listed`);
-      for (const name of ["script eval", "editor quit", "runtime quit", "authoring set_root"])
-        assert.ok(!names.includes(name), `${name} is not offered`);
-      await refusesWhatAgentsNeverRun(live, [
-        "script eval",
-        "script.eval",
-        "eval",
-        "authoring set_root",
-        "set_root",
-        "editor quit",
-        "runtime quit",
-        "quit",
-        "invoke_menu",
-      ]);
-      const quitsByMenu = await live.run("editor invoke_menu", { path: "File/Quit" });
-      assert.equal(quitsByMenu.isError, true, textOf(quitsByMenu));
+describe("the Unity plugin on this computer's Unity", { skip: !LIVE }, () => {
+  const each = { timeout: LIVE_TIMEOUT_MS };
+  it(
+    "makes a game on the current Pipeline package, builds in it through the connector and quits it",
+    each,
+    async () => {
+      const live = await liveGame();
+      try {
+        const made = await live.tool(UnityTool.NewGame);
+        assert.equal((await manifestOf(live.root)).dependencies[PIPELINE_PACKAGE], PIPELINE_VERSION);
+        assert.equal(await waitForEditor(live.root, live.deps.pipeline, { waitMs: EDITOR_WAIT_MS }), "ready", made);
+        assert.equal((await readDescriptor(live.root))?.grouped, true, "1.0.0 groups its commands");
+        assert.match(made, /first scene/i, made);
+        assert.equal(existsSync(path.join(live.root, "Assets", "Scenes", "Main.unity")), true, made);
 
-      const cube = await live.run("gameobject create", { name: "LiveCube", primitive: "Cube" });
-      assert.equal(cube.isError, undefined, textOf(cube));
-      const saved = await live.run("editor save_all");
-      assert.equal(saved.isError, undefined, textOf(saved));
-      assert.match(await readFile(path.join(live.root, "Assets", "Scenes", "Main.unity"), "utf8"), /LiveCube/);
+        const names = await live.listed();
+        for (const name of ["scene save", "editor save_all", "capture game_view", "script run", "job batch"])
+          assert.ok(names.includes(name), `${name} is listed`);
+        for (const name of ["script eval", "editor quit", "runtime quit", "authoring set_root"])
+          assert.ok(!names.includes(name), `${name} is not offered`);
+        await refusesWhatAgentsNeverRun(live, [
+          "script eval",
+          "script.eval",
+          "eval",
+          "authoring set_root",
+          "set_root",
+          "editor quit",
+          "runtime quit",
+          "quit",
+          "invoke_menu",
+        ]);
+        const quitsByMenu = await live.run("editor invoke_menu", { path: "File/Quit" });
+        assert.equal(quitsByMenu.isError, true, textOf(quitsByMenu));
 
-      const still = await live.run("capture game_view", { source: "camera" });
-      const picture = still.content.find((part) => part.type === "image");
-      assert.ok(picture?.data?.startsWith(PNG_SIGNATURE), textOf(still));
-      const outside = await live.run("capture game_view", { "output-path": path.join(live.base, "outside.png") });
-      assert.equal(outside.isError, true, textOf(outside));
-      assert.equal(existsSync(path.join(live.base, "outside.png")), false);
+        const cube = await live.run("gameobject create", { name: "LiveCube", primitive: "Cube" });
+        assert.equal(cube.isError, undefined, textOf(cube));
+        const saved = await live.run("editor save_all");
+        assert.equal(saved.isError, undefined, textOf(saved));
+        assert.match(await readFile(path.join(live.root, "Assets", "Scenes", "Main.unity"), "utf8"), /LiveCube/);
 
-      const played = await live.run("editor.playmode start");
-      assert.equal(played.isError, undefined, textOf(played));
-      await playModeIs(live, "playing");
-      const stopped = await live.run("editor.playmode stop");
-      assert.equal(stopped.isError, undefined, textOf(stopped));
-      await playModeIs(live, "stopped");
+        const still = await live.run("capture game_view", { source: "camera" });
+        const picture = still.content.find((part) => part.type === "image");
+        assert.ok(picture?.data?.startsWith(PNG_SIGNATURE), textOf(still));
+        const outside = await live.run("capture game_view", { "output-path": path.join(live.base, "outside.png") });
+        assert.equal(outside.isError, true, textOf(outside));
+        assert.equal(existsSync(path.join(live.base, "outside.png")), false);
 
-      assert.match(await live.tool(UnityTool.QuitEditor), /quit it/);
-      assert.equal(await editorRuns(live.root, live.deps), false);
-    } finally {
-      await live.cleanUp();
-    }
-  });
+        const played = await live.run("editor.playmode start");
+        assert.equal(played.isError, undefined, textOf(played));
+        await playModeIs(live, "playing");
+        const stopped = await live.run("editor.playmode stop");
+        assert.equal(stopped.isError, undefined, textOf(stopped));
+        await playModeIs(live, "stopped");
 
-  it("keeps working in an editor that still has a project open on Pipeline 0.8", async () => {
+        assert.match(await live.tool(UnityTool.QuitEditor), /quit it/);
+        assert.equal(await editorRuns(live.root, live.deps), false);
+      } finally {
+        await live.cleanUp();
+      }
+    },
+  );
+
+  it("keeps working in an editor that still has a project open on Pipeline 0.8", each, async () => {
     const live = await liveGame();
     try {
       const editor = await newestUnity6(live);
-      await withProject(live.game, editor.version, { [PIPELINE_PACKAGE]: PIPELINE_0_8 });
+      await projectOnPipeline08(live, editor.version);
       // Opened as a person opens it, not by Genex: the project stays on the version it asks for.
       await systemOpener(openProjectLaunch(editor, live.root, live.deps.editors.platform));
       assert.equal(await waitForEditor(live.root, live.deps.pipeline, { waitMs: EDITOR_WAIT_MS }), "ready");
@@ -190,11 +202,11 @@ describe("the Unity plugin on this computer's Unity", { skip: !LIVE, timeout: LI
     }
   });
 
-  it("moves a closed project from Pipeline 0.8 to the current package as it opens it", async () => {
+  it("moves a closed project from Pipeline 0.8 to the current package as it opens it", each, async () => {
     const live = await liveGame();
     try {
       const editor = await newestUnity6(live);
-      await withProject(live.game, editor.version, { [PIPELINE_PACKAGE]: PIPELINE_0_8 });
+      await projectOnPipeline08(live, editor.version);
       const opened = await live.tool(UnityTool.OpenEditor);
       assert.equal((await manifestOf(live.root)).dependencies[PIPELINE_PACKAGE], PIPELINE_VERSION);
       assert.equal(await waitForEditor(live.root, live.deps.pipeline, { waitMs: EDITOR_WAIT_MS }), "ready", opened);

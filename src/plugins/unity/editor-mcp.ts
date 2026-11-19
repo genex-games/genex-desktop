@@ -37,7 +37,7 @@ import {
   runCommand,
   systemPipelineDeps,
 } from "./pipeline.ts";
-import { canonicalCommand, EditorCommand, listedScenes } from "./pipeline-commands.ts";
+import { canonicalCommand, EditorCommand, listedScenes, NAME_THE_SCENE } from "./pipeline-commands.ts";
 
 const BRIDGE_VERSION = "0.1.0";
 /** The most of a command's result handed to the agent as text. */
@@ -90,15 +90,14 @@ const MESSAGE = {
     `${command} was sent and Unity gave no answer, so whether it took effect is unknown. Look before you repeat it.`,
   [PipelineProblem.Stalled]:
     "Unity's server answers but its main thread ran nothing, so the command did not run: it is in a long import or bake, or showing a dialog nobody answered. Call again in a minute; if it is still so and nobody is at the computer, call unity__restart-editor, which ends Unity and opens the project again (unsaved editor work is lost).",
-  UntitledScene:
-    "An open scene has never been saved, so Unity would ask for its file name in a save panel, which stalls the editor until someone answers it. Call save_scene with a path under Assets/ (such as Scenes/Main.unity) first; then save_all works.",
+  UntitledScene: `An open scene has never been saved, so this save has no file to write (an older Unity connector would ask for its name in a save panel, which stalls the editor until someone answers it). To keep it, ${NAME_THE_SCENE}; then the save works.`,
   ImageAttached: (n: number) => `[image ${n} attached]`,
   ImageOmitted: `[image omitted: at most ${MAX_IMAGES} per answer]`,
   [GateRefusal.NotACommand]: "command must be the name of a command from list_commands.",
   [GateRefusal.NotParameters]:
     "parameters must be an object (for batch: operations is a list of { id?, command, params }).",
   [GateRefusal.Denied]: (command: string) =>
-    `${command} is not available to agents: running C# text that is in no file (eval, eval_file), quitting Unity or opening another project in it (quit, or such a menu item), Pipeline's authoring root and runtime settings, and a batch inside a batch are left out, in a batch's operations too. To run code, write a C# file into the project and call run_script on it, or let Unity compile it; to quit Unity, call unity__quit-editor, which saves first; to start it over, call unity__restart-editor.`,
+    `${command} is not available to agents: running C# text that is in no file (script eval; eval and eval_file on an older Pipeline), quitting Unity or opening another project in it (editor quit, or such a menu item), Pipeline's authoring root and runtime settings, and a batch inside a batch are left out, in a batch's operations too. To run code, write a C# file into the project and call script run on it (run_script where list_commands names it so), or let Unity compile it; to quit Unity, call unity__quit-editor, which saves first; to start it over, call unity__restart-editor.`,
   [GateRefusal.PathOutside]: (parameter: string) =>
     `${parameter} must name a file or folder inside this game's folder (in a batch, spelled out, not taken from an earlier operation).`,
   Cut: (chars: number) => `\n[cut: the result was ${chars} characters]`,

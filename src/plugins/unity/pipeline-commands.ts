@@ -60,6 +60,14 @@ export const canonicalCommand = (name: string): string => GROUPED_NAME.get(name)
 export const spelledFor = (command: string, grouped: boolean): string =>
   grouped ? command : (FLAT_NAME[command as EditorCommand] ?? command);
 
+/**
+ * How an agent gives an untitled scene its file, on either Pipeline: 0.8's `save_scene` takes a new
+ * path, while `scene save` only saves a scene under the path it already has (measured on 1.0.0,
+ * which answers "is not open" for any other), so there the game's own editor script names it.
+ */
+export const NAME_THE_SCENE =
+  'give it a file under Assets/ first: where list_commands has save_scene, call it with a path such as Scenes/Main.unity; otherwise write an Assets/Editor C# file whose static method calls EditorSceneManager.SaveScene(SceneManager.GetActiveScene(), "Assets/Scenes/Main.unity") and run it with script run';
+
 /** A value C# handed back from `script eval`, or the editor's words for why it handed none. */
 export type Evaluated = { ok: true; value: unknown } | { ok: false; detail: string };
 

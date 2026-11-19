@@ -18,6 +18,7 @@ import {
   refusedConnection,
   STAND_IN,
   unityProject,
+  writeDescriptor,
 } from "../helpers/unity-editor-stand-in.ts";
 
 type ToolAnswer = {
@@ -339,7 +340,7 @@ describe("the Unity editor connector", () => {
       const { call, seen, close } = await openEditor(replies);
       const answer = await call(EditorTool.RunCommand, args);
       assert.equal(answer.isError, true, what);
-      assert.match(textOf(answer), /has never been saved.* save_scene with a path under Assets\//, what);
+      assert.match(textOf(answer), /has never been saved.* give it a file under Assets\//, what);
       assert.deepEqual(commandsSent(seen), ["list_open_scenes"], `${what}: only the scenes were listed`);
       await close();
     }
@@ -537,6 +538,149 @@ describe("the Unity editor connector", () => {
     assert.equal(answer.isError, true);
     assert.match(textOf(answer), /Unknown tool delete_everything/);
     assert.deepEqual(seen, []);
+    await close();
+  });
+});
+
+/** A command as Pipeline 1.0.0 lists it: its whole name under `command`, the last word alone under `name`. */
+const grouped = (command: string, parameters: unknown[] = []) => ({
+  command,
+  name: command.split(" ").at(-1),
+  group: command.split(" ")[0],
+  description: `${command}.`,
+  tags: [],
+  parameters,
+});
+
+/** The catalogue of an editor on Pipeline 1.0.0, with the commands the connector reads closely. */
+const groupedCatalogue = () =>
+  json(200, {
+    commands: [
+      grouped("editor save_all"),
+      grouped("scene save", [parameter("path", "String")]),
+      grouped("scene list_open"),
+      grouped("editor.playmode start"),
+      grouped("editor.playmode stop"),
+      grouped("job batch", [parameter("operations", "List`1", true)]),
+      grouped("capture game_view", [parameter("output-path", "String"), parameter("width", "Int32")]),
+      grouped("script eval", [parameter("code", "String", true)]),
+      grouped("editor quit"),
+    ],
+  });
+
+/** A session with a project open in an editor whose descriptor says it speaks Pipeline 1.0.0. */
+async function openGroupedEditor(replies: Reply[], agentPlay: AgentPlayMarker = NO_AGENT_PLAY) {
+  const root = await unityProject();
+  await writeDescriptor(root, {
+    pid: STAND_IN.pid,
+    port: STAND_IN.port,
+    evalToken: STAND_IN.token,
+    capabilities: ["exec.argv", "exec.commandLine", "exec.commandTimeouts", "transport.pipelineProtocol"],
+  });
+  const stand = editor(replies);
+  return { root, ...stand, ...(await connect(async () => ({ root, game: root }), stand.deps, agentPlay)) };
+}
+
+describe("the Unity editor connector on an editor with Pipeline 1.0.0", () => {
+  it("lists the commands by their whole names, without the ones agents never run", async () => {
+    const { call, close } = await openGroupedEditor([groupedCatalogue()]);
+    const names = (JSON.parse(textOf(await call(EditorTool.ListCommands))) as Array<{ name: string }>).map(
+      (command) => command.name,
+    );
+    assert.deepEqual(names, [
+      "editor save_all",
+      "scene save",
+      "scene list_open",
+      "editor.playmode start",
+      "editor.playmode stop",
+      "job batch",
+      "capture game_view",
+    ]);
+    await close();
+  });
+
+  it("refuses the short and dotted spellings the editor would run, sending it no command", async () => {
+    for (const command of ["eval", "script.eval", "quit", "save_all", "scene.save", "list_open"]) {
+      const { call, seen, close } = await openGroupedEditor([groupedCatalogue()]);
+      const answer = await call(EditorTool.RunCommand, { command, parameters: { code: "1" } });
+      assert.equal(answer.isError, true, command);
+      assert.deepEqual(commandsSent(seen), [], command);
+      await close();
+    }
+  });
+
+  it("never asks Unity to save a scene that has no name, reading the open scenes as 1.0.0 lists them", async () => {
+    const unnamed: Array<[string, Record<string, unknown>]> = [
+      ["editor save_all", { command: "editor save_all" }],
+      ["scene save with no path", { command: "scene save", parameters: {} }],
+      ["a batch that saves", { command: "job batch", parameters: { operations: [{ command: "editor save_all" }] } }],
+    ];
+    for (const [what, args] of unnamed) {
+      const scenes = [
+        { path: "Assets/Scenes/Main.unity", isDirty: false },
+        { path: "", isDirty: true },
+      ];
+      const { call, seen, close } = await openGroupedEditor([
+        groupedCatalogue(),
+        look(),
+        json(200, { success: true, result: scenes }),
+      ]);
+      const answer = await call(EditorTool.RunCommand, args);
+      assert.equal(answer.isError, true, what);
+      assert.match(textOf(answer), /has never been saved/, what);
+      assert.deepEqual(commandsSent(seen), ["scene list_open"], `${what}: only the scenes were listed`);
+      await close();
+    }
+  });
+
+  it("saves as asked once every open scene has a name", async () => {
+    const { call, seen, close } = await openGroupedEditor([
+      groupedCatalogue(),
+      look(),
+      json(200, { success: true, result: [{ path: "Assets/Scenes/Main.unity", isDirty: true }] }),
+      json(200, { success: true, result: { saved: true } }),
+    ]);
+    assert.equal(textOf(await call(EditorTool.RunCommand, { command: "editor save_all" })), '{"saved":true}');
+    assert.deepEqual(commandsSent(seen), ["scene list_open", "editor save_all"]);
+    await close();
+  });
+
+  it("sizes and hands over a capture, and marks the agent's own play, under the grouped names", async () => {
+    const png = Buffer.from("\x89PNG\r\n\x1a\nfake-pixels").toString("base64");
+    const shot = { width: 1280, height: 720, encoding: "png", base64: png };
+    const marks: string[] = [];
+    const marker: AgentPlayMarker = {
+      started: async () => void marks.push("started"),
+      stopped: async () => void marks.push("stopped"),
+    };
+    const { call, seen, close } = await openGroupedEditor(
+      [
+        groupedCatalogue(),
+        look(),
+        json(200, { success: true, result: shot }),
+        groupedCatalogue(),
+        look(),
+        json(200, { success: true, result: "Entered play mode" }),
+        groupedCatalogue(),
+        look(),
+        json(200, { success: true, result: { results: [{ result: "Exited play mode" }] } }),
+      ],
+      marker,
+    );
+    const still = await call(EditorTool.RunCommand, { command: "capture game_view" });
+    assert.deepEqual(
+      still.content.map((part) => part.type),
+      ["text", "image"],
+    );
+    assert.deepEqual(seen.at(-1)?.body, {
+      command: "capture game_view",
+      parameters: { width: ENGINE_PLAY_VIEW.width },
+    });
+    await call(EditorTool.RunCommand, { command: "editor.playmode start" });
+    assert.deepEqual(marks, ["started"]);
+    const stop = { command: "job batch", parameters: { operations: [{ command: "editor.playmode stop" }] } };
+    await call(EditorTool.RunCommand, stop);
+    assert.deepEqual(marks, ["started", "stopped"]);
     await close();
   });
 });
