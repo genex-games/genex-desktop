@@ -197,6 +197,7 @@ describe("usage analytics: screens and properties", () => {
     plugins: false,
     items: false,
     play: null,
+    playTab: null,
     room: Room.Build,
     launching: false,
     stageView: StageView.Live,

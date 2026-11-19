@@ -3,26 +3,20 @@
  * (7 days first, 30, 90), four tiles (plays and players with their change and a sparkline, who is
  * playing now, games made), plays per day as a chart that follows the pointer, and every game's
  * numbers in a table. Every number comes from the same per-game series, so they always agree.
+ * A game's row opens that game's own analytics page, on the period chosen here.
  */
-import type { JSX, KeyboardEvent } from "react";
-import { useEffect, useState } from "react";
+import type { JSX } from "react";
+import { useEffect } from "react";
 import { intlLocale, t } from "../../shared/i18n.ts";
-import {
-  DEFAULT_STATS_PERIOD,
-  dailyTotals,
-  gameRows,
-  type PlayStats as Stats,
-  periodDays,
-  STATS_PERIODS,
-  type StatsPeriod,
-  statsTotals,
-} from "../../shared/play-stats.ts";
+import { dailyTotals, gameRows, type PlayStats as Stats, statsTotals } from "../../shared/play-stats.ts";
 import { richText } from "../rich-text.tsx";
-import { usePeople } from "../state/hooks.ts";
+import { useGameAnalytics, usePeople } from "../state/hooks.ts";
 import { LoadStatus } from "../state/people.ts";
 import { studio } from "../state/studio.ts";
 import { Button } from "../ui/Button.tsx";
 import { PLAY_WORDS } from "../words.ts";
+import { periodLabels } from "./game-analytics/kit/format.ts";
+import { PeriodSwitch } from "./PeriodSwitch.tsx";
 import { PlayPageFrame } from "./PlayPageFrame.tsx";
 import { SignInNote } from "./SignInNote.tsx";
 import { formatCount, formatStat } from "./play-model.ts";
@@ -30,40 +24,6 @@ import { AreaChart, Sparkline } from "./StatsCharts.tsx";
 import { ChangeMark } from "./StatsStrip.tsx";
 
 const WORDS = PLAY_WORDS.stats;
-/** Dates under the chart and in its tooltip: "Oct 13". */
-const DAY_FORMAT = new Intl.DateTimeFormat(intlLocale(), { month: "short", day: "numeric", timeZone: "UTC" });
-const dayLabel = (iso: string): string => DAY_FORMAT.format(new Date(`${iso}T00:00:00.000Z`));
-
-/** The period switch: a small segmented row; arrow keys move along it. */
-function PeriodSwitch({ period, onChange }: { period: StatsPeriod; onChange: (period: StatsPeriod) => void }) {
-  const keys = (event: KeyboardEvent<HTMLButtonElement>, index: number): void => {
-    const moves: Record<string, number> = { ArrowLeft: index - 1, ArrowRight: index + 1 };
-    const next = STATS_PERIODS[moves[event.key] ?? -1];
-    if (next === undefined) return;
-    event.preventDefault();
-    onChange(next);
-    event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`[data-stats-period="${next}"]`)?.focus();
-  };
-  return (
-    <div className="stats-periods" role="tablist" aria-label={WORDS.periodLabel}>
-      {STATS_PERIODS.map((days, index) => (
-        <button
-          key={days}
-          type="button"
-          role="tab"
-          aria-selected={days === period}
-          tabIndex={days === period ? 0 : -1}
-          data-stats-period={days}
-          className="stats-period"
-          onClick={() => onChange(days)}
-          onKeyDown={(event) => keys(event, index)}
-        >
-          {WORDS.period(days)}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 /** The four tiles over the chart. */
 function Tiles({ stats }: { stats: Stats }): JSX.Element {
@@ -116,8 +76,11 @@ function Tiles({ stats }: { stats: Stats }): JSX.Element {
   );
 }
 
-/** Every game's numbers, most played first. */
-function GamesTable({ stats }: { stats: Stats }): JSX.Element {
+/**
+ * Every game's numbers, most played first. A row's title is the button that opens the game's own
+ * analytics page; its press area covers the whole row (`game-analytics-page.css`).
+ */
+export function GamesTable({ stats, onOpen }: { stats: Stats; onOpen: (slug: string) => void }): JSX.Element {
   return (
     <div role="table" aria-label={WORDS.tableLabel} className="stats-table" data-stats-table>
       <div role="row" className="stats-row stats-row-head">
@@ -139,7 +102,14 @@ function GamesTable({ stats }: { stats: Stats }): JSX.Element {
             <span className="stats-thumb">
               {game.coverUrl && <img src={game.coverUrl} alt="" draggable={false} loading="lazy" />}
             </span>
-            <span className="stats-game-title">{game.title}</span>
+            <button
+              type="button"
+              className="stats-game-title game-analytics-open"
+              data-game-analytics-open={game.slug}
+              onClick={() => onOpen(game.slug)}
+            >
+              <span data-analytics-mask="">{game.title}</span>
+            </button>
           </span>
           <span role="cell" className="stats-cell-number">
             {formatStat(plays)}
@@ -161,7 +131,7 @@ function GamesTable({ stats }: { stats: Stats }): JSX.Element {
 
 /** The period's page body. */
 function StatsBody({ stats }: { stats: Stats }): JSX.Element {
-  const labels = periodDays(stats).map(dayLabel);
+  const labels = periodLabels(stats);
   return (
     <>
       <Tiles stats={stats} />
@@ -175,7 +145,7 @@ function StatsBody({ stats }: { stats: Stats }): JSX.Element {
           axisValue={(count) => formatCount(count)}
         />
       </section>
-      {stats.games.length > 0 && <GamesTable stats={stats} />}
+      {stats.games.length > 0 && <GamesTable stats={stats} onOpen={(slug) => studio().play.showGameAnalytics(slug)} />}
     </>
   );
 }
@@ -190,7 +160,8 @@ export function PlayStats({
   onToggleSidebar: () => void;
   onNewGame: () => void;
 }): JSX.Element {
-  const [period, setPeriod] = useState<StatsPeriod>(DEFAULT_STATS_PERIOD);
+  // The period is kept beside the games' analytics: a game's page opens on it, and Back finds it as it was.
+  const period = useGameAnalytics((s) => s.period);
   const entry = usePeople((s) => s.stats[period]);
   const signedIn = usePeople((s) => s.me !== null);
   useEffect(() => {
@@ -210,7 +181,7 @@ export function PlayStats({
         <div className="stats-head">
           <h1 className="stats-title">{WORDS.title}</h1>
           <span className="stats-only-you">{WORDS.onlyYou}</span>
-          <PeriodSwitch period={period} onChange={setPeriod} />
+          <PeriodSwitch period={period} onChange={(days) => studio().gameAnalytics.choosePeriod(days)} />
         </div>
         {!signedIn && <SignInNote text={WORDS.signedOut} />}
         {entry?.unavailable && <p className="people-note">{WORDS.unavailable}</p>}

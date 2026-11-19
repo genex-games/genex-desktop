@@ -1,6 +1,7 @@
 /** Play's sidebar list: the games last opened, newest first, each one press from playing again. */
 import type { JSX } from "react";
 import { useCallback, useEffect, useState } from "react";
+import { GenexSurface } from "../../shared/game-analytics.ts";
 import { usePlay } from "../state/hooks.ts";
 import { studio } from "../state/studio.ts";
 import { NoCover } from "./NoCover.tsx";
@@ -46,7 +47,8 @@ function RecentRow({ entry }: { entry: PlayRecentEntry }): JSX.Element {
       className="sidebar-game-select play-recent-row"
       data-play-recent={entry.slug}
       title={entry.title}
-      onClick={() => void studio().play.open(entry)}
+      // Recent is no place genex.games names apart: it counts as Other.
+      onClick={() => void studio().play.open(entry, GenexSurface.Other)}
     >
       <PlayThumb src={entry.coverUrl} onMissing={findCover} />
       <span className="min-w-0 flex-1 truncate">{entry.title}</span>

@@ -233,6 +233,7 @@ describe("Who may answer a purchase sheet", () => {
       viewer: () => viewer,
       people: unused as PlayIpcDeps["people"],
       creators: unused as PlayIpcDeps["creators"],
+      gameAnalytics: unused as PlayIpcDeps["gameAnalytics"],
       credits: unused as PlayIpcDeps["credits"],
       manage: unused as PlayIpcDeps["manage"],
       web: PLAY_ORIGIN.web,

@@ -488,7 +488,8 @@ export function wirePlayViewer(deps: PlayViewDeps): PlayViewer {
   viewsOf.set(win, { bar: bar.view, game: game.view });
   const made = playViewer({
     gallery: deps.gallery,
-    gameUrl: (slug, ticket) => (offline ? offline.gamePage(slug) : playAddress(slug, ticket, deps.origins.games)),
+    gameUrl: (slug, ticket, surface) =>
+      offline ? offline.gamePage(slug) : playAddress(slug, ticket, deps.origins.games, surface),
     window: {
       contentSize: () => {
         if (win.isDestroyed()) return { width: 0, height: 0 };

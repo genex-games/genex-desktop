@@ -153,6 +153,8 @@ export function rig(overrides: RigOverrides = {}) {
   const events: PlayViewerEvent[] = [];
   const copied: string[] = [];
   const opened: string[] = [];
+  /** The place in Genex each game's address was built for, in order. */
+  const surfaces: string[] = [];
   const pages: string[] = [];
   const deps: PlayViewerDeps = {
     gallery: {
@@ -162,7 +164,10 @@ export function rig(overrides: RigOverrides = {}) {
       inviteCode: async () => "abc",
       ...overrides,
     },
-    gameUrl: (slug, ticket) => `game:${slug}:${ticket ?? "guest"}`,
+    gameUrl: (slug, ticket, surface) => {
+      surfaces.push(surface);
+      return `game:${slug}:${ticket ?? "guest"}`;
+    },
     window: {
       contentSize: () => WINDOW,
       buttons: (visible) => log.push(`buttons ${visible ? "shown" : "hidden"}`),
@@ -223,5 +228,5 @@ export function rig(overrides: RigOverrides = {}) {
   const bar = (): PlayBarState | undefined => events.findLast((event) => event.bar)?.bar;
   /** The purchase sheet as last drawn, or null with none. */
   const sheet = (): PlayPurchaseSheet | null => bar()?.purchase ?? null;
-  return { viewer, log, events, bar, sheet, copied, opened, pages, advance, now: clock.now };
+  return { viewer, log, events, bar, sheet, copied, opened, surfaces, pages, advance, now: clock.now };
 }

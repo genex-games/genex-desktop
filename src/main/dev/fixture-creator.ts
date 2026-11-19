@@ -1,26 +1,21 @@
 /**
  * A fixture account's numbers: its stats for a period (a believable week of plays for the full
- * account; honest zeros, or a game two days old, for the quiet and fresh ones), Play's Top creators
- * from the fixture catalog, and the Credits tab's balance (`STUDIO_FIXTURE_CREDITS=low|zero|unlimited`
- * names another), plan, prices and recent spends. Made in
- * the API's shapes, deterministic for a day, so the strip, the stats page, the row and the tab can be
- * checked with no socket.
+ * account; games that went silent two weeks ago, or a game two days old, for the quiet and fresh
+ * ones), Play's Top creators from the fixture catalog, and the Credits tab's balance
+ * (`STUDIO_FIXTURE_CREDITS=low|zero|unlimited` names another), plan, prices and recent spends. Made
+ * in the API's shapes, deterministic for a day, so the strip, the stats page, the row and the tab
+ * can be checked with no socket. Each game's stats are its analytics sample's own
+ * (`fixture-game-analytics/sample.ts`), so its row on the Stats page and its analytics page agree.
  */
+import { isStatsPeriod, type StatsPeriod } from "../../shared/play-stats.ts";
 import { CreatorRoute } from "../play/creator-stats.ts";
 import { CreditsRoute } from "../play/credits.ts";
 import type { GalleryAnswer } from "../play/gallery.ts";
-import {
-  FixtureAccount,
-  type FixtureCatalog,
-  fixtureAccountOf,
-  fixtureOwnGames,
-  fixturePeople,
-} from "./fixture-people.ts";
+import { gameSample, ownSamples, type SampleSource } from "./fixture-game-analytics/sample.ts";
+import { FixtureAccount, type FixtureCatalog, fixtureAccountOf, fixturePeople } from "./fixture-people.ts";
 
-/** How a fixture week goes: a little busier towards the weekend. */
-const WEEK_RHYTHM = [0.92, 0.88, 0.95, 1, 1.08, 1.22, 1.18] as const;
-/** About this share of a day's plays are different people. */
-const PLAYERS_SHARE = 0.38;
+/** The share of the games' players summed who are different people: some play more than one game. */
+const DIFFERENT_PEOPLE = 0.93;
 /** The price list as genex.games answers it, the default call's price first in each lane. */
 const LANES = [
   ["model", 35],
@@ -52,6 +47,7 @@ function fixtureBalance(): { balance: number; reserved: number; spendable: numbe
 }
 
 const ok = (body: unknown): GalleryAnswer => ({ status: 200, body });
+const BAD_REQUEST: GalleryAnswer = { status: 400, body: { error: "bad_request" } };
 const SIGNED_OUT: GalleryAnswer = { status: 401, body: null };
 
 interface FixtureItem {
@@ -63,59 +59,35 @@ interface FixtureItem {
   author: { id: string; name: string };
 }
 
-/** A repeatable 0..1 number for `index` under `seed`. */
-function wobble(seed: number, index: number): number {
-  const x = Math.sin(seed * 12.9898 + index * 78.233) * 43758.5453;
-  return x - Math.floor(x);
-}
-
-/** A game's plays per day over `days` days, ending today: its catalog plays spread over a season. */
-function dailyPlays(game: FixtureItem, seed: number, days: number, account: FixtureAccount): number[] {
-  const base = Math.max(3, game.playsCount / 90);
-  return Array.from({ length: days }, (_, day) => {
-    const ageDays = days - 1 - day;
-    if (account === FixtureAccount.Quiet && ageDays < days / 2) return 0;
-    if (account === FixtureAccount.Fresh && ageDays > 1) return 0;
-    const growth = 1 + (0.3 * day) / days;
-    const rhythm = WEEK_RHYTHM[(day + seed) % WEEK_RHYTHM.length] ?? 1;
-    return Math.max(0, Math.round(base * growth * rhythm * (0.88 + wobble(seed, day) * 0.24)));
-  });
-}
-
-/** One game's row: the period's days and the period before as one number. */
-function gameRow(game: FixtureItem, index: number, days: number, account: FixtureAccount) {
-  const both = dailyPlays(game, index + 3, days * 2, account);
-  const plays = both.slice(days);
-  const before = both.slice(0, days);
-  const players = plays.map((count) => Math.round(count * PLAYERS_SHARE));
-  const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
-  const quiet = account === FixtureAccount.Quiet;
+/**
+ * One game's row: its plays and players per day, and the period before as one number, as the
+ * game's analytics sample has them over the same days.
+ */
+function gameRow(source: SampleSource, days: StatsPeriod, now: number) {
+  const { game, plays, players } = gameSample(source, days, now);
   return {
     slug: game.slug,
     title: game.title,
-    thumbnailUrl: game.thumbnailUrl,
-    plays,
-    players,
-    playsBefore: sum(before),
-    playersTotal: Math.round(sum(players) * 0.82),
-    playersBefore: Math.round(sum(before) * PLAYERS_SHARE * 0.8),
-    online: quiet ? 0 : (game.online ?? (index === 0 ? 2 : 0)),
+    thumbnailUrl: game.coverUrl,
+    plays: plays.daily,
+    players: players.daily,
+    playsBefore: plays.before,
+    playersTotal: players.now,
+    playersBefore: players.before,
+    online: game.playingNow,
   };
 }
 
-/** The account's stats for `days`, as `/api/users/me/stats` answers. */
-function stats(days: number, account: FixtureAccount, catalog: FixtureCatalog): GalleryAnswer {
-  const games = (fixtureOwnGames(account, catalog) as FixtureItem[]).map((game, index) =>
-    gameRow(game, index, days, account),
-  );
-  const players = Math.round(games.reduce((sum, game) => sum + game.playersTotal, 0) * 0.93);
-  const playersBefore = Math.round(games.reduce((sum, game) => sum + game.playersBefore, 0) * 0.93);
+/** The account's stats for `days` ending on the UTC day of `now`, as `/api/users/me/stats` answers. */
+function stats(days: StatsPeriod, account: FixtureAccount, catalog: FixtureCatalog, now: number): GalleryAnswer {
+  const games = ownSamples(account, catalog).map((source) => gameRow(source, days, now));
+  const people = (total: number): number => Math.round(total * DIFFERENT_PEOPLE);
   return ok({
     days,
-    endsOn: new Date().toISOString().slice(0, 10),
+    endsOn: new Date(now).toISOString().slice(0, 10),
     games,
-    players,
-    playersBefore,
+    players: people(games.reduce((sum, game) => sum + game.playersTotal, 0)),
+    playersBefore: people(games.reduce((sum, game) => sum + game.playersBefore, 0)),
     published: games.length,
     publishedThisMonth: account === FixtureAccount.Fresh ? 1 : Math.min(2, games.length),
   });
@@ -183,12 +155,14 @@ const prices = (): GalleryAnswer =>
 
 /**
  * A fixture answer for the creator and credits routes, or null when the route is none of them.
- * Stats and credits need a fixture account; Top creators and prices are public.
+ * Stats and credits need a fixture account; Top creators and prices are public. Stats are for one
+ * of the periods the Stats page offers, ending on the UTC day of `now`.
  */
 export function fixtureCreatorAnswer(
   route: string,
   init: { token?: string },
   catalog: FixtureCatalog,
+  now: () => number = Date.now,
 ): GalleryAnswer | null {
   const [pathname = "", query = ""] = route.split("?");
   if (pathname === CreatorRoute.TopCreators) return topCreators(catalog);
@@ -197,6 +171,7 @@ export function fixtureCreatorAnswer(
   const mine = pathname === CreatorRoute.Stats || Object.values(CreditsRoute).some((path) => path === pathname);
   if (!mine) return null;
   if (!account) return SIGNED_OUT;
-  if (pathname === CreatorRoute.Stats) return stats(Number(new URLSearchParams(query).get("days")), account, catalog);
-  return credits(pathname);
+  if (pathname !== CreatorRoute.Stats) return credits(pathname);
+  const days = Number(new URLSearchParams(query).get("days"));
+  return isStatsPeriod(days) ? stats(days, account, catalog, now()) : BAD_REQUEST;
 }

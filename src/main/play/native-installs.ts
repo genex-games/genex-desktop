@@ -8,12 +8,15 @@
  * A chunked build (`native-chunks.ts`) has no archive: its manifest is read, its chunks assembled in
  * a work folder (`native-chunk-assemble.ts`), and the manifest kept as `<root>/<slug>/.manifest.json`
  * so the next update takes every chunk it can from the installed files and downloads only the rest.
+ * Each moment of an install (pressed, downloaded, installed, failed, removed) is told to `moment`, for
+ * genex.games (`install-reports.ts`); a stopped install tells nothing more.
  * Electron-free: the catalog read, the fetch, the tools and the push to the window are deps.
  */
 import { lstat, mkdir, mkdtemp, readdir, rename, rm, statfs } from "node:fs/promises";
 import path from "node:path";
 import { etaMsAt, type SpeedMeter, speedAfter, speedMeter } from "../../shared/download-speed.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
+import { InstallMoment } from "../../shared/game-analytics.ts";
 import { isPlaySlug, type PlayGameDetail } from "../../shared/play.ts";
 import {
   buildFor,
@@ -43,6 +46,7 @@ import {
   discardChunkWork,
   type InstalledSource,
 } from "./native-chunk-assemble.ts";
+import type { InstallNews } from "./install-reports.ts";
 import { fetchManifest, MANIFEST_MAX_BYTES, parseManifest, sha256Hex } from "./native-chunks.ts";
 import { discardDownload, downloadArchive, InstallError, verifyArchive } from "./native-download.ts";
 import {
@@ -119,6 +123,11 @@ export interface NativeInstallDeps {
   publish(state: NativeInstalls): void;
   /** An install finished or failed. */
   outcome?(outcome: InstallOutcome): void;
+  /**
+   * A moment of an install, for genex.games (`install-reports.ts`): pressed, downloaded, installed,
+   * failed or removed. Told, never waited for; one that throws changes nothing.
+   */
+  moment?(news: InstallNews): void;
   /** Whether a game is running now: its installed version stays until it quits. */
   inUse?(slug: string): boolean;
   stallClock?: StallClock;
@@ -139,6 +148,8 @@ interface Job {
   game: PlayGameDetail;
   build: NativeBuild;
   stop: AbortController;
+  /** When its download began (`now`), once it has. */
+  downloadFrom?: number;
 }
 
 /** The free bytes on the disk holding `dir`. */
@@ -262,9 +273,36 @@ export class NativeInstaller {
     });
   }
 
+  /** Tell genex.games a moment of an install; a reporter that throws leaves the install as it is. */
+  #report(news: InstallNews): void {
+    try {
+      this.#deps.moment?.(news);
+    } catch {
+      // Best effort: a report never changes an install.
+    }
+  }
+
+  /** Mark the start of `job`'s download, for the time it took. */
+  #downloadBegins(job: Job): void {
+    job.downloadFrom = this.#deps.now();
+  }
+
+  /** `job`'s download is done: tell how long it took, unless the install was stopped meanwhile. */
+  #downloaded(job: Job): void {
+    if (job.stop.signal.aborted || job.downloadFrom === undefined) return;
+    const seconds = (this.#deps.now() - job.downloadFrom) / SECOND_MS;
+    this.#report({ slug: job.slug, moment: InstallMoment.Downloaded, version: job.build.version || null, seconds });
+  }
+
   /** Tell how an install ended. */
   #tell(job: Pick<Job, "slug" | "build" | "game">, failure: InstallFailure | null): void {
     const { slug, game, build } = job;
+    const version = build.version || null;
+    this.#report(
+      failure
+        ? { slug, moment: InstallMoment.Failed, version, failure }
+        : { slug, moment: InstallMoment.Installed, version },
+    );
     this.#deps.outcome?.({
       slug,
       title: game.title,
@@ -296,6 +334,7 @@ export class NativeInstaller {
     await mkdir(path.join(this.folder, DOWNLOADS), { recursive: true });
     const partial = this.#partialOf(job.slug, build);
     let meter: SpeedMeter | null = null;
+    this.#downloadBegins(job);
     this.#setProgress(job, { phase: InstallPhase.Downloading });
     await this.#push();
     await downloadArchive(this.#deps, build, partial, job.stop.signal, (received, total) => {
@@ -306,6 +345,7 @@ export class NativeInstaller {
       this.#setProgress(job, { phase: InstallPhase.Downloading, receivedBytes: received, bytesPerSecond, etaMs });
       if (now - this.#lastPush >= PROGRESS_EVERY_MS) void this.#push();
     });
+    this.#downloaded(job);
     this.#setProgress(job, { phase: InstallPhase.Verifying, receivedBytes: build.sizeBytes, etaMs: null });
     await this.#push();
     if (!(await verifyArchive(partial, build))) {
@@ -438,6 +478,7 @@ export class NativeInstaller {
    */
   async #installChunks(job: Job, build: ChunkedBuild, unpacked: string, game: UnpackedFor): Promise<void> {
     const { signal } = job.stop;
+    this.#downloadBegins(job);
     this.#setProgress(job, { phase: InstallPhase.Downloading });
     await this.#push();
     const { manifest, bytes } = await fetchManifest(this.#deps, build, signal);
@@ -445,6 +486,7 @@ export class NativeInstaller {
     const installed = await this.#installedSource(job.slug);
     const report = this.#chunkReport(job, build);
     const assembled = await assembleChunks({ deps: this.#deps, build, manifest, dir, installed, signal, report });
+    this.#downloaded(job);
     await rename(assembled, unpacked);
     await discardChunkWork(dir);
     const app = await finishBuild(this.#deps.run, unpacked, build, game);
@@ -514,9 +556,11 @@ export class NativeInstaller {
     const build = buildFor(game.native?.builds ?? [], this.#deps.host);
     if (!build) {
       const none: NativeBuild = { ...EMPTY_BUILD, platform: this.#deps.host.platform };
+      this.#report({ slug, moment: InstallMoment.Pressed, version: null });
       return this.#fail({ slug, game, build: none }, InstallFailure.NotOffered);
     }
     if ((await this.#indexNow()).games[slug]?.version === build.version) return;
+    this.#report({ slug, moment: InstallMoment.Pressed, version: build.version || null });
     const job: Job = { slug, game, build, stop: new AbortController() };
     this.#queue.push(job);
     this.#setProgress(job, { phase: InstallPhase.Queued, receivedBytes: 0 });
@@ -537,12 +581,14 @@ export class NativeInstaller {
     if (!isPlaySlug(slug)) throw new Error(MESSAGE.BadSlug);
     if (this.#deps.inUse?.(slug)) throw new Error(MESSAGE.Playing);
     await this.cancel(slug);
+    const removed = (await this.#indexNow()).games[slug] ?? null;
     await this.#changeIndex((games) => {
       delete games[slug];
     });
     await this.#keepManifest(slug, null);
     await this.sweep(slug);
     await this.#push();
+    if (removed) this.#report({ slug, moment: InstallMoment.Removed, version: removed.version || null });
   }
 
   /** Whether `slug` is installing or waiting to. */

@@ -12,6 +12,7 @@ import type { JSX, KeyboardEvent, RefObject, UIEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AssetScope } from "../../shared/asset-library.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
+import { GenexSurface } from "../../shared/game-analytics.ts";
 import { PlayCategory, type PlayGame, PlayShelf } from "../../shared/play.ts";
 import { SIDEBAR_TOGGLE, SidebarToggle } from "../shell/use-shell-chrome.ts";
 import { feedOf } from "../state/play.ts";
@@ -206,10 +207,15 @@ function useGridColumns(grid: RefObject<HTMLDivElement | null>, on: boolean): nu
   return on ? columns : null;
 }
 
+/** The place in Genex a tab's cards are: Featured's own, or the feed's. */
+const tabSurface = (category: PlayCategory): GenexSurface =>
+  category === PlayCategory.Featured ? GenexSurface.Featured : GenexSurface.Feed;
+
 /** The grid of cards, with the shapes of the ones still coming. */
 export function Grid({
   games,
   placeholders,
+  surface,
   onRemix,
   showAuthor = true,
   marquee = false,
@@ -217,6 +223,8 @@ export function Grid({
 }: {
   games: readonly PlayGame[];
   placeholders: number;
+  /** The place in Genex these cards are: a play they open tells genex.games. */
+  surface: GenexSurface;
   onRemix: (game: PlayGame) => void;
   /** Whether cards say who made them. */
   showAuthor?: boolean;
@@ -225,11 +233,14 @@ export function Grid({
   /** The measured first row plays its clips by itself (the dashboard's Games feed only). */
   autoplayTopRow?: boolean;
 }): JSX.Element {
-  const play = useCallback((game: PlayGame) => {
-    const entry = { slug: game.slug, title: game.title, coverUrl: game.coverUrl };
-    // A native game with no web build opens its own page.
-    void studio().play.open(opensPage(game) ? { ...entry, page: true } : entry);
-  }, []);
+  const play = useCallback(
+    (game: PlayGame) => {
+      const entry = { slug: game.slug, title: game.title, coverUrl: game.coverUrl };
+      // A native game with no web build opens its own page.
+      void studio().play.open(opensPage(game) ? { ...entry, page: true } : entry, surface);
+    },
+    [surface],
+  );
   const grid = useRef<HTMLDivElement>(null);
   const columns = useGridColumns(grid, autoplayTopRow);
   const topRow = (game: PlayGame, index: number): boolean =>
@@ -281,7 +292,7 @@ function FeedBody({
   if (feed.status === FeedStatus.Loading && feed.games.length === 0)
     return (
       <div role="status" aria-busy="true" aria-label={WORDS.loading(shelf)}>
-        <Grid games={[]} placeholders={PLACEHOLDERS} onRemix={onRemix} />
+        <Grid games={[]} placeholders={PLACEHOLDERS} surface={tabSurface(category)} onRemix={onRemix} />
       </div>
     );
   if (feed.games.length === 0) return <Notice text={WORDS.empty(shelf)} />;
@@ -290,6 +301,7 @@ function FeedBody({
       <Grid
         games={feed.games}
         placeholders={feed.loadingMore ? PLACEHOLDERS / 2 : 0}
+        surface={tabSurface(category)}
         onRemix={onRemix}
         autoplayTopRow={shelf === PlayShelf.Games}
       />
@@ -327,7 +339,12 @@ function SearchBody({
   const waiting = search.status === FeedStatus.Loading && search.games.length === 0;
   return (
     <div aria-busy={search.status === FeedStatus.Loading}>
-      <Grid games={search.games} placeholders={waiting ? PLACEHOLDERS : 0} onRemix={onRemix} />
+      <Grid
+        games={search.games}
+        placeholders={waiting ? PLACEHOLDERS : 0}
+        surface={GenexSurface.Search}
+        onRemix={onRemix}
+      />
     </div>
   );
 }

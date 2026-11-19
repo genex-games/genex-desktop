@@ -1,0 +1,126 @@
+/* ── A game's analytics: Engagement ── */
+/* This report's own layout. The blocks it is built from (tiles, sections, charts, tables) are the
+   kit's, in game-analytics.css; colours are the stats tokens of people.css. */
+
+/* A link that opens another tab: in a block's head it reads as the page's tabs do, quiet until
+   hovered; inside a note it is underlined, so it reads as something to press. */
+.game-analytics-engagement-open {
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+  transition: color var(--duration-quick);
+}
+.game-analytics-engagement-open:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 3px;
+}
+.game-analytics-engagement-open:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+.game-analytics-empty .game-analytics-engagement-open {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 3px;
+}
+
+/* How many days a week: the regulars' bars (four days or more, REGULAR_DAYS in engagement-view.ts)
+   are the ones picked out, in place of the tallest. */
+.game-analytics-engagement-days .game-analytics-bucket[data-peak] .game-analytics-bucket-bar {
+  background: var(--stats-bar);
+}
+.game-analytics-engagement-days .game-analytics-bucket:nth-child(n + 4) .game-analytics-bucket-bar {
+  background: var(--stats-line);
+}
+
+/* When they play: twenty-four columns, so the hours' headings sit a little smaller than the kit's. */
+.game-analytics-engagement-heat .game-analytics-heatmap th {
+  padding-inline: 0;
+  font-size: 10px;
+}
+
+/* How far players get: the bars of the histogram and the medians under them share one set of
+   columns, after a column that names the rows. */
+.game-analytics-engagement-levels {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  column-gap: 8px;
+}
+.game-analytics-engagement-levels > .game-analytics-histogram {
+  grid-column: 2;
+}
+.game-analytics-engagement-levels-label,
+.game-analytics-engagement-levels-cells {
+  padding-block: 3px;
+  font: 12px / 20px var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+}
+.game-analytics-engagement-levels-label {
+  color: var(--stats-ink);
+}
+.game-analytics-engagement-levels-cells {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 8px;
+  margin: 0;
+  padding-inline: 0;
+  list-style: none;
+  text-align: center;
+}
+.game-analytics-engagement-levels-cells > li {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The first row is ruled off from the bars; the second is quieter than the first. */
+.game-analytics-engagement-levels > span:first-of-type,
+.game-analytics-engagement-levels > ul:first-of-type {
+  margin-block-start: 6px;
+  border-top: 1px solid var(--line);
+}
+.game-analytics-engagement-levels > ul:last-of-type {
+  color: var(--stats-ink);
+}
+/* Every level but the one that loses the most is the same quiet bar; that one is picked out in
+   orange, and says how many points it loses over its value. */
+.game-analytics-engagement-levels .game-analytics-bucket[data-peak] .game-analytics-bucket-bar {
+  background: var(--stats-bar);
+}
+.game-analytics-engagement-levels .game-analytics-bucket:has(> .game-analytics-bucket-note) .game-analytics-bucket-bar {
+  background: color-mix(in srgb, var(--orange) 80%, transparent);
+}
+.game-analytics-engagement-levels .game-analytics-bucket-note {
+  color: color-mix(in oklab, var(--orange) 62%, var(--ink));
+}
+
+/* How it runs: its own heading, the four tiles, and the table by device. */
+.game-analytics-engagement-run {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-block-start: 8px;
+}
+.game-analytics-engagement-run-title {
+  margin: 0;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 24px;
+  text-wrap: balance;
+}
+@media (prefers-reduced-motion: reduce) {
+  .game-analytics-engagement-open {
+    transition: none;
+  }
+}

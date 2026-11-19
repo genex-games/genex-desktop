@@ -27,6 +27,7 @@ import type { PlayPurchaseAnswer } from "./play-purchase.ts";
 import type { PlayCoverType, PlayGameChange } from "./play-manage.ts";
 import type { AvatarStyle, FriendActionRequest, PresenceVisibility } from "./play-people.ts";
 import type { StatsPeriod } from "./play-stats.ts";
+import type { CampaignTags, EventFunnelDraft, EventOrigin, GenexSurface } from "./game-analytics.ts";
 import type { ItemReportReason } from "./store-items.ts";
 import type { MentionRef, MentionRetry } from "./prompt-mention.ts";
 
@@ -228,6 +229,13 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:play.avatarStyle": "playAvatarStyle",
   "studio:play.avatarVariant": "playAvatarVariant",
   "studio:play.stats": "playStats",
+  "studio:play.game-report": "playGameReport",
+  "studio:play.game-events": "playGameEvents",
+  "studio:play.campaign-links": "playCampaignLinks",
+  "studio:play.campaign-link-save": "playCampaignLinkSave",
+  "studio:play.campaign-link-remove": "playCampaignLinkRemove",
+  "studio:play.funnel-save": "playFunnelSave",
+  "studio:play.funnel-remove": "playFunnelRemove",
   "studio:play.creators": "playCreators",
   "studio:play.credits": "playCredits",
   "studio:play.handle-check": "playHandleCheck",
@@ -531,8 +539,8 @@ export interface StudioInvokePayloads {
   "studio:play.remix": { slug: string };
   "studio:play.remix-ready": { slugs: string[] };
   "studio:play.online": { slugs: string[] };
-  "studio:play.open": { slug: string; title: string };
-  "studio:play.game": { slug: string };
+  "studio:play.open": { slug: string; title: string; surface?: GenexSurface };
+  "studio:play.game": { slug: string; shown?: boolean };
   "studio:play.install": { slug: string };
   "studio:play.install-cancel": { slug: string };
   "studio:play.installs": undefined;
@@ -561,6 +569,13 @@ export interface StudioInvokePayloads {
   "studio:play.avatarStyle": { style: AvatarStyle };
   "studio:play.avatarVariant": { variant: number };
   "studio:play.stats": { days: StatsPeriod };
+  "studio:play.game-report": Arg<"playGameReport", 0>;
+  "studio:play.game-events": { slug: string; origin: EventOrigin };
+  "studio:play.campaign-links": { slug: string; days: StatsPeriod };
+  "studio:play.campaign-link-save": { slug: string; tags: CampaignTags };
+  "studio:play.campaign-link-remove": { slug: string; id: string };
+  "studio:play.funnel-save": { slug: string; draft: EventFunnelDraft };
+  "studio:play.funnel-remove": { slug: string; id: string };
   "studio:play.creators": undefined;
   "studio:play.credits": undefined;
   "studio:play.handle-check": { handle: string };

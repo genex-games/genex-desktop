@@ -49,6 +49,9 @@ const STUDIO_UI_ONLY = [
   "studio:assets.",
   "studio:play.manage",
   "studio:play.cover",
+  // A game's campaign links and funnels are saved and removed on genex.games under the creator's account.
+  "studio:play.campaign-link-",
+  "studio:play.funnel-",
   // The store buys with the account's coin and answers its purchase sheet; Create › Items puts the
   // account's items on sale, shares them and adds other creators' items to its games.
   "studio:store.",

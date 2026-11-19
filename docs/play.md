@@ -100,7 +100,8 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   shows the page as last read with nobody playing, and every press waits.
 - Profiles: the avatar, name, `@handle`, chips, friends and games. The account's own adds Share
   beside the pencil (a popover: the link preview drawn in the app, its avatar body flat as the
-  preview draws it, the link, Copy, Post on X, Share…) and a 7-day strip opening Stats (7, 30 or 90 days; tiles, plays per day, every game).
+  preview draws it, the link, Copy, Post on X, Share…) and a 7-day strip opening Stats (7, 30 or 90 days; tiles, plays per day, every game; a game's row opens
+  its [analytics](#a-games-analytics)).
 - Nicknames: a handle is the profile's address, `genex.games/@<handle>` (by id while there is
   none). Its shape (3–20 of a–z, 0–9 and inner dashes) is judged as it is typed
   (`src/shared/handle.ts`, genex.games' rules); whether it is free is genex.games' to say. The
@@ -119,6 +120,91 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   the pointer, never while its menu is open (always in Settings' preview); WebGPU, a 2D still without it, 30
   frames a second only while lit and on screen, held while idle, under a modal or Reduce Motion.
 
+## A game's analytics
+
+Only a game's creator sees it. It opens from the game's row on the Stats page (profile › the 7-day
+strip › Stats; the row's title is the button, and its press area is the whole row) as a page of
+Play's own (`PlayPage.GameAnalytics`: the game's slug and the tab); Back returns to Stats.
+`openPlayGameAnalytics` (`play/open-play.ts`) brings Play up on one from elsewhere, with the same
+Back. genex.games computes every number: Studio asks, checks what came back, and draws it.
+
+- **Tabs** (`renderer/play/game-analytics/tabs.ts`): Overview, Acquisition, Retention, Engagement,
+  Events, Revenue and Installs, then Campaign links and SDK set apart at the row's end. Installs is
+  listed only for a game with an app build (`hasAppBuild`, in the game the answers describe), or
+  while it is the tab shown. The arrows, Home and End move along the row. Beside it, 7 · 30 · 90
+  days: on every tab but SDK, whose events are not counted over a period. The period is the Stats
+  page's own, one value in the store: a game's page opens on the period chosen there, and Back finds
+  Stats as it was left. A report's options (Acquisition's breakdown, attribution and campaign tag;
+  Retention's mode, cohort and group; Events' event and split property: `REPORT_OPTIONS`) and the
+  SDK tab's origin (the published game or Studio's preview) belong to the page and last while it is
+  up. The header names the game, its link with Copy and how many play it now, and a line of facts:
+  the days the numbers cover, what changes compare with, how long ago genex.games computed them.
+- **What is read, and when.** Only what the tab shown needs, only while it is shown. A report or the
+  links list is read as its tab shows, and again the next time it shows once it is two minutes old
+  (`REPORT_STALE_MS`, `LINKS_STALE_MS`), when the connection comes back, or at Try again. Another
+  period or option is another question: the tab keeps its last answer, dimmed (`data-refreshing`),
+  until the new one lands. A failed re-read keeps the last answer with a stale line saying so, and
+  the forms keep what was typed; with nothing read yet a failed read says so, or that this computer
+  is offline. The SDK tab reads the game's events status as it shows and every 5 seconds after
+  (`EVENTS_STATUS_POLL_MS`; not while the window is hidden), and does not dim for it. Leaving what
+  was asked for (another tab, period or option, or the page) drops the read on its way. Answers live
+  in memory only, for the account that asked, at most 40 reports, 12 links lists and 6 events
+  statuses (`REPORTS_KEPT`, `LINKS_KEPT`, `EVENTS_KEPT`; the oldest go first): none reach
+  `localStorage`, and a change of account or a sign-out empties them. An answer sent before a save
+  or a removal never lands over it; the question is read again while it is shown.
+- **Campaign links and funnels.** The Campaign links tab builds a link to the game's page with
+  `utm_` tags (`campaignUrl`; a source, a medium and a campaign, with content and term optional) and
+  saves it on genex.games, which then counts what it brings; a saved link has Copy and a Remove that
+  asks first. The Events tab saves funnels: up to `FUNNEL_STEPS_MAX` steps, each an event,
+  optionally with one property at one value (both or neither), done within `FUNNEL_DAYS_MAX` days at
+  most. A game keeps at most `CAMPAIGN_LINKS_MAX` (200) links and `FUNNELS_MAX` (20) funnels; a tag
+  is at most `CAMPAIGN_TAG_MAX` characters, a funnel's name `FUNNEL_NAME_MAX` and a property's name
+  `PROPERTY_NAME_MAX` (`shared/game-analytics-asks.ts`), and main refuses longer text instead of
+  cutting it. A saved or removed link changes its list at once; a saved or removed funnel reads the
+  Events report shown again. Saving tags a game already keeps answers that link. A save past a limit
+  is answered 409 with the contract's `AnalyticsWriteRefusal.Limit` as its `code`: main throws it
+  across IPC as the coded error `AnalyticsSaveRefusal.Limit`, and the form says to remove one first
+  (typing or a removal clears it); any other refusal is a plain failure to try again. The saves and
+  removals answer only Studio's own page (`STUDIO_UI_ONLY`).
+- **The read path.** `StudioApi` has seven calls, one channel each: `playGameReport`,
+  `playGameEvents`, `playCampaignLinks`, `playCampaignLinkSave`, `playCampaignLinkRemove`,
+  `playFunnelSave` and `playFunnelRemove` (`studio:play.game-report`, `.game-events`,
+  `.campaign-links`, `.campaign-link-save`, `.campaign-link-remove`, `.funnel-save`,
+  `.funnel-remove`; all fixture-safe), registered by `main/ipc/game-analytics.ts` over the client in
+  `main/play/game-analytics/`. The renderer names a game by its slug and the rest by values of the
+  contract's vocabularies; `asked.ts` checks every field and `routes.ts` builds every path, so no
+  page names one. `read.ts` reads as the Genex account and tells apart what the page says
+  differently: no token, or a 401 (which ends the sign-in as any account call does), is a sign-in
+  needed, and the page shows its signed-out face; a 404 whose body carries `code` `no_game` or
+  `no_report` (`ReadKind`) is that answer (not this account's game; no such report, as Installs for
+  a game with no app build); a 404 with no code, or one Studio does not know, is "not served yet"
+  (`unavailable`), a genex.games with no analytics; a success is read by the report's parser
+  (`reports.ts`, `report-<name>.ts`, built on `kit.ts`). Any other status, or a body a parser cannot
+  read (the wrong shape, an impossible count such as more payers than players, another game, report
+  or option than was asked) throws a `GalleryError` and shows as a failed read, never as "not served
+  yet" or as zeros. Nothing is kept in main between calls. A saved link's address is kept only on
+  the Play website's origin with the game's own path.
+- **Fixtures** (`main/dev/fixture-game-analytics/`): a fixture launch answers every route of the
+  fixture account's own games from one made-up game per slug (`sample.ts`), so the reports agree
+  with each other and with the game's row on the Stats page: three games (a rich one, the first with
+  an app build, a steady one and a young one published two days ago; the `quiet` account's went
+  silent two weeks ago and the `fresh` account has the young one alone). Another account's game
+  answers `no_game`, Installs for a game with no app build `no_report`. A saved link or funnel lives
+  for the launch.
+- **The renderer.** The store is `state/game-analytics.ts` (`studio().gameAnalytics`, read with
+  `useGameAnalytics`). `GameAnalyticsPage.tsx` is the container: it reads the stores, asks the store
+  for what the tab shown needs and hands everything to `AnalyticsFace.tsx`, which draws the header,
+  the tabs, the period switch and one face per state of the read (signed out, loading, offline,
+  failed, not served yet, no such game, no such report: `data-game-analytics-state`). Each tab has a
+  component that draws from props alone, with its pure `*-view.ts` and its copy in `*-words.ts`
+  beside it, over a kit (`kit/`: tiles, charts, tables, funnels, heatmaps; a missing or unknown
+  value is a dash, never a zero; days are UTC, instants the viewer's own time). The period switch is
+  shared with Stats (`PeriodSwitch.tsx`). Styles are `renderer/styles/game-analytics*.css`.
+- **The contract** is `shared/game-analytics.ts`: its header says what a player, a play, a visit and
+  a source are, and lists the wire; `game-analytics-asks.ts` holds what it leaves open (the options
+  each report takes, the limits on what is typed). Usage analytics names the page by its tab, never
+  the game ([usage analytics](usage-analytics.md#what-leaves)).
+
 ## Playing a game
 
 - A game plays in a sandboxed view (`persist:genex-play`) filling the window below the app's bar, a
@@ -132,6 +218,17 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   user-origin rule); the keyboard stays with the game, and the page's other focus rings stay. Only Studio's own page and the bar's may post or delete a comment. A single-use ticket in the address's fragment signs the player in; a guest is offered
   sign-in. The rest of the app is inert until the game closes. Closing the window closes it; another
   window over the studio's, another desktop or minimizing leaves it playing (`view-drop.ts`).
+- The address that opens a game (`playAddress`, `main/play/game-address.ts`) carries
+  `genex_r=1&genex_place=genex_app&genex_surface=<surface>` in its query, before the ticket (or the
+  guest marker) in its fragment: genex.games counts a play in the Genex app, and the place in the
+  app that led to it, for a creator's Acquisition report (`PlayPlace`, `GenexSurface`). The embed
+  SDK leaves `genex_` keys out of what it shows the game. `studio:play.open` takes an optional
+  `surface`; a missing one means `other`, and any value that is not a `GenexSurface` is refused.
+  Each place passes its own: the Featured tab `featured`, the other feed tabs and the Assets shelf
+  `feed`, a search (of games, of assets) `search`, a profile's games `profile`, a friend's Join
+  `friends`. Recent, a `genex://` link, a notification and the item shelf count as `other`. A game's
+  page remembers the surface that opened it for its Play in browser, and the viewer's Try again
+  repeats the surface of the open it retries. No place in Studio sends `remixes`.
 - Comments (the count, or the icon alone) opens a modal over the dimmed game: its count as the
   title, genex.games' comments newest first in pages of 20, a footer pinned under the list (Sign in
   signed out, else the field with Post inside it once something is typed; at most 500 characters).
@@ -408,6 +505,31 @@ is.
     goes again as this computer's, as do later ones while the account still holds that token. A
     game quit before it was running, or a failed report, counts nothing; a failed report is logged.
     A fixture launch reports nothing.
+- Install reports (`main/play/install-reports.ts`): only the app installs and opens app builds, so
+  it tells genex.games each moment (`InstallMoment`) for a creator's Installs report: one
+  `InstallReport` (game, moment, system family `OsFamily`, build version, and what the moment needs:
+  the seconds a download took, an `InstallFailure` code or an `InstallBlock`) to
+  `POST /api/embed/native-install` (`PlayRoute.NativeInstall`), from main and never from a page.
+  - **Moments.** Pressed when an install is queued (a press on a game with no build for this
+    computer sends Pressed and then Failed `not-offered`; one already installed at that version,
+    queued or installing sends nothing); Downloaded when the archive is down, or chunk assembly ends
+    (so a chunked build's seconds include checking the chunks already on disk); Installed; Failed,
+    which can follow a Downloaded (a checksum failure); Removed after an uninstall of an installed
+    game; Opened each time an installed game's session turns Running, beside the play report. A
+    cancelled install sends nothing after Pressed. Offered and Blocked are told only while a game's
+    page is shown (`studio:play.game` carries `shown`, which the page on screen sets and the Recent
+    list's cover lookup does not): Offered (the version that would install) when it shows Install,
+    Blocked (`InstallBlock`: an old system, an Intel Mac given Apple-silicon builds, an Arm Linux
+    computer given other processors' builds, else other, which also covers a missing Rosetta and a
+    system with no build) when the game's app builds offer this computer none; once per game per
+    start of Genex, for a game with app builds that is neither installed nor installing here.
+  - **Sending.** As the signed-in account, else with this computer's random id, the one the play
+    report uses (`computerIdOf`, `native-plays.ts`: one function, so two reports sent at once never
+    make two ids); a refused token (401) is sent again as the computer's, as the play report does
+    (`launcherSender`). Reports go one after another and never hold up an install, a launch or an
+    uninstall; a refusal, an outage or an unreadable id drops that report. A 404 (genex.games takes
+    none yet) drops every report for an hour (`NOT_SERVED_PAUSE_MS`) and logs one line. A fixture or
+    smoke launch sends nothing.
 - Links (`main/play/game-links.ts`): the website's Open in Genex sends `genex://game/<slug>`.
   The packaged app declares the scheme (`protocols` in `forge.config.cjs`, the Linux packages'
   `x-scheme-handler/genex`) and registers it at start; macOS hands a link over `open-url`, Windows
@@ -433,8 +555,9 @@ is.
   dialog lists platforms ([Genex publish](plugins.md#first-party-privileges)). Their pages show
   each top: Dust Runners and Frigate a slideshow, Puck Rush its cover alone (as genex.games sends
   every page today: no shots), Iron Tide nothing at all (no cover, shots or description).
-- `studio:play.game` reads a game's own page (`StudioApi.playGame`): its card, likes, comments,
-  description, screenshots and when it changed.
+- `studio:play.game` reads a game's own page (`StudioApi.playGame(slug, shown)`): its card, likes,
+  comments, description, screenshots and when it changed; `shown` says the page is on screen, so
+  main may report Offered or Blocked ([install reports](#native-builds)).
 
 ## The item store
 
@@ -578,8 +701,12 @@ admin; `new` and `nickname` have not chosen a nickname; a few names, such as `ra
 `ended` gives it a refused one. A fixture launch's stand-in game asks for a coin purchase from a
 button per case (`[data-fixture-buy="<case>"]`) or keys 1 to 9 and 0 (`dev/fixture-coin.ts`): every
 state of the sheet, on a confirm website that resolves nowhere; the account holds 1,240 coin, and Get
-coin adds 1,000. Tests: `tests/conformance/play-*`, `genex-account`, `app-account-plugin`; the
-purchase popup in Electron: `npm run test:ui -- play-purchase`.
+coin adds 1,000. A game's analytics: `src/main/play/game-analytics/`, `src/main/ipc/game-analytics.ts`,
+`src/main/dev/fixture-game-analytics/`, `src/shared/game-analytics.ts` and `game-analytics-asks.ts`,
+`src/renderer/state/game-analytics.ts`, `src/renderer/play/game-analytics/` (with `kit/`) and
+`src/renderer/styles/game-analytics*.css`; install reports: `src/main/play/install-reports.ts`.
+Tests: `tests/conformance/play-*`, `game-analytics-*`, `install-reports`, `genex-account`,
+`app-account-plugin`; the purchase popup in Electron: `npm run test:ui -- play-purchase`.
 
 A live `studio:dev` profile can point Play at a local or test genex.games (a stand) with
 `GENEX_DEV_PLAY_API_ORIGIN`, `GENEX_DEV_PLAY_WEB_ORIGIN` and `GENEX_DEV_PLAY_GAMES_ORIGIN` (bare

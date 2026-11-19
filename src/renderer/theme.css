@@ -13,6 +13,17 @@
 @import "./styles/native-games.css";
 @import "./styles/store.css";
 @import "./styles/items.css";
+@import "./styles/game-analytics.css";
+@import "./styles/game-analytics-page.css";
+@import "./styles/game-analytics-overview.css";
+@import "./styles/game-analytics-acquisition.css";
+@import "./styles/game-analytics-retention.css";
+@import "./styles/game-analytics-engagement.css";
+@import "./styles/game-analytics-events.css";
+@import "./styles/game-analytics-revenue.css";
+@import "./styles/game-analytics-installs.css";
+@import "./styles/game-analytics-links.css";
+@import "./styles/game-analytics-sdk.css";
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 @source "./";

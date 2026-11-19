@@ -6,11 +6,12 @@ import { analyticsScreen, type ScreenPlace } from "../analytics/screens.ts";
 import { chooseUsageAnalytics } from "../analytics/start.ts";
 import type { WelcomeScreen } from "../onboarding/state.ts";
 import { useLaunch, usePlay, useSession, useShallow } from "../state/hooks.ts";
+import { PlayPage } from "../state/play.ts";
 import { asksAboutAnalytics } from "../state/session.ts";
 import type { Studio } from "../state/studio.ts";
 
 /** What the shell knows of where the person is; Play, the launch and the welcome's step are read here. */
-export type ShellPlace = Omit<ScreenPlace, "welcomeScreen" | "play" | "playViewer" | "launching"> & {
+export type ShellPlace = Omit<ScreenPlace, "welcomeScreen" | "play" | "playTab" | "playViewer" | "launching"> & {
   playOpen: boolean;
 };
 
@@ -21,7 +22,14 @@ export type ShellPlace = Omit<ScreenPlace, "welcomeScreen" | "play" | "playViewe
  */
 export function useUsageAnalytics(app: Studio, { playOpen, ...place }: ShellPlace) {
   const [welcomeScreen, setWelcomeScreen] = useState<WelcomeScreen | null>(null);
-  const play = usePlay(useShallow((s) => ({ page: s.view.page, viewer: s.viewer !== null })));
+  // A game's analytics page reports its tab too, and nothing of the game it is about.
+  const play = usePlay(
+    useShallow((s) => ({
+      page: s.view.page,
+      tab: s.view.page === PlayPage.GameAnalytics ? s.view.tab : null,
+      viewer: s.viewer !== null,
+    })),
+  );
   const launching = useLaunch((s) => s.launch !== null);
   const { asking, firstLaunch, replayUntil } = useSession(
     useShallow((s) => ({ asking: asksAboutAnalytics(s), firstLaunch: s.firstLaunch, replayUntil: s.replayUntil })),
@@ -30,6 +38,7 @@ export function useUsageAnalytics(app: Studio, { playOpen, ...place }: ShellPlac
     ...place,
     welcomeScreen,
     play: playOpen ? play.page : null,
+    playTab: playOpen ? play.tab : null,
     playViewer: play.viewer,
     launching,
   });

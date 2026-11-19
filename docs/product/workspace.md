@@ -18,8 +18,9 @@ approved: **Fix**), then build endings, sign-outs and review news, each opening 
 unfocused, macOS notifications and the Dock badge carry them; another game's review toasts. The
 sidebar shows each game's review state.
 
-**Play** shows genex.games' games and their [Stores](../play.md#the-item-store), the Genex account and
-nickname (kept offline), **Friends** with invites, profiles and **Stats** ([Play](../play.md)).
+**Play** shows genex.games' games, their [Stores](../play.md#the-item-store), the Genex account and
+nickname (kept offline), **Friends** with invites, profiles, **Stats** and
+[game analytics](../play.md#a-games-analytics).
 
 ## First launch
 

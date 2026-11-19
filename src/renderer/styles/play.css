@@ -35,13 +35,16 @@
 
 /* Play's selected look, the app's own (theme.css `.selected-tint`): the accent mixed into the fill and
    its edge, the label in ink. The switch's pill and the selected tab wear it, and so do the app's other
-   segmented switches (the Genex plugin's Tools / Credits, the stats' period, a game's Store / My items),
+   segmented switches (the Genex plugin's Tools / Credits, the stats' period, a game's Store / My items,
+   a game's analytics' segment switches and the tile that picks its chart's measure),
    so the colour tweaker's "Play: switches and tabs" group tunes them all at once. */
 .play-switch-pill,
 .play-tab[aria-selected="true"],
 .genex-tab[aria-selected="true"],
 .stats-period[aria-selected="true"],
-.store-tab[aria-selected="true"] {
+.store-tab[aria-selected="true"],
+.game-analytics-segment[aria-checked="true"],
+.game-analytics-tile[aria-pressed="true"] {
   background: var(--play-pill);
   box-shadow: inset 0 0 0 1px var(--play-pill-edge);
   color: var(--play-selected-text, var(--ink));
@@ -91,12 +94,14 @@
 .play-switch-tab:hover,
 .play-switch-tab[aria-selected="true"],
 .genex-tab:hover,
-.stats-period:hover {
+.stats-period:hover,
+.game-analytics-segment:hover {
   color: var(--play-selected-text, var(--ink));
 }
 /* The other segmented switches sit in the Play / Create switch's track. */
 .genex-tabs,
-.stats-periods {
+.stats-periods,
+.game-analytics-segments {
   background: var(--play-switch-track, var(--play-track));
   box-shadow: inset 0 0 0 1px var(--play-switch-edge, var(--play-track-edge));
 }

@@ -32,6 +32,7 @@ import {
 } from "../../shared/play.ts";
 import type { PlayMicReport } from "../../shared/play-mic.ts";
 import { NativeAppOffer, type PlayBarNative } from "../../shared/play-native.ts";
+import { GenexSurface, isGenexSurface } from "../../shared/game-analytics.ts";
 import { mintedTicket, type PlayGallery, type PlayWorld, SignInNeeded, TicketStatus } from "./gallery.ts";
 import { BarLayout, barLayout } from "./bar-layout.ts";
 import type { PlayComments } from "./comments.ts";
@@ -49,8 +50,11 @@ export const NOTE_MS = 2.2 * SECOND_MS;
 /** Everything the viewer moves or asks: the game's view, the window, the gallery, the clipboard and the clock. */
 export interface PlayViewerDeps {
   gallery: Pick<PlayGallery, "world" | "setLiked" | "ticket" | "inviteCode">;
-  /** The game's page address: its play URL carrying the sign-in ticket, or the guest marker. */
-  gameUrl(slug: string, ticket: string | undefined): string;
+  /**
+   * The game's page address: its play URL carrying the sign-in ticket, or the guest marker, and the
+   * place in the app that led to the play (`game-address.ts`).
+   */
+  gameUrl(slug: string, ticket: string | undefined, surface: GenexSurface): string;
   window: {
     contentSize(): { width: number; height: number };
     /** Show or hide the window's own buttons (macOS's traffic lights), which sit in the bar. */
@@ -116,6 +120,8 @@ export interface PlayViewerDeps {
 interface Session {
   slug: string;
   title: string;
+  /** The place in the app that led to this play: its address tells genex.games. */
+  surface: GenexSurface;
   /** Bumped on every open, so an answer for an earlier game is dropped. */
   epoch: number;
   phase: PlayViewerPhase;
@@ -269,7 +275,7 @@ async function loadGame(ctx: ViewerContext, epoch: number, showAnyway: () => voi
   s.signedOut = ticket.status === TicketStatus.SignedOut;
   s.state = { ...s.state, signedIn: !s.signedOut };
   ctx.draw();
-  ctx.deps.game.open(ctx.deps.gameUrl(s.slug, mintedTicket(ticket)), s.slug, ctx.gameBounds());
+  ctx.deps.game.open(ctx.deps.gameUrl(s.slug, mintedTicket(ticket), s.surface), s.slug, ctx.gameBounds());
   return ctx.deps.clock.setTimeout(showAnyway, SHOW_GAME_AFTER_MS);
 }
 
@@ -422,10 +428,23 @@ function barActions(ctx: ViewerContext): Record<PlayControl, (at?: PlayPoint) =>
   };
 }
 
+/** What a game is opened with: its name and the place in the app that led to it. */
+interface Opening {
+  slug: string;
+  title: string;
+  surface: GenexSurface;
+}
+
 /** A game just opened: loading, nothing read about it yet, its mic switch as it was left. */
-const freshSession = (slug: string, title: string, epoch: number, micOn: boolean, remixing: boolean): Session => ({
+const freshSession = (
+  { slug, title, surface }: Opening,
+  epoch: number,
+  micOn: boolean,
+  remixing: boolean,
+): Session => ({
   slug,
   title,
+  surface,
   epoch,
   phase: PlayViewerPhase.Loading,
   world: null,
@@ -617,13 +636,15 @@ export function playViewer(deps: PlayViewerDeps) {
     close,
   };
 
-  const open = (slug: string, title?: unknown): void => {
+  /** Open `slug` in the viewer, led there from `surface` (anything that names no place reads as Other). */
+  const open = (slug: string, title?: unknown, surface?: unknown): void => {
     if (!isPlaySlug(slug)) return;
     if (session) close();
     epoch += 1;
     const opened = epoch;
     layer.opened();
-    session = freshSession(slug, barTitle(title), opened, deps.mic.store.on(slug), remixes > 0);
+    const opening = { slug, title: barTitle(title), surface: isGenexSurface(surface) ? surface : GenexSurface.Other };
+    session = freshSession(opening, opened, deps.mic.store.on(slug), remixes > 0);
     // The first news of the opening: loading, with the bar as it starts.
     ctx.draw();
     void loadGame(ctx, opened, () => {

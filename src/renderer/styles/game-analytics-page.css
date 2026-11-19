@@ -1,0 +1,235 @@
+/* ── A game's analytics page: its shell (`play/game-analytics/AnalyticsFace.tsx`) ──────────────
+   The header, the tabs with the period switch, the panel's states, and the Stats table's rows
+   that open the page. Each report, Campaign links and SDK keep their own sheet beside this one.
+   Colours are the app's roles and the stats' own (`--stats-ink`, people.css); nothing is new here. */
+
+/* The Stats table: a row's title is the button that opens the game's page, and its press area is
+   the whole row. The row, not the button, is the press area's containing block, so the title's own
+   clipping (its ellipsis) never cuts it off; the focus ring is drawn around the row for the same reason. */
+.stats-row:has(.game-analytics-open) {
+  position: relative;
+  cursor: pointer;
+  transition: background-color var(--duration-quick);
+}
+.stats-row:has(.game-analytics-open):hover {
+  background: var(--play-placeholder);
+}
+.game-analytics-open {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+}
+.game-analytics-open::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+}
+/* The change mark sits over the press area, so a pointer still reaches its explanation ("New" says
+   in its title that there was nothing before to compare with). */
+.stats-row:has(.game-analytics-open) .stats-change {
+  position: relative;
+  z-index: 1;
+}
+/* The row's ring is the focus: the app's own edge and fill for a focused button (theme.css) would frame
+   the title alone a second time, so this rule outranks them. */
+:root .stats-row button.game-analytics-open:focus-visible {
+  outline: none;
+  background-color: transparent;
+}
+.stats-row:has(.game-analytics-open:focus-visible) {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: -2px;
+}
+
+/* The page: one column, a little wider than the Stats page for the reports' tables. Tabular figures
+   are set where numbers stand in columns, never on the whole page: the sans face's tabular set
+   widens the space too, which spreads every sentence and title apart. */
+.game-analytics-page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: 100%;
+  max-width: 1200px;
+  margin-inline: auto;
+}
+.game-analytics-head {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.game-analytics-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+.game-analytics-cover {
+  flex: none;
+  width: 72px;
+  height: 40px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--play-placeholder);
+}
+.game-analytics-cover img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.game-analytics-title {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 26px;
+  font-weight: 500;
+  line-height: 32px;
+}
+.game-analytics-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--stats-ink);
+  font: 12px / 16px var(--font-family-mono);
+}
+.game-analytics-copy {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-quick),
+    color var(--duration-quick);
+}
+.game-analytics-copy:hover {
+  background: var(--play-placeholder);
+  color: var(--ink);
+}
+.game-analytics-copy:focus-visible,
+.game-analytics-tab:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 1px;
+}
+.game-analytics-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-inline-start: auto;
+  color: var(--stats-ink);
+}
+.game-analytics-live-count {
+  color: var(--ink);
+  font-weight: 500;
+}
+/* The facts under the title: each its own short line, a middle dot between two on one row. */
+.game-analytics-facts {
+  display: flex;
+  flex-wrap: wrap;
+  row-gap: 2px;
+  margin: 0;
+  color: var(--stats-ink);
+  font: 12px / 16px var(--font-family-mono);
+}
+.game-analytics-facts > span + span::before {
+  margin-inline: 8px;
+  content: "·";
+}
+
+/* The tabs and the period switch share one row, ruled under; the tab shown carries the rule's ink. */
+.game-analytics-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.game-analytics-tabs {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 0;
+}
+.game-analytics-tab {
+  padding: 8px 12px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 14px;
+  line-height: 20px;
+  cursor: pointer;
+  transition: color var(--duration-quick);
+}
+.game-analytics-tab:hover {
+  color: var(--ink);
+}
+.game-analytics-tab[aria-selected="true"] {
+  box-shadow: inset 0 -2px 0 var(--ink);
+  color: var(--ink);
+  font-weight: 500;
+}
+/* Campaign links and SDK: tools, not reports, so smaller and at the row's end. */
+.game-analytics-tab[data-side] {
+  padding-inline: 8px;
+  font-size: 13px;
+}
+.game-analytics-tab:not([data-side]) + .game-analytics-tab[data-side] {
+  margin-inline-start: auto;
+}
+.game-analytics-bar .stats-periods {
+  margin-block-end: 8px;
+}
+
+/* The panel: a state's note, the skeleton, or the tab's own component. A report's root is a column
+   with the page's gap; whatever the panel holds dims while a newer answer is on its way. */
+.game-analytics-report {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
+}
+.game-analytics-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.game-analytics-panel > * {
+  transition: opacity var(--duration-quick);
+}
+.game-analytics-panel[data-refreshing] > :not(.game-analytics-stale) {
+  opacity: 0.55;
+}
+/* Over the last numbers when reading them again failed: one line with Try again. */
+.game-analytics-stale {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 20px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .stats-row:has(.game-analytics-open),
+  .game-analytics-copy,
+  .game-analytics-tab,
+  .game-analytics-panel > * {
+    transition: none;
+  }
+}

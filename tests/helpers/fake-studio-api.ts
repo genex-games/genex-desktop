@@ -8,6 +8,7 @@ import type { StudioApi } from "../../src/shared/studio-api.ts";
 import { ShaderFailure } from "../../src/shared/backdrop-shader.ts";
 import { CliInstallPhase } from "../../src/shared/cli-install.ts";
 import { GenexAccountStatus } from "../../src/shared/genex-account.ts";
+import { ReadKind } from "../../src/shared/game-analytics.ts";
 
 export type StudioMethod = keyof StudioApi;
 export interface StudioCall<M extends StudioMethod = StudioMethod> {
@@ -206,6 +207,13 @@ const METHODS = [
   "playAvatarStyle",
   "playAvatarVariant",
   "playStats",
+  "playGameReport",
+  "playGameEvents",
+  "playCampaignLinks",
+  "playCampaignLinkSave",
+  "playCampaignLinkRemove",
+  "playFunnelSave",
+  "playFunnelRemove",
   "playCreators",
   "playCredits",
   "playHandleCheck",
@@ -470,6 +478,10 @@ function defaults(): Partial<Record<StudioMethod, () => unknown>> {
     genexBuild: () => ({ status: GenexAccountStatus.SigningIn }),
     playPeople: () => ({ people: [], unavailable: false }),
     playStats: () => null,
+    // A game's analytics read as genex.games not serving them yet, until a test says otherwise.
+    playGameReport: () => ({ kind: ReadKind.Unavailable }),
+    playGameEvents: () => ({ kind: ReadKind.Unavailable }),
+    playCampaignLinks: () => ({ kind: ReadKind.Unavailable }),
     playCreators: () => null,
     ...storeDefaults(),
     makeBackdrop: () => ({ ok: false, failure: ShaderFailure.NoModel }),

@@ -1,7 +1,15 @@
 /** Play: genex.games' catalog for the dashboard, the full-screen viewer a game opens in, and people. */
 import { isAvatarVariant } from "../../shared/avatar-recipe.ts";
 import { t } from "../../shared/i18n.ts";
-import { isPlayShelf, isPlaySlug, PlayShelf, type PlayPoint, readPlayPoint } from "../../shared/play.ts";
+import { GenexSurface, isGenexSurface } from "../../shared/game-analytics.ts";
+import {
+  isPlayShelf,
+  isPlaySlug,
+  type PlayGameDetail,
+  PlayShelf,
+  type PlayPoint,
+  readPlayPoint,
+} from "../../shared/play.ts";
 import { isAccountId, isAvatarStyle, isFriendAction, isPresenceVisibility } from "../../shared/play-people.ts";
 import { isStatsPeriod } from "../../shared/play-stats.ts";
 import {
@@ -14,6 +22,7 @@ import {
 import type { CreatorStats } from "../play/creator-stats.ts";
 import { type GameLinks, linkOpening } from "../play/game-links.ts";
 import type { GenexCredits } from "../play/credits.ts";
+import type { GameAnalytics } from "../play/game-analytics/read.ts";
 import type { PlayGallery, PlayWorld } from "../play/gallery.ts";
 import type { PlayManage } from "../play/manage.ts";
 import { followMovedLinks } from "../play/native-updates.ts";
@@ -24,6 +33,7 @@ import { onWebsite } from "../play/origins.ts";
 import type { PlayPeople } from "../play/people.ts";
 import { RemixRefusedError } from "../play/remix.ts";
 import type { PlayViewer } from "../play/viewer.ts";
+import { registerGameAnalyticsIpc } from "./game-analytics.ts";
 import type { IpcHandle } from "./registrar.ts";
 
 /**
@@ -32,6 +42,8 @@ import type { IpcHandle } from "./registrar.ts";
  */
 const MESSAGE = {
   badSlug: "not a game address",
+  badSurface: "not a place in Genex that leads to a game",
+  badShown: "not a yes or no for whether the page is shown",
   noWindow: "the window is not open",
   badAccount: "not a Genex account",
   badAction: "not a friend action",
@@ -60,6 +72,8 @@ export interface PlayIpcDeps {
   viewer(): PlayViewer | null;
   people: PlayPeople;
   creators: CreatorStats;
+  /** A game's analytics for its creator: reports, events, campaign links and funnels (`game-analytics.ts`). */
+  gameAnalytics: GameAnalytics;
   credits: GenexCredits;
   /** A published game's card menu: the owner's items, and the mobile flag and tags an admin sets. */
   manage: PlayManage;
@@ -79,6 +93,12 @@ export interface PlayIpcDeps {
   gameLinks: Pick<GameLinks, "take">;
   /** The library's game whose publish record has this link on Genex, for a `genex://create/<slug>` link. */
   localGame(slug: string): Promise<string | null>;
+  /**
+   * A game's page was read while it is what the window shows: whether it offers this computer an
+   * install, for genex.games (`install-reports.ts`). Told, never waited for; one that throws changes
+   * nothing.
+   */
+  pageRead?(game: PlayGameDetail): void;
 }
 
 /** Register Play's channels: the catalog's reads, Remix and the viewer. */
@@ -86,6 +106,7 @@ export function registerPlayIpc(handle: IpcHandle, deps: PlayIpcDeps): void {
   const { gallery, remix, viewer, people, creators, credits, web, share } = deps;
   registerPeopleIpc(handle, people);
   registerManageIpc(handle, deps);
+  registerGameAnalyticsIpc(handle, deps.gameAnalytics);
   // Share… hands the Mac's share menu a page of Play's website and nothing else.
   handle("studio:play.share", async (payload) => {
     const url = String(payload?.url ?? "");
@@ -126,21 +147,29 @@ export function registerPlayIpc(handle: IpcHandle, deps: PlayIpcDeps): void {
   handle("studio:play.online", (payload) => gallery.online(Array.isArray(payload?.slugs) ? payload.slugs : []));
   // Main finds each game's source from the catalog itself; the renderer names games only by slug.
   handle("studio:play.remix-ready", (payload) => deps.remixReady(Array.isArray(payload?.slugs) ? payload.slugs : []));
-  // The renderer names a game by its slug; main builds every address from it.
+  // The renderer names a game by its slug, and the place in the app that led to it (Other when it
+  // names none); main builds every address from them.
   handle("studio:play.open", async (payload) => {
     if (!isPlaySlug(payload?.slug)) throw new Error(MESSAGE.badSlug);
+    const surface = payload.surface === undefined ? GenexSurface.Other : payload.surface;
+    if (!isGenexSurface(surface)) throw new Error(MESSAGE.badSurface);
     // One copy of a game at a time: its native app being played comes forward instead.
     const live = deps.sessions();
     if (live?.playing(payload.slug)) return live.show(payload.slug);
     const shown = viewer();
     if (!shown) throw new Error(MESSAGE.noWindow);
-    shown.open(payload.slug, payload.title);
+    shown.open(payload.slug, payload.title, surface);
   });
   handle("studio:play.close", async () => viewer()?.close());
   handle("studio:play.take-game-link", async () => linkOpening(deps.gameLinks.take(), deps.localGame));
-  handle("studio:play.game", (payload) => {
+  // Only a read for the page on screen is told: a Recent cover's read is no page anyone saw.
+  handle("studio:play.game", async (payload) => {
     if (!isPlaySlug(payload?.slug)) throw new Error(MESSAGE.badSlug);
-    return gallery.game(payload.slug);
+    const shown = payload.shown === undefined ? false : payload.shown;
+    if (typeof shown !== "boolean") throw new Error(MESSAGE.badShown);
+    const game = await gallery.game(payload.slug);
+    if (shown) tellPageRead(deps, game);
+    return game;
   });
   // The bar names a control (and where it is, for a menu); the viewer acts only on one it knows.
   handle("studio:play.control", async (payload) => viewer()?.control(payload?.control, readPlayPoint(payload?.at)));
@@ -151,6 +180,15 @@ export function registerPlayIpc(handle: IpcHandle, deps: PlayIpcDeps): void {
   registerInstallsIpc(handle, deps);
   registerSessionsIpc(handle, deps.sessions);
   registerGameIpc(handle, deps);
+}
+
+/** Tell `deps` a game's page on screen was read; its telling never fails the read. */
+function tellPageRead(deps: Pick<PlayIpcDeps, "pageRead">, game: PlayGameDetail): void {
+  try {
+    deps.pageRead?.(game);
+  } catch {
+    // Best effort: the page is answered all the same.
+  }
 }
 
 /** A native game played in its own window: named by its slug, shown or quit by a named action. */
