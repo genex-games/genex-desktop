@@ -17,6 +17,16 @@ export const RENEWAL_WAIT_MS = 20 * SECOND_MS;
 export const RENEWAL_CAP_MS = 2 * MINUTE_MS;
 /** How long a sign-in a renewal left as it was waits before it is tried again: offline, the provider down. */
 export const RENEWAL_RETRY_MS = 5 * MINUTE_MS;
+/** How far past what the token has left the lead reaches, so the CLI counts it due however late it starts. */
+const RENEWAL_LEAD_MARGIN_SECONDS = 60;
+
+/**
+ * The lead, in seconds, that makes a CLI renew now a token with `leftMs` left: just past that,
+ * and never under `ownLeadSeconds`, the lead the CLI renews with by itself.
+ */
+export function renewalLeadSeconds(leftMs: number, ownLeadSeconds: number): number {
+  return Math.max(ownLeadSeconds, Math.ceil(leftMs / SECOND_MS) + RENEWAL_LEAD_MARGIN_SECONDS);
+}
 
 /** Waits for `work`, or `ms` if that comes first; the timer goes either way. */
 export async function within(work: Promise<void>, ms: number): Promise<void> {

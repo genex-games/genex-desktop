@@ -10,18 +10,23 @@
  * less than that left and prints the token, which goes nowhere (stdout is closed to it). No
  * session opens, no extension loads and no model is called.
  *
- * Of the sign-in file Genex reads only which providers hold a subscription sign-in and when each
- * expires; never a token. Windows needs none of this: a session there runs on Pi's own folder and
+ * Of the sign-in file Genex uses only which providers hold a subscription sign-in and when each
+ * expires; a token is never taken from it, kept or passed on. Windows needs none of this: a session there runs on Pi's own folder and
  * its renewals are the person's. Read from Pi 1.5.2 (`dist/main.js` `runAuthCommand`,
  * `dist/cli/credential-print.js`, `pi-ai` `dist/auth/resolve.js`).
  */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { meetsMinimumVersion } from "./codex-dynamic-tools.ts";
-import { RENEWAL_CAP_MS, RENEWAL_WAIT_MS, SESSION_SIGN_IN_HOLD_MS, within } from "./sign-in-renewal.ts";
+import {
+  RENEWAL_CAP_MS,
+  RENEWAL_WAIT_MS,
+  renewalLeadSeconds,
+  SESSION_SIGN_IN_HOLD_MS,
+  within,
+} from "./sign-in-renewal.ts";
 import { spawnCommand } from "../command-launch.ts";
 import { stopChild } from "../process-tree.ts";
-import { SECOND_MS } from "../../shared/duration.ts";
 
 /** Pi's sign-in file in its folder. */
 export const PI_SIGN_IN = "auth.json";
@@ -31,8 +36,6 @@ const SUBSCRIPTION = "oauth";
 const PI_RENEWAL_SINCE = "0.83.0";
 /** Pi's own lead: it renews a sign-in five minutes before it expires, whatever it is asked. */
 const PI_OWN_LEAD_SECONDS = 300;
-/** How far past what the token has left the asked lead reaches, so Pi counts it due however late it starts. */
-const RENEWAL_LEAD_MARGIN_SECONDS = 60;
 /** A provider's id as Pi's own providers spell one: nothing Pi could read as an option. */
 const PROVIDER_ID = /^[A-Za-z0-9][\w.-]*$/;
 
@@ -61,7 +64,8 @@ function signInEntries(text: string): Entries | null {
 
 /** When a provider's subscription sign-in expires; null for a stored key, or an entry Pi could not renew. */
 function subscriptionExpiry(entry: unknown): number | null {
-  if (!isEntries(entry) || entry.type !== SUBSCRIPTION || typeof entry.refresh !== "string") return null;
+  const renewable = isEntries(entry) && entry.type === SUBSCRIPTION && typeof entry.refresh === "string";
+  if (!renewable) return null;
   const expires = entry.expires;
   return typeof expires === "number" && Number.isFinite(expires) ? expires : null;
 }
@@ -79,22 +83,23 @@ export function piModelProvider(model: string | undefined): string | undefined {
 }
 
 /**
- * The renewal Pi's sign-in needs before a session copies it. `provider` is the one the session's
- * model runs on; with none named, the subscription sign-in that expires first counts. It is due
- * with less than `SESSION_SIGN_IN_HOLD_MS` left, or less than half a token's life where `life`
- * knows one (Pi's file does not say when a token was minted, so a life is what a renewal showed):
- * the lead that makes it due then stays short of a new token's life. Null when it holds, when
- * there is no subscription sign-in to renew, and for a file that is not Pi's sign-in.
+ * The renewals Pi's sign-in needs before a session copies it, the first to expire first.
+ * `provider` is the one the session's model runs on; with none named, every subscription sign-in
+ * counts, since Pi picks the model. One is due with less than `SESSION_SIGN_IN_HOLD_MS` left, or
+ * less than half a token's life where `life` knows one (Pi's file does not say when a token was
+ * minted, so a life is what a renewal showed): the lead that makes it due then stays short of a
+ * new token's life. None when each holds, when there is no subscription sign-in to renew, and for
+ * a file that is not Pi's sign-in.
  */
-export function piSignInRenewal(
+export function piSignInRenewals(
   text: string,
   at: { now: number; provider?: string; life?: (provider: string) => number | undefined },
-): PiSignInRenewal | null {
+): PiSignInRenewal[] {
   const entries = signInEntries(text);
-  if (!entries) return null;
+  if (!entries) return [];
   const named = at.provider;
   const providers = named === undefined ? Object.keys(entries) : [named].filter((id) => Object.hasOwn(entries, id));
-  const due = providers
+  return providers
     .flatMap((provider) => {
       const expires = PROVIDER_ID.test(provider) ? subscriptionExpiry(entries[provider]) : null;
       if (expires === null) return [];
@@ -103,10 +108,12 @@ export function piSignInRenewal(
       const left = expires - at.now;
       return left < hold ? [{ provider, expires, left }] : [];
     })
-    .sort((a, b) => a.left - b.left)[0];
-  if (!due) return null;
-  const minExpirySeconds = Math.max(PI_OWN_LEAD_SECONDS, Math.ceil(due.left / SECOND_MS) + RENEWAL_LEAD_MARGIN_SECONDS);
-  return { provider: due.provider, expires: due.expires, minExpirySeconds };
+    .sort((a, b) => a.left - b.left)
+    .map(({ provider, expires, left }) => ({
+      provider,
+      expires,
+      minExpirySeconds: renewalLeadSeconds(left, PI_OWN_LEAD_SECONDS),
+    }));
 }
 
 /** Pi's sign-in file in its folder `agent` as text, or null when there is none to read. */

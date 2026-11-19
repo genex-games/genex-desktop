@@ -16,7 +16,13 @@ import { createInterface } from "node:readline";
 import { setTimeout as sleep } from "node:timers/promises";
 import { picturesNote } from "./grok-prompts.ts";
 import { CatalogError } from "./model-catalog.ts";
-import { RENEWAL_CAP_MS, RENEWAL_WAIT_MS, SESSION_SIGN_IN_HOLD_MS, within } from "./sign-in-renewal.ts";
+import {
+  RENEWAL_CAP_MS,
+  RENEWAL_WAIT_MS,
+  renewalLeadSeconds,
+  SESSION_SIGN_IN_HOLD_MS,
+  within,
+} from "./sign-in-renewal.ts";
 import { ModelContextSource, type EngineModel } from "./types.ts";
 import { spawnCommand } from "../command-launch.ts";
 import { stopChild } from "../process-tree.ts";
@@ -53,8 +59,6 @@ const CREATE_TIME = "create_time";
 const EARLY_RENEWAL_VARIABLE = "GROK_AUTH_EARLY_INVALIDATION_SECS";
 /** Grok's own lead: it renews a sign-in five minutes before it expires. */
 const GROK_EARLY_RENEWAL_SECONDS = 300;
-/** How far past the token's expiry the lead reaches, so Grok counts it due however late it starts. */
-const RENEWAL_LEAD_MARGIN_SECONDS = 60;
 /** How often the sign-in is looked at while Grok renews it. */
 const RENEWAL_POLL_MS = 250;
 /** How long Grok gets to exit on its own once its input closes, before it is stopped. */
@@ -470,11 +474,7 @@ export function signInRenewal(text: string, now: number): SignInRenewal | null {
     })
     .sort((a, b) => a.left - b.left)[0];
   if (!due) return null;
-  const leadSeconds = Math.max(
-    GROK_EARLY_RENEWAL_SECONDS,
-    Math.ceil(due.left / SECOND_MS) + RENEWAL_LEAD_MARGIN_SECONDS,
-  );
-  return { scope: due.scope, leadSeconds };
+  return { scope: due.scope, leadSeconds: renewalLeadSeconds(due.left, GROK_EARLY_RENEWAL_SECONDS) };
 }
 
 /** How long a renewable account's token has left when it is due for renewal; null when it holds or can't be renewed. */

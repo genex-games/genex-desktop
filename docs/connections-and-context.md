@@ -235,7 +235,7 @@ signed in the picker starts OpenCode's GPT models with the ones Codex lists (`ru
 
 **Pi** ([pi.ts](../src/substrate/engines/pi.ts)) is the Pi coding agent (`pi --mode json`), not the
 `pi-ai` HTTP client. Sign in and `--list-models` run with `--no-extensions --offline`; of Pi's
-sign-in studio reads only which providers hold a subscription sign-in and when each expires, never a
+sign-in studio uses only which providers hold a subscription sign-in and when each expires, never a
 token (a session gets a copy of the file, below). Ready once `--list-models` lists
 a model; a Pi whose help lacks an option a session passes shows "Update needed" with Pi's guide
 (Genex runs `pi update` only for a Pi that is ready), and one that cannot start (no Node for its
@@ -271,10 +271,14 @@ system gives it that (`piWrites`):
   half a token's life, once a renewal showed how long one lasts), the person's own Pi renews it on
   the host ([pi-sign-in.ts](../src/substrate/engines/pi-sign-in.ts): `pi auth print-bearer-token
   --provider <id> --min-expiry <n>s`, the lead reaching just past that expiry; Pi 0.83.0 and later).
-  Pi writes its own file under its own lock and prints the token, which Genex never reads. A session
-  waits 20 s at most; Pi gets two minutes and is not stopped before, and a sign-in a renewal left
-  unchanged waits five minutes before another try. A session that outlasts its copy's sign-in still
-  renews it in the copy alone, and a later session then says to sign in to Pi again. And a
+  With no model named Pi picks one, so every subscription sign-in that is due is renewed. Pi writes
+  its own file under its own lock and prints the token, which Genex never reads. A session waits
+  20 s at most; Pi gets two minutes and is not stopped before, and a sign-in a renewal left
+  unchanged waits five minutes before another try. Before a renewal has shown how long a provider's
+  tokens last, one that lasts under two hours is renewed once at the first session. A session that
+  outlasts its copy's sign-in still renews it in the copy alone, and a later session then says to
+  sign in to Pi again; where another session's start had the person's Pi renew meanwhile, the
+  provider refuses the long session's own renewal and it ends with Pi's sign-in error. And a
   session's lock is not the person's Pi's: a session reads settings the person's Pi may be writing
   at that moment. Linux denies a game's `.pi` only when it exists (`gameSettingsDenyWrites`).
 - **Windows** has no link a session's user can read through, runs a session as the sandbox's own

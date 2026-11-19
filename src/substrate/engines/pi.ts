@@ -30,7 +30,7 @@ import {
   piModelProvider,
   piRenewsSignIn,
   piSignInExpiry,
-  piSignInRenewal,
+  piSignInRenewals,
   readPiSignIn,
   renewPiSignIn,
 } from "./pi-sign-in.ts";
@@ -149,9 +149,10 @@ export interface PiEngineOptions {
   home?: string;
   /** The platform the sessions run on; this computer's when not given. */
   platform?: NodeJS.Platform;
+  /** The time now, in milliseconds; the computer's clock when not given. */
   clock?: () => number;
-  /** Test seam: the person's own Pi renewing its sign-in (`renewPiSignIn`). */
-  renewSignIn?: (renewal: PiSignInRenewal) => Promise<void>;
+  /** Test seam: the person's own Pi at `binary` renewing a sign-in (`renewPiSignIn`). */
+  renewSignIn?: (binary: string, renewal: PiSignInRenewal) => Promise<void>;
 }
 
 interface PiRun {
@@ -232,7 +233,7 @@ export class PiEngine implements Engine {
   readonly #home: string;
   readonly #platform: NodeJS.Platform;
   readonly #clock: () => number;
-  readonly #renewSignIn: ((renewal: PiSignInRenewal) => Promise<void>) | undefined;
+  readonly #renewSignIn: ((binary: string, renewal: PiSignInRenewal) => Promise<void>) | undefined;
   /** The renewals of the person's sign-ins under way, by provider: every session starting meanwhile waits on its own. */
   readonly #renewals = new Map<string, Promise<void>>();
   /** A provider's sign-in a renewal left as it was, and when: not tried again until it changes or a while passed. */
@@ -491,17 +492,26 @@ export class PiEngine implements Engine {
 
   /**
    * Has the person's own Pi renew the sign-in `model` runs on when it would not outlast a session
-   * (`piSignInRenewal`): what a session renews stays in its copy. Sessions starting meanwhile wait
-   * on the same renewal; a sign-in a renewal left as it was waits `RENEWAL_RETRY_MS` before another try.
+   * (`piSignInRenewals`): what a session renews stays in its copy. With no model named Pi picks
+   * one, so every sign-in that is due is renewed. A sign-in a renewal left as it was waits
+   * `RENEWAL_RETRY_MS` before another try, and holds up no other.
    */
   async #renewDue(agent: string, model: string | undefined): Promise<void> {
     const now = this.#clock();
-    const renewal = piSignInRenewal((await readPiSignIn(agent)) ?? "", {
+    const due = piSignInRenewals((await readPiSignIn(agent)) ?? "", {
       now,
       provider: piModelProvider(model),
       life: (provider) => this.#tokenLives.get(provider),
     });
-    if (!renewal || this.#waitsToRetry(renewal, now)) return;
+    const tried = due.filter((renewal) => !this.#waitsToRetry(renewal, now));
+    await Promise.all(tried.map((renewal) => this.#renewed(agent, renewal, now)));
+  }
+
+  /**
+   * One provider's renewal, which every session starting meanwhile waits on. What it left is
+   * kept: a sign-in it did not change, or how long the new token lasts.
+   */
+  #renewed(agent: string, renewal: PiSignInRenewal, now: number): Promise<void> {
     const { provider, expires } = renewal;
     const under = this.#renewals.get(provider);
     if (under) return under;
@@ -518,7 +528,7 @@ export class PiEngine implements Engine {
         this.#tokenLives.set(provider, after - this.#clock());
       });
     this.#renewals.set(provider, renewed);
-    await renewed;
+    return renewed;
   }
 
   /** Is this the sign-in a renewal left as it was, too lately to try again? */
@@ -529,9 +539,9 @@ export class PiEngine implements Engine {
 
   /** The person's own Pi, on the host with the model listing's environment, renewing a sign-in. */
   async #renew(renewal: PiSignInRenewal): Promise<void> {
-    if (this.#renewSignIn) return this.#renewSignIn(renewal);
     const cli = await this.#resolveCli();
     if (!cli.path || !piRenewsSignIn(cli.version)) return;
+    if (this.#renewSignIn) return this.#renewSignIn(cli.path, renewal);
     await mkdir(this.#scratchRoot, { recursive: true });
     const env = childEnv(this.#env, { base: "contractor", vendor: "pi" });
     await renewPiSignIn(cli.path, { env, cwd: this.#scratchRoot, renewal });
