@@ -10,7 +10,7 @@
  */
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, realpath } from "node:fs/promises";
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -21,6 +21,7 @@ import { editorRuns, endEditor } from "../../src/plugins/unity/editor-life.ts";
 import { createEditorMcp, EditorTool } from "../../src/plugins/unity/editor-mcp.ts";
 import { findEditors, isUnity6 } from "../../src/plugins/unity/editors.ts";
 import { editorStatus, PIPELINE_PACKAGE, PIPELINE_VERSION, readDescriptor } from "../../src/plugins/unity/pipeline.ts";
+import { ENGINE_PLAY_VIEW, EnginePlayTool } from "../../src/shared/engine-play.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import { manifestOf, withProject } from "../helpers/unity-backend.ts";
 import { pluginContext } from "../helpers/unity-editor-stand-in.ts";
@@ -50,6 +51,8 @@ async function liveGame() {
   const backend = createUnityBackend(deps);
   const context = () => pluginContext(storage, { project: "live", directory: game });
   const tool = async (name: string) => String(await backend.tool?.(name, {}, context()));
+  /** One of the computer tool's calls, whose answer is data. */
+  const play = async (name: string, args: Record<string, unknown> = {}) => backend.tool?.(name, args, context());
   const root = path.join(game, "unity");
   const bridge = createEditorMcp(async () => ({ root, game }), deps.pipeline);
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
@@ -67,7 +70,7 @@ async function liveGame() {
     await endEditor(root, deps).catch(() => false);
     await bridge.close();
   };
-  return { base, game, root, deps, tool, run, listed, cleanUp };
+  return { base, game, root, deps, tool, play, run, listed, cleanUp };
 }
 
 type Live = Awaited<ReturnType<typeof liveGame>>;
@@ -104,6 +107,12 @@ async function projectOnPipeline08(live: Live, version: string): Promise<void> {
   // Unity takes a folder for a project only once it holds Assets.
   await mkdir(path.join(live.root, "Assets"), { recursive: true });
 }
+
+/** Player settings that only turn Unity's Input System on, so no dialog asks to; Unity fills in the rest. */
+const INPUT_SYSTEM_SETTINGS =
+  "%YAML 1.1\n%TAG !u! tag:unity3d.com,2011:\n--- !u!129 &1\nPlayerSettings:\n  activeInputHandler: 2\n";
+const INPUT_SYSTEM_PACKAGE = "com.unity.inputsystem";
+const INPUT_SYSTEM_VERSION = "1.14.0";
 
 describe("the Unity plugin on this computer's Unity", { skip: !LIVE }, () => {
   const each = { timeout: LIVE_TIMEOUT_MS };
@@ -212,6 +221,38 @@ describe("the Unity plugin on this computer's Unity", { skip: !LIVE }, () => {
       assert.equal(await waitForEditor(live.root, live.deps.pipeline, { waitMs: EDITOR_WAIT_MS }), "ready", opened);
       assert.equal((await readDescriptor(live.root))?.grouped, true);
       assert.ok((await live.listed()).includes("scene save"));
+    } finally {
+      await live.cleanUp();
+    }
+  });
+
+  it("plays the game through the computer tool in an editor on the current package", each, async () => {
+    const live = await liveGame();
+    try {
+      const editor = await newestUnity6(live);
+      await withProject(live.game, editor.version, {
+        [PIPELINE_PACKAGE]: PIPELINE_VERSION,
+        [INPUT_SYSTEM_PACKAGE]: INPUT_SYSTEM_VERSION,
+      });
+      await mkdir(path.join(live.root, "Assets"), { recursive: true });
+      await writeFile(path.join(live.root, "ProjectSettings", "ProjectSettings.asset"), INPUT_SYSTEM_SETTINGS);
+      const opened = await live.tool(UnityTool.OpenEditor);
+      assert.equal(await waitForEditor(live.root, live.deps.pipeline, { waitMs: EDITOR_WAIT_MS }), "ready", opened);
+
+      const view = await live.play(EnginePlayTool.Open, { fresh: true });
+      assert.deepEqual(view, { ...ENGINE_PLAY_VIEW, joined: false });
+      const before = (await live.play(EnginePlayTool.State)) as { gameSeconds: number };
+      const held = (await live.play(EnginePlayTool.Input, { keys: "KeyW", seconds: 0.5 })) as { held: string[] };
+      assert.equal(held.held.length, 1, JSON.stringify(held));
+      const after = (await live.play(EnginePlayTool.State)) as { gameSeconds: number };
+      assert.ok(after.gameSeconds > before.gameSeconds, "the game's clock ran while the key was held");
+      const shot = (await live.play(EnginePlayTool.Shot)) as { png: string; width: number };
+      assert.ok(shot.png.startsWith(PNG_SIGNATURE));
+      assert.equal(shot.width, ENGINE_PLAY_VIEW.width);
+      await live.play(EnginePlayTool.Pause, { paused: true });
+      await playModeIs(live, "paused");
+      assert.deepEqual(await live.play(EnginePlayTool.Close), { closed: true });
+      await playModeIs(live, "stopped");
     } finally {
       await live.cleanUp();
     }
