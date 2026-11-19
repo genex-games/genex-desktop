@@ -52,7 +52,8 @@ async function liveGame() {
   const context = () => pluginContext(storage, { project: "live", directory: game });
   const tool = async (name: string) => String(await backend.tool?.(name, {}, context()));
   /** One of the computer tool's calls, whose answer is data. */
-  const play = async (name: string, args: Record<string, unknown> = {}) => backend.tool?.(name, args, context());
+  const play = async (name: string, args: Record<string, string | number | boolean> = {}) =>
+    backend.tool?.(name, args, context());
   const root = path.join(game, "unity");
   const bridge = createEditorMcp(async () => ({ root, game }), deps.pipeline);
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
