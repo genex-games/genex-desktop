@@ -15,7 +15,7 @@ import {
   type TerminalSession,
 } from "../../src/shared/terminal.ts";
 import { commandShell, terminalShell } from "../../src/main/terminal-shell.ts";
-import { isPasteChord } from "../../src/renderer/panels/terminal-events.ts";
+import { isCopyChord, isPasteChord } from "../../src/renderer/panels/terminal-events.ts";
 
 describe("the shell a game's terminal opens", () => {
   const windowsEnv = {
@@ -415,5 +415,46 @@ describe("a paste in the terminal", () => {
     }
     assert.equal(isPasteChord(key("KeyV", { ctrlKey: true }), "darwin"), false, "on a Mac Ctrl+V stays the terminal's");
     assert.equal(isPasteChord(key("KeyV", { metaKey: true }), "darwin"), false, "Cmd+V is the menu's paste");
+  });
+});
+
+describe("a copy in the terminal", () => {
+  const key = (
+    code: string,
+    mods: Partial<Record<"metaKey" | "ctrlKey" | "altKey" | "shiftKey", boolean>> = {},
+    typed = code.replace(/^Key/, "").toLowerCase(),
+  ) => ({ metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, code, key: typed, ...mods });
+
+  it("is Ctrl+C over a selection off a Mac, as in Windows Terminal, so a sign-in code can be copied", () => {
+    for (const platform of ["win32", "linux"]) {
+      assert.equal(
+        isCopyChord(key("KeyC", { ctrlKey: true }), platform, true),
+        true,
+        `${platform}: Ctrl+C copies a selection`,
+      );
+      assert.equal(
+        isCopyChord(key("KeyC", { ctrlKey: true }), platform, false),
+        false,
+        `${platform}: Ctrl+C with nothing selected still interrupts`,
+      );
+      assert.equal(isCopyChord(key("KeyC", { ctrlKey: true, shiftKey: true }), platform, true), true);
+      assert.equal(isCopyChord(key("KeyC", { ctrlKey: true, altKey: true }), platform, true), false);
+      assert.equal(isCopyChord(key("KeyC"), platform, true), false, `${platform}: a plain c is typed`);
+      assert.equal(
+        isCopyChord(key("KeyC", { ctrlKey: true }, "с"), platform, true),
+        true,
+        `${platform}: Russian layout`,
+      );
+      assert.equal(isCopyChord(key("KeyI", { ctrlKey: true }, "c"), platform, true), true, `${platform}: Dvorak's C`);
+    }
+  });
+
+  it("leaves Ctrl+C to the terminal on a Mac, where Cmd+C is the menu's copy", () => {
+    assert.equal(isCopyChord(key("KeyC", { ctrlKey: true }), "darwin", true), false);
+    assert.equal(
+      isCopyChord(key("KeyC", { ctrlKey: true, shiftKey: true }), "darwin", true),
+      true,
+      "Ctrl+Shift+C still copies",
+    );
   });
 });
