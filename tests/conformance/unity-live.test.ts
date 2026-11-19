@@ -113,7 +113,8 @@ async function projectOnPipeline08(live: Live, version: string): Promise<void> {
 const INPUT_SYSTEM_SETTINGS =
   "%YAML 1.1\n%TAG !u! tag:unity3d.com,2011:\n--- !u!129 &1\nPlayerSettings:\n  activeInputHandler: 2\n";
 const INPUT_SYSTEM_PACKAGE = "com.unity.inputsystem";
-const INPUT_SYSTEM_VERSION = "1.14.0";
+/** The version Unity 6.6 ships; 1.14 does not compile there. An older Unity 6 names its own in STUDIO_UNITY_INPUT_SYSTEM. */
+const INPUT_SYSTEM_VERSION = process.env.STUDIO_UNITY_INPUT_SYSTEM ?? "1.20.0";
 
 describe("the Unity plugin on this computer's Unity", { skip: !LIVE }, () => {
   const each = { timeout: LIVE_TIMEOUT_MS };
