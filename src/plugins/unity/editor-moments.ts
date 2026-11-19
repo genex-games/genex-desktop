@@ -28,6 +28,7 @@ import { editorCommand, editorRuns, endEditor, isPlaying, openScenes, saveWork, 
 import { runEnded } from "./editor-idle.ts";
 import { type OpenDeps, Opened, type Opening, openProject, usable } from "./editor-open.ts";
 import { editorStatus, PipelineProblem } from "./pipeline.ts";
+import { EditorCommand } from "./pipeline-commands.ts";
 import type { UnityProject } from "./project-folder.ts";
 
 /** How long a main thread may run nothing before a health check fails: longer than any import a game's edits cause. */
@@ -38,7 +39,7 @@ export const AWAY_AFTER_MS = 5 * MINUTE_MS;
 const REOPEN_WAIT_MS = 45 * SECOND_MS;
 /** The still a checkpoint and the reviewer get. */
 const STILL = { source: "camera", width: 1280, height: 720 } as const;
-const CAPTURE = "capture_game_view";
+const CAPTURE = EditorCommand.Capture;
 /** The folders in the plugin's storage holding each game's record of an editor closed for a restore, and of a stall. */
 const Records = { Restore: "restore", Health: "health" } as const;
 /** A game id as Genex names a game's record: a plain folder name, never a path. */

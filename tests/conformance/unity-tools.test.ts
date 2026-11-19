@@ -227,6 +227,49 @@ describe("open-editor", () => {
     assert.deepEqual(commandsSent(seen), ["set_autotick"]);
   });
 
+  it("moves a project from the Pipeline version Genex asked for before to the current one as it opens it", async () => {
+    const { call, game, launches } = await backendOn(["6000.6.0f1"], [ready(), look(), ok()]);
+    const root = await withProject(game, "6000.6.0f1", {
+      "com.unity.pipeline": "0.8.0-exp.1",
+      "com.unity.ugui": "2.6.0",
+    });
+    await call(UnityTool.OpenEditor);
+    assert.equal(launches.length, 1);
+    assert.deepEqual((await manifestOf(root)).dependencies, {
+      "com.unity.pipeline": PIPELINE_VERSION,
+      "com.unity.ugui": "2.6.0",
+    });
+  });
+
+  it("leaves the Pipeline version alone when the person chose it, or an editor already has the project open", async () => {
+    for (const chosen of ["0.9.0-exp.1", "0.6.0-exp.1", "2.0.0", "file:../pipeline"]) {
+      const { call, game } = await backendOn(["6000.6.0f1"], [ready(), look(), ok()]);
+      const root = await withProject(game, "6000.6.0f1", { "com.unity.pipeline": chosen });
+      await call(UnityTool.OpenEditor);
+      assert.equal((await manifestOf(root)).dependencies["com.unity.pipeline"], chosen, chosen);
+    }
+    const open = await backendOn(["6000.6.0f1"], [ready(), look(), ok()]);
+    const root = await withProject(open.game, "6000.6.0f1", { "com.unity.pipeline": "0.8.0-exp.1" });
+    await open.openIn(root);
+    assert.match(String(await open.call(UnityTool.OpenEditor)), /already open/);
+    assert.equal((await manifestOf(root)).dependencies["com.unity.pipeline"], "0.8.0-exp.1");
+  });
+
+  it("still takes back a setup whose package it moved to the current version", async () => {
+    const { call, game, storage } = await backendOn(["6000.6.0f1"], [ready(), look(), ok()]);
+    const root = await withProject(game, "6000.6.0f1", { "com.unity.pipeline": "0.8.0-exp.1" });
+    // The record a setup by the Genex that asked for 0.8 left.
+    await mkdir(path.join(storage, "setup"), { recursive: true });
+    await writeFile(
+      path.join(storage, "setup", "lantern.json"),
+      JSON.stringify({ root, package: "com.unity.pipeline", version: "0.8.0-exp.1", at: NOW().toISOString() }),
+    );
+    await call(UnityTool.OpenEditor);
+    assert.equal((await manifestOf(root)).dependencies["com.unity.pipeline"], PIPELINE_VERSION);
+    await call(UnityTool.UndoSetup);
+    assert.deepEqual((await manifestOf(root)).dependencies, {});
+  });
+
   it("says the project is open already when its editor answers", async () => {
     const { call, game, launches, openIn } = await backendOn(["6000.3.10f1"], [ready(), look(), ok()]);
     await openIn(await withProject(game, "6000.3.10f1", { "com.unity.pipeline": PIPELINE_VERSION }));

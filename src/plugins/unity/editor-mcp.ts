@@ -37,6 +37,7 @@ import {
   runCommand,
   systemPipelineDeps,
 } from "./pipeline.ts";
+import { canonicalCommand, EditorCommand, listedScenes } from "./pipeline-commands.ts";
 
 const BRIDGE_VERSION = "0.1.0";
 /** The most of a command's result handed to the agent as text. */
@@ -48,16 +49,20 @@ const MAX_IMAGE_DEPTH = 6;
 const PNG = "png";
 const PNG_MIME = "image/png";
 
-/** The Pipeline commands the bridge itself knows by name. Wire values: Pipeline's own. */
+/** The Pipeline commands the bridge itself knows, whichever way the editor that lists them spells them. */
 const Command = {
-  Batch: "batch",
-  SaveAll: "save_all",
-  SaveScene: "save_scene",
-  ListOpenScenes: "list_open_scenes",
-  Play: "editor_play",
-  Stop: "editor_stop",
-  Capture: "capture_game_view",
+  Batch: EditorCommand.Batch,
+  SaveAll: EditorCommand.SaveAll,
+  SaveScene: EditorCommand.SaveScene,
+  ListOpenScenes: EditorCommand.ListOpenScenes,
+  Play: EditorCommand.Play,
+  Stop: EditorCommand.Stop,
+  Capture: EditorCommand.Capture,
 } as const;
+
+/** Whether `name`, as an agent took it from the editor's catalogue, is the command `known`. */
+const names = (name: unknown, known: EditorCommand): boolean =>
+  typeof name === "string" && canonicalCommand(name) === known;
 
 /** The bridge's tools, by the names agents call. Wire values: never rename one. */
 export const EditorTool = {
@@ -204,7 +209,7 @@ type Sent = { command: string; parameters: Record<string, unknown> };
 
 /** The commands a call runs: its own, and for a batch each operation's. */
 function commandsOf(sent: Sent): Sent[] {
-  if (sent.command !== Command.Batch) return [sent];
+  if (!names(sent.command, Command.Batch)) return [sent];
   const operations = Array.isArray(sent.parameters.operations) ? sent.parameters.operations : [];
   return operations.filter(isJsonObject).map((operation) => ({
     command: String(operation.command),
@@ -219,7 +224,7 @@ function sizedCapture(parameters: Record<string, unknown>, size: Record<string, 
 
 /** One operation of a batch, its capture sized as {@link sizedCaptures} says. */
 function sizedOperation(operation: unknown, size: Record<string, number>): unknown {
-  if (!isJsonObject(operation) || operation.command !== Command.Capture) return operation;
+  if (!isJsonObject(operation) || !names(operation.command, Command.Capture)) return operation;
   const params = isJsonObject(operation.params) ? operation.params : {};
   return { ...operation, params: sizedCapture(params, size) };
 }
@@ -231,20 +236,20 @@ function sizedOperation(operation: unknown, size: Record<string, number>): unkno
  * the agent's transcript for the rest of its session. A size the agent names is kept.
  */
 function sizedCaptures(sent: Sent, catalogue: readonly PipelineCommand[]): Sent {
-  const capture = catalogue.find((command) => command.name === Command.Capture);
+  const capture = catalogue.find((command) => names(command.name, Command.Capture));
   const takes = new Set(capture?.parameters.map((parameter) => parameter.name));
   const size = Object.fromEntries(Object.entries(ENGINE_PLAY_VIEW).filter(([name]) => takes.has(name)));
   if (Object.keys(size).length === 0) return sent;
-  if (sent.command === Command.Capture) return { ...sent, parameters: sizedCapture(sent.parameters, size) };
+  if (names(sent.command, Command.Capture)) return { ...sent, parameters: sizedCapture(sent.parameters, size) };
   const operations = sent.parameters.operations;
-  if (sent.command !== Command.Batch || !Array.isArray(operations)) return sent;
+  if (!names(sent.command, Command.Batch) || !Array.isArray(operations)) return sent;
   const sized = operations.map((operation) => sizedOperation(operation, size));
   return { ...sent, parameters: { ...sent.parameters, operations: sized } };
 }
 
 /** Whether a command saves a scene under the name it already has, which an untitled scene has none of. */
 const savesUnnamed = ({ command, parameters }: Sent): boolean =>
-  command === Command.SaveAll || (command === Command.SaveScene && typeof parameters.path !== "string");
+  names(command, Command.SaveAll) || (names(command, Command.SaveScene) && typeof parameters.path !== "string");
 
 /**
  * Why a save must not be sent, if it must not: an open scene with no name would make Unity ask for
@@ -255,15 +260,14 @@ async function unnamedSave(call: Call, sent: Sent): Promise<ToolResult | undefin
   const listing = { command: Command.ListOpenScenes, parameters: {} };
   const answer = await runCommand(call.at.root, listing, call.deps, { signal: call.signal });
   if (!answer.ok) return problemResult(answer, sent.command);
-  const scenes = isJsonObject(answer.result) && Array.isArray(answer.result.scenes) ? answer.result.scenes : [];
-  const untitled = scenes.some((scene) => isJsonObject(scene) && scene.path === "");
+  const untitled = listedScenes(answer.result).some((scene) => scene.path === "");
   return untitled ? errorResult(MESSAGE.UntitledScene) : undefined;
 }
 
 /** The last play or stop a call runs, alone or in a batch: what the editor's Play mode ends up as. */
 const lastPlayChange = (sent: Sent): string | undefined =>
   commandsOf(sent)
-    .map(({ command }) => command)
+    .map(({ command }) => canonicalCommand(command))
     .filter((command) => command === Command.Play || command === Command.Stop)
     .at(-1);
 
@@ -273,7 +277,7 @@ const lastPlayChange = (sent: Sent): string | undefined =>
  * never started is forgotten by the lock's probe once it sees the editor stopped.
  */
 async function markPlay(call: Call, sent: Sent): Promise<void> {
-  if (commandsOf(sent).some(({ command }) => command === Command.Play))
+  if (commandsOf(sent).some(({ command }) => names(command, Command.Play)))
     await call.agentPlay.started().catch(() => undefined);
 }
 
