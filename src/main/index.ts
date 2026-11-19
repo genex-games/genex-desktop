@@ -781,45 +781,50 @@ app.on("accessibility-support-changed", (_event, enabled) => {
 let liveThreadStatus: ThreadStatusMap = {};
 /** An eval-lane launch's view of the core's UI events (it digests the game its chat seeds); null otherwise. */
 let evalLaneUiTap: ((event: UiEvent) => void) | null = null;
-const { codexLogin, claudeLogin, openCodeLogin, grokLogin, cursorLogin, antigravityLogin } = createLoginControllers({
-  terminals,
-  openExternal: (url) => shell.openExternal(url),
-  subscription,
-  pushUiEvent,
-  // Each step a sign-in reaches, so a log a person sends says where a sign-in that hung stopped.
-  log: (line) => studioLog.write("main", line),
-  onOpenCodeSignedIn: async () => {
-    if (core?.engines.has(EngineId.OpenCode)) await core.engines.get(EngineId.OpenCode).refreshModels?.(true);
-    pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.OpenCode } });
-  },
-  onGrokSignedIn: async () => {
-    if (core?.engines.has(EngineId.Grok)) await core.engines.get(EngineId.Grok).refreshModels?.(true);
-    pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.Grok } });
-  },
-  onCursorSignedIn: async () => {
-    if (core?.engines.has(EngineId.Cursor)) await core.engines.get(EngineId.Cursor).refreshModels?.(true);
-    pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.Cursor } });
-  },
-  antigravityScratch: () => (core ? path.join(core.layout.scratch, EngineId.Antigravity) : undefined),
-  onAntigravitySignedIn: async () => {
-    // A check that fails (offline, a CLI that hangs) still tells the row to read the engine again.
-    if (core?.engines.has(EngineId.Antigravity))
-      await core.engines
-        .get(EngineId.Antigravity)
-        .refreshModels?.(true)
-        .catch(() => {});
-    pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.Antigravity } });
-  },
-  showCodexState: (state) => {
-    preview?.setOccluded(state.visible);
-    const page = livePage();
-    if (page) pushToRenderer(page, "studio:codex-login", state);
-  },
-  showClaudeState: (state) => {
-    const page = livePage();
-    if (page) pushToRenderer(page, "studio:claude-login", state);
-  },
-});
+const { codexLogin, claudeLogin, openCodeLogin, piLogin, grokLogin, cursorLogin, antigravityLogin } =
+  createLoginControllers({
+    terminals,
+    openExternal: (url) => shell.openExternal(url),
+    subscription,
+    pushUiEvent,
+    // Each step a sign-in reaches, so a log a person sends says where a sign-in that hung stopped.
+    log: (line) => studioLog.write("main", line),
+    onOpenCodeSignedIn: async () => {
+      if (core?.engines.has(EngineId.OpenCode)) await core.engines.get(EngineId.OpenCode).refreshModels?.(true);
+      pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.OpenCode } });
+    },
+    onPiSignedIn: async () => {
+      if (core?.engines.has(EngineId.Pi)) await core.engines.get(EngineId.Pi).refreshModels?.(true);
+      pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.Pi } });
+    },
+    onGrokSignedIn: async () => {
+      if (core?.engines.has(EngineId.Grok)) await core.engines.get(EngineId.Grok).refreshModels?.(true);
+      pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.Grok } });
+    },
+    onCursorSignedIn: async () => {
+      if (core?.engines.has(EngineId.Cursor)) await core.engines.get(EngineId.Cursor).refreshModels?.(true);
+      pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.Cursor } });
+    },
+    antigravityScratch: () => (core ? path.join(core.layout.scratch, EngineId.Antigravity) : undefined),
+    onAntigravitySignedIn: async () => {
+      // A check that fails (offline, a CLI that hangs) still tells the row to read the engine again.
+      if (core?.engines.has(EngineId.Antigravity))
+        await core.engines
+          .get(EngineId.Antigravity)
+          .refreshModels?.(true)
+          .catch(() => {});
+      pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.Antigravity } });
+    },
+    showCodexState: (state) => {
+      preview?.setOccluded(state.visible);
+      const page = livePage();
+      if (page) pushToRenderer(page, "studio:codex-login", state);
+    },
+    showClaudeState: (state) => {
+      const page = livePage();
+      if (page) pushToRenderer(page, "studio:claude-login", state);
+    },
+  });
 // The person approved Genex on OpenRouter in the browser: the app comes forward to show it connected.
 const openRouterLogin = createOpenRouterLogin({
   openExternal: (url) => shell.openExternal(url),
@@ -2406,6 +2411,7 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
     claudeLogin,
     codexLogin,
     openCodeLogin,
+    piLogin,
     grokLogin,
     cursorLogin,
     antigravityLogin,

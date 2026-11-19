@@ -1,0 +1,12 @@
+{"type":"session","version":3,"id":"01a183b1-6421-72b0-96ba-bbb5b2a65dae","timestamp":"2026-10-28T18:06:43.234Z","cwd":"/game"}
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_start","message":{"role":"system","content":"","sections":"<elided: Pi system prompt>","timestamp":1793210803291}}
+{"type":"message_end","message":{"role":"system","content":"","sections":"<elided: Pi system prompt>","timestamp":1793210803291}}
+{"type":"message_start","message":{"role":"user","content":[{"type":"text","text":"Say hello"}],"timestamp":1793210803290}}
+{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"Say hello"}],"timestamp":1793210803290}}
+{"type":"message_start","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"stub","model":"stub-badmodel","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"error","timestamp":1793210803302,"errorMessage":"404: {\"message\":\"The model `stub-badmodel` does not exist\",\"type\":\"model_not_found\",\"code\":\"model_not_found\"}","durationMs":25,"thinkingLevel":"off"}}
+{"type":"message_end","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"stub","model":"stub-badmodel","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"error","timestamp":1793210803302,"errorMessage":"404: {\"message\":\"The model `stub-badmodel` does not exist\",\"type\":\"model_not_found\",\"code\":\"model_not_found\"}","durationMs":25,"thinkingLevel":"off"}}
+{"type":"turn_end","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"stub","model":"stub-badmodel","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"error","timestamp":1793210803302,"errorMessage":"404: {\"message\":\"The model `stub-badmodel` does not exist\",\"type\":\"model_not_found\",\"code\":\"model_not_found\"}","durationMs":25,"thinkingLevel":"off"},"toolResults":[]}
+{"type":"agent_end","messages":"<elided>","willRetry":false}
+{"type":"agent_settled","aborted":false}

@@ -248,7 +248,11 @@ export function laneSpec(
 const EXECUTABLE_KEY = { [EngineId.ClaudeCode]: "claude", [EngineId.Codex]: "codex" } as const satisfies Record<
   Exclude<
     CodingProvider,
-    typeof EngineId.OpenCode | typeof EngineId.Grok | typeof EngineId.Cursor | typeof EngineId.Antigravity
+    | typeof EngineId.OpenCode
+    | typeof EngineId.Grok
+    | typeof EngineId.Cursor
+    | typeof EngineId.Pi
+    | typeof EngineId.Antigravity
   >,
   keyof EvalExecutables
 >;

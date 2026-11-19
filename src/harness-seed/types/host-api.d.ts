@@ -798,7 +798,7 @@ export interface ModelCatalogStatus {
 }
 // ↑ src/shared/model-catalog.ts
 
-export type CodingProvider = "codex" | "claude-code" | "opencode" | "grok" | "cursor" | "antigravity";
+export type CodingProvider = "codex" | "claude-code" | "opencode" | "grok" | "cursor" | "pi" | "antigravity";
 // ↑ src/shared/coding-cli.ts
 
 export interface CodingCliStatus {

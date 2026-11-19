@@ -16,6 +16,7 @@ import { GrokEngine } from "../../src/substrate/engines/grok.ts";
 import { OpenCodeEngine } from "../../src/substrate/engines/opencode.ts";
 import { OpenRouterEngine } from "../../src/substrate/engines/openrouter.ts";
 import { LocalServerEngine } from "../../src/substrate/engines/local-server.ts";
+import { PiEngine } from "../../src/substrate/engines/pi.ts";
 import { CursorEngine } from "../../src/substrate/engines/cursor.ts";
 import { AntigravityEngine } from "../../src/substrate/engines/antigravity.ts";
 import { EngineStatusCode } from "../../src/shared/engine-descriptor.ts";
@@ -30,6 +31,7 @@ test("pre-init injection avoids every real engine status/models/auth probe and k
     GrokEngine.prototype,
     OpenRouterEngine.prototype,
     LocalServerEngine.prototype,
+    PiEngine.prototype,
     CursorEngine.prototype,
     AntigravityEngine.prototype,
   ])
@@ -51,8 +53,9 @@ test("pre-init injection avoids every real engine status/models/auth probe and k
   });
   await core.start();
   assert.equal(core.host.state, "ready");
-  // Flipped (OpenCode, OpenRouter, a local server, Grok Build, Cursor, Genex, Antigravity): ten scripted engines, never a real one.
-  assert.equal((await core.engines.describe()).length, 10);
+  // Flipped (OpenCode, OpenRouter, Pi, a local server, Grok Build, Cursor, Genex, Antigravity): eleven
+  // scripted engines, never a real one.
+  assert.equal((await core.engines.describe()).length, 11);
   assert.equal(core.sandbox.enabled, true);
 });
 test("a fixture's Cursor is not installed unless the usage file makes it ready", async (t) => {
