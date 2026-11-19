@@ -40,6 +40,18 @@ import { guarded, track } from "../client.ts";
 import type { AreaObservers } from "../observers.ts";
 import { type CountBucket, countBucket, elapsedMs, oneOf } from "../properties.ts";
 import { currentScreen } from "../screens.ts";
+import {
+  afterTask,
+  type BatchBlame,
+  type FrameBlame,
+  frameBlame,
+  type HeapNow,
+  heapNow,
+  LONG_FRAME_ENTRY,
+  type LongFrame,
+  longer,
+  readLongFrame,
+} from "../stall-frames.ts";
 
 /** How often the long tasks seen are summed and sent, while there were any. */
 export const STALL_SUMMARY_MS = 5 * MINUTE_MS;
@@ -386,7 +398,12 @@ function reportMainDiagnostic(payload: unknown): void {
 /**
  * `ui_stall_summarized`'s properties. `chat_log_events` is how many records of the open chat's log
  * the window holds when the summary is sent (null with no chat open): what each batch of a long
- * Loop is read against.
+ * Loop is read against; `held_records` is every record the window holds. `worst_batch_*` is the
+ * window's work right after its longest batch of new records (the stores' update and the render it
+ * queued) and how many records came in it; `worst_frame_*` the longest frame and its style and
+ * layout (null where the window cannot see frames). `heap_*` is the window's JavaScript memory
+ * when the summary is sent, and `hidden_ms` how long the window was hidden (behind another app,
+ * minimized): a hidden window reads no new records, so its next batch holds all it missed.
  */
 export type StallSummaryProperties = {
   screen: string;
@@ -394,30 +411,67 @@ export type StallSummaryProperties = {
   total_ms: number;
   max_ms: number;
   chat_log_events: number | null;
+  held_records: number | null;
+  worst_batch_ms: number | null;
+  worst_batch_records: number | null;
+  worst_frame_ms: number | null;
+  worst_layout_ms: number | null;
+  heap_used_mb: number | null;
+  heap_limit_mb: number | null;
+  hidden_ms: number;
 };
 
-/** The long tasks seen since the last summary. */
+/** The long tasks seen since the last summary, the longest frame and batch, and the time hidden. */
 export interface StallTally {
   count: number;
   total: number;
   max: number;
+  frame: FrameBlame | null;
+  batch: BatchBlame | null;
+  hiddenMs: number;
 }
 
 /** Nothing seen yet. */
-export const NO_STALLS: StallTally = { count: 0, total: 0, max: 0 };
+export const NO_STALLS: StallTally = { count: 0, total: 0, max: 0, frame: null, batch: null, hiddenMs: 0 };
 
 /** One more long task. */
 export const stallAdded = (tally: StallTally, duration: number): StallTally => ({
+  ...tally,
   count: tally.count + 1,
   total: tally.total + duration,
   max: Math.max(tally.max, duration),
 });
 
+/** One more long frame: kept when it is the longest yet. */
+export const frameAdded = (tally: StallTally, frame: LongFrame): StallTally => ({
+  ...tally,
+  frame: longer(tally.frame, frameBlame(frame)),
+});
+
+/** The work after one more batch of records: kept when it is the longest yet. */
+export const batchAdded = (tally: StallTally, batch: BatchBlame): StallTally => ({
+  ...tally,
+  batch: longer(tally.batch, { ms: Math.round(batch.ms), records: batch.records }),
+});
+
+/** Time the window spent hidden. */
+export const hiddenAdded = (tally: StallTally, ms: number): StallTally => ({
+  ...tally,
+  hiddenMs: tally.hiddenMs + Math.max(0, ms),
+});
+
+/** What the window holds when a summary is sent: its open chat's records, all of them, its memory. */
+export interface StallContext {
+  chatLogEvents: number | null;
+  heldRecords: number | null;
+  heap: HeapNow | null;
+}
+
 /** The summary to send, or null when nothing was slow. */
 export function stallSummary(
   tally: StallTally,
   screen: string,
-  chatLogEvents: number | null = null,
+  context: Partial<StallContext> = {},
 ): StallSummaryProperties | null {
   if (tally.count === 0) return null;
   return {
@@ -425,7 +479,15 @@ export function stallSummary(
     long_tasks: tally.count,
     total_ms: Math.round(tally.total),
     max_ms: Math.round(tally.max),
-    chat_log_events: chatLogEvents,
+    chat_log_events: context.chatLogEvents ?? null,
+    held_records: context.heldRecords ?? null,
+    worst_batch_ms: tally.batch?.ms ?? null,
+    worst_batch_records: tally.batch?.records ?? null,
+    worst_frame_ms: tally.frame?.ms ?? null,
+    worst_layout_ms: tally.frame?.layoutMs ?? null,
+    heap_used_mb: context.heap?.usedMb ?? null,
+    heap_limit_mb: context.heap?.limitMb ?? null,
+    hidden_ms: Math.round(tally.hiddenMs),
   };
 }
 
@@ -435,28 +497,82 @@ function openChatLogEvents(app: Studio): number | null {
   return threadId ? threadLog(app.eventLog.getState(), threadId).length : null;
 }
 
-/** Sum the window's long tasks and send them every `STALL_SUMMARY_MS`; nothing where the page cannot see them. */
-function watchStalls(app: Studio): () => void {
-  const supported =
-    typeof PerformanceObserver !== "undefined" && PerformanceObserver.supportedEntryTypes?.includes("longtask");
-  if (!supported) return () => undefined;
-  let tally = NO_STALLS;
+/** Every record the window holds, across its chats' slices. */
+function heldRecords(app: Studio): number {
+  return Object.values(app.eventLog.getState().byThread).reduce((sum, slice) => sum + slice.length, 0);
+}
+
+/** Whether the page can tell its performance entries of this type. */
+const observes = (type: string): boolean =>
+  typeof PerformanceObserver !== "undefined" && PerformanceObserver.supportedEntryTypes?.includes(type) === true;
+
+/** Observe one entry type, each entry handed to `seen`; nothing where the page cannot. */
+function observeEntries(type: string, seen: (entry: PerformanceEntry) => void): () => void {
+  if (!observes(type)) return () => undefined;
   const observer = new PerformanceObserver(
     guarded((list: PerformanceObserverEntryList) => {
-      for (const entry of list.getEntries()) tally = stallAdded(tally, entry.duration);
+      for (const entry of list.getEntries()) seen(entry);
     }),
   );
-  observer.observe({ type: "longtask", buffered: true });
+  observer.observe({ type, buffered: true });
+  return () => observer.disconnect();
+}
+
+/** Hand `hidden` each stretch the page spent hidden, as it ends (and the open one when asked). */
+function watchHidden(hidden: (ms: number) => void): { flush: () => void; stop: () => void } {
+  if (typeof document === "undefined") return { flush: () => undefined, stop: () => undefined };
+  let since: number | null = document.hidden ? performance.now() : null;
+  const settle = (): void => {
+    if (since === null) return;
+    const now = performance.now();
+    hidden(now - since);
+    since = document.hidden ? now : null;
+  };
+  const changed = guarded((): void => {
+    if (document.hidden && since === null) since = performance.now();
+    else settle();
+  });
+  document.addEventListener("visibilitychange", changed);
+  return { flush: settle, stop: () => document.removeEventListener("visibilitychange", changed) };
+}
+
+/** Sum the window's long tasks and send them every `STALL_SUMMARY_MS`; nothing where the page cannot see them. */
+function watchStalls(app: Studio): () => void {
+  if (!observes("longtask")) return () => undefined;
+  let tally = NO_STALLS;
+  const stopTasks = observeEntries("longtask", (entry) => {
+    tally = stallAdded(tally, entry.duration);
+  });
+  const stopFrames = observeEntries(LONG_FRAME_ENTRY, (entry) => {
+    const frame = readLongFrame(entry);
+    if (frame) tally = frameAdded(tally, frame);
+  });
+  const hidden = watchHidden((ms) => {
+    tally = hiddenAdded(tally, ms);
+  });
+  const stopBatches = app.eventLog.onArrived((events) => {
+    const started = performance.now();
+    afterTask(
+      guarded(() => {
+        tally = batchAdded(tally, { ms: performance.now() - started, records: events.length });
+      }),
+    );
+  });
   const timer = setInterval(
     guarded(() => {
-      const summary = stallSummary(tally, currentScreen(), openChatLogEvents(app));
+      hidden.flush();
+      const context = { chatLogEvents: openChatLogEvents(app), heldRecords: heldRecords(app), heap: heapNow() };
+      const summary = stallSummary(tally, currentScreen(), context);
       tally = NO_STALLS;
       if (summary) track(LaunchEvent.UiStallSummarized, summary);
     }),
     STALL_SUMMARY_MS,
   );
   return () => {
-    observer.disconnect();
+    stopTasks();
+    stopFrames();
+    stopBatches();
+    hidden.stop();
     clearInterval(timer);
   };
 }

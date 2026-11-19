@@ -27,6 +27,30 @@ export const isTerminalChord = (event: { metaKey: boolean; ctrlKey: boolean; cod
 /** A key's typed text that is one Latin letter: the layout itself names the letter. */
 const LATIN_LETTER = /^[a-z]$/i;
 
+/** Whether `event` is Ctrl with `letter` and no Cmd or Alt, by the typed letter on a Latin layout and the key's place on any other. */
+const ctrlLetter = (
+  event: { metaKey: boolean; ctrlKey: boolean; altKey: boolean; code: string; key: string },
+  letter: string,
+): boolean => {
+  const ctrlOnly = event.ctrlKey && !event.metaKey && !event.altKey;
+  const latin = LATIN_LETTER.test(event.key);
+  return ctrlOnly && (latin ? event.key.toLowerCase() === letter : event.code === `Key${letter.toUpperCase()}`);
+};
+
+/**
+ * Whether a key press copies the terminal's selection: Ctrl+Shift+C anywhere, and off a Mac Ctrl+C
+ * over a selection, as Windows Terminal does, so a selected sign-in code is copied instead of the
+ * sign-in being interrupted. With nothing selected Ctrl+C stays the interrupt.
+ */
+export const isCopyChord = (
+  event: { metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean; code: string; key: string },
+  platform: string,
+  selected: boolean,
+): boolean => {
+  if (!ctrlLetter(event, "c")) return false;
+  return event.shiftKey || (selected && platform !== StudioPlatform.Mac);
+};
+
 /**
  * Whether a key press is a paste the terminal must leave to the browser: Ctrl+V or Ctrl+Shift+V off
  * a Mac (Cmd+V on a Mac is the app menu's paste and never reaches the terminal). Left to xterm, it
@@ -38,8 +62,5 @@ export const isPasteChord = (
   event: { metaKey: boolean; ctrlKey: boolean; altKey: boolean; code: string; key: string },
   platform: string,
 ): boolean => {
-  const ctrlOnly = event.ctrlKey && !event.metaKey && !event.altKey;
-  const latin = LATIN_LETTER.test(event.key);
-  const isV = latin ? event.key.toLowerCase() === "v" : event.code === "KeyV";
-  return ctrlOnly && isV && platform !== StudioPlatform.Mac;
+  return ctrlLetter(event, "v") && platform !== StudioPlatform.Mac;
 };

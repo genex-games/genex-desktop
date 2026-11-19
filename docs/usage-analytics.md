@@ -128,7 +128,12 @@ stops recording, opts out and resets the id.
   failed Claude Code installer carries what its download host answered the same way.
 - **Long tasks**: `ui_stall_summarized` sums each five minutes of the window's long tasks per
   screen, with `chat_log_events`, the size of the open chat's log then, so a stall that grows
-  with a long Loop reads apart from one that does not.
+  with a long Loop reads apart from one that does not, and `held_records`, every record the window
+  holds. It says what froze the window (`renderer/analytics/stall-frames.ts`): the work right after
+  the longest batch of new records and how many it held (`worst_batch_*`), the longest frame and
+  its style and layout (`worst_frame_ms`, `worst_layout_ms`; the window is a `file:` page, so
+  Chromium names none of its scripts), the window's JavaScript memory (`heap_used_mb`,
+  `heap_limit_mb`) and how long it was hidden behind another app or minimized (`hidden_ms`).
 - **A dead Send** counts presses in a row (`message_send_blocked`'s `attempts_in_row`) until a
   message actually goes: a send refused for its model is noted first and still counts as dead.
   The composer holds a send whose model cannot take it (`model_unavailable`) and lights the model
