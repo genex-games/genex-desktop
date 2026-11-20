@@ -701,6 +701,26 @@ describe("a run's route when its journal, its folder or the game list can't be r
   );
 
   it(
+    "a fresh Loop on a folder of no kind Genex names starts in place, and no web starter is written into it",
+    TEST_TIMEOUT,
+    async () => {
+      // Flipped: a fresh Loop on a folder of its own files of a kind no rule knows was refused with
+      // "A Loop can't start on … yet"; its lead now looks through the files and works on them.
+      const host = await hostOn(Project.GodotGame, { facts: [], holds: "own-files", turns: [finishes] });
+      await host.dispatch();
+      assert.deepEqual(
+        {
+          started: host.rec.paramsOf("game.start").length,
+          scaffolded: host.rec.paramsOf("game.scaffold").length,
+          inPlace: inPlaceLeads(host).length > 0,
+          status: host.appended("run_finished").at(-1)?.executionStatus,
+        },
+        { started: 0, scaffolded: 0, inPlace: true, status: "completed" },
+      );
+    },
+  );
+
+  it(
     "a paused Loop whose journal can't be read stays paused, and no Loop of either kind runs",
     TEST_TIMEOUT,
     async () => {

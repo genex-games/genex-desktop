@@ -41,13 +41,18 @@ const NOT_OWN_FILES = {
   AssetFolder: "assets",
   /**
    * A top-level folder that is Genex's output while it holds nothing but the one folder Genex writes
-   * there: the bundled shape's `public/assets/`, and the design board (`docs/design/`), which a new
-   * game gets before it is built, so the game it designs still starts as its first build decides.
+   * there: the bundled shape's `public/assets/`.
    */
-  GenexInside: new Map([
-    ["public", "assets"],
-    [path.posix.dirname(DESIGN_FOLDER), path.posix.basename(DESIGN_FOLDER)],
-  ]),
+  GenexInside: new Map([["public", "assets"]]),
+  /**
+   * The project's notes folder (`docs/`), never files of a kind Genex can't name, whatever is in
+   * it: the design board a new game gets before it is built (`docs/design/`), and the research, data
+   * and scripts a design session saves beside it, so the game it designs still starts as its first
+   * build decides. Anything in it but the board counts as notes to read first.
+   */
+  NotesFolder: path.posix.dirname(DESIGN_FOLDER),
+  /** The design board inside the notes folder: on its own, not yet a note. */
+  DesignBoard: path.posix.basename(DESIGN_FOLDER),
   /** A loose note at the root, by its lower-cased extension. */
   NoteExtensions: [".md", ".txt"],
 } as const;
@@ -399,22 +404,34 @@ function isOwnEntry(entry: TopEntry): boolean {
   if (entry.name.startsWith(".")) return false;
   if ((NOT_OWN_FILES.Bookkeeping as readonly string[]).includes(entry.name)) return false;
   if (entry.isDirectory() && entry.name === NOT_OWN_FILES.AssetFolder) return false;
+  if (isNotesFolder(entry)) return false;
   const extension = path.extname(entry.name).toLowerCase();
   return !(entry.isFile() && (NOT_OWN_FILES.NoteExtensions as readonly string[]).includes(extension));
 }
 
+/** Whether a top-level entry is the project's notes folder (`docs/`). */
+const isNotesFolder = (entry: TopEntry): boolean => entry.isDirectory() && entry.name === NOT_OWN_FILES.NotesFolder;
+
 /**
- * Whether a top-level entry is the folder's own work (`isOwnEntry`), reading into `public/` and
- * `docs/`: one that holds nothing but the folder Genex writes there (and hidden files) is Genex's
- * output, not the folder's own.
+ * Whether a folder holds anything visible but the one folder Genex writes there (`genexFolder`); one
+ * that can't be read does.
+ */
+async function holdsBesides(folder: string, genexFolder: string): Promise<boolean> {
+  const inside = await readdir(folder, { withFileTypes: true }).catch(() => null);
+  if (!inside) return true;
+  return inside.some((child) => !child.name.startsWith(".") && !(child.isDirectory() && child.name === genexFolder));
+}
+
+/**
+ * Whether a top-level entry is the folder's own work (`isOwnEntry`), reading into `public/`: one that
+ * holds nothing but the folder Genex writes there (and hidden files) is Genex's output, not the
+ * folder's own.
  */
 async function ownEntry(dir: string, entry: TopEntry): Promise<boolean> {
   if (!isOwnEntry(entry)) return false;
   const genexFolder = entry.isDirectory() ? NOT_OWN_FILES.GenexInside.get(entry.name) : undefined;
   if (!genexFolder) return true;
-  const inside = await readdir(path.join(dir, entry.name), { withFileTypes: true }).catch(() => null);
-  if (!inside) return true;
-  return inside.some((child) => !child.name.startsWith(".") && !(child.isDirectory() && child.name === genexFolder));
+  return holdsBesides(path.join(dir, entry.name), genexFolder);
 }
 
 /** Whether any top-level entry is the folder's own work (`ownEntry`). */
@@ -434,10 +451,25 @@ function isNote(entry: TopEntry): boolean {
 }
 
 /**
+ * Whether a top-level entry is a note: a loose one (`isNote`), or the notes folder (`docs/`) holding
+ * anything but the design board.
+ */
+async function noteEntry(dir: string, entry: TopEntry): Promise<boolean> {
+  if (isNote(entry)) return true;
+  return isNotesFolder(entry) && holdsBesides(path.join(dir, entry.name), NOT_OWN_FILES.DesignBoard);
+}
+
+/** Whether any top-level entry is a note (`noteEntry`). */
+async function anyNoteEntry(dir: string, entries: readonly TopEntry[]): Promise<boolean> {
+  for (const entry of entries) if (await noteEntry(dir, entry)) return true;
+  return false;
+}
+
+/**
  * Whether a folder holds files of its own: any top-level entry but a hidden one, Genex's own
  * bookkeeping (`studio.json`, `references/`), the folder its asset tools deliver into (`assets/`, or a
- * `public/` holding only that), its design board (a `docs/` holding only `design/`) and loose notes at
- * the root (`*.md`, `*.txt`).
+ * `public/` holding only that), the project's notes folder (`docs/`, its design board included) and
+ * loose notes at the root (`*.md`, `*.txt`).
  */
 export async function holdsOwnFiles(dir: string): Promise<boolean> {
   const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
@@ -446,13 +478,13 @@ export async function holdsOwnFiles(dir: string): Promise<boolean> {
 
 /**
  * What a folder holds at its top level, besides hidden files, Genex's bookkeeping and its asset
- * deliveries: files of its own (`holdsOwnFiles`), loose notes only, or nothing. Throws when the folder
+ * deliveries: files of its own (`holdsOwnFiles`), notes only (`noteEntry`), or nothing. Throws when the folder
  * can't be read.
  */
 export async function folderHolds(dir: string): Promise<FolderHolds> {
   const entries = await readdir(dir, { withFileTypes: true });
   if (await anyOwnEntry(dir, entries)) return FolderHolds.OwnFiles;
-  return entries.some(isNote) ? FolderHolds.Notes : FolderHolds.Nothing;
+  return (await anyNoteEntry(dir, entries)) ? FolderHolds.Notes : FolderHolds.Nothing;
 }
 
 /** Folders that are output, dependencies or notes — a game is never *these*, so the scan skips them. */

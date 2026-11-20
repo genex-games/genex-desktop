@@ -116,9 +116,10 @@ build once the person agrees. A game named by a likeness ("a game like GunZ") is
 any other. Only an ask to just build, or a small game the request gives whole ("make me Pong"),
 builds at once.
 
-The board of a game that is not built yet gives its folder no kind: a `docs/` holding only
-`design/` is Genex's output (`substrate/project-shape.ts`), so the game still takes its starter
-when its first build begins.
+The board of a game that is not built yet gives its folder no kind: `docs/` is the project's notes
+folder (`substrate/project-shape.ts`), never files of a kind Genex can't name, whatever a design
+session saves beside the board (research, data, the scripts that drew a map), so the game still
+takes its kind when its first build begins. A `docs/` holding more than `design/` counts as notes.
 
 `show_design` (`main/core/design-board-prompts.ts`) is handed to the chat's own session on every
 turn. Beside the artboard to show (`page`, with a `note` for its block in the chat) it takes `spot`

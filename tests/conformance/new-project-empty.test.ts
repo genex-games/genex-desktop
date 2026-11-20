@@ -280,9 +280,30 @@ describe("new projects start empty", () => {
     await api()[HostMethod.GameStart]({ project: designed.name, starter: ProjectStarter.Web });
     assert.equal(await has(designed.dir, "index.html"), true, "a designed game takes the starter when it is built");
     assert.equal(await has(path.join(designed.dir, "docs", "design"), "01-pitch.html"), true, "and keeps its design");
-    // A docs/ folder with pages of the person's own beside the board is theirs.
+    // Flipped: a docs/ folder with pages of the person's own beside the board was read as files of
+    // a kind Genex can't name, and refused a Loop. It is the project's notes: read first, no kind.
     await writeFile(path.join(dropped.dir, "docs", "manual.html"), "<h1>Manual</h1>");
-    assert.equal((await listed(dropped.name)).holds, FolderHolds.OwnFiles);
+    assert.equal((await listed(dropped.name)).holds, FolderHolds.Notes);
+  });
+
+  it("research a design saved under docs/ keeps the game without a kind, so a Loop can start on it", async () => {
+    // As a design session leaves an engine game before it is built: the board, its research
+    // (elevation data, the scripts that drew the maps), a handoff note and delivered pictures.
+    const researched = await lite.core.createGame("Kite Researched");
+    const research = path.join(researched.dir, "docs", "research");
+    await mkdir(path.join(research, "scripts"), { recursive: true });
+    await mkdir(path.join(researched.dir, "docs", "design", "world"), { recursive: true });
+    await mkdir(path.join(researched.dir, "assets", "genex", "a1"), { recursive: true });
+    await writeFile(path.join(researched.dir, "docs", "design", "01-pitch.html"), "<h1>Kite</h1>");
+    await writeFile(path.join(research, "scripts", "fetch_elevation.py"), "import numpy\n");
+    await writeFile(path.join(research, "ford-elevation.npy"), "NUMPY");
+    await writeFile(path.join(research, "river-course.json"), "{}");
+    await writeFile(path.join(researched.dir, "HANDOFF.md"), "# Kite\nAn Unreal game, not built yet.\n");
+    await writeFile(path.join(researched.dir, "assets", "genex", "a1", "ford.png"), "PNG");
+    const game = await listed(researched.name);
+    assert.deepEqual(game.facts, [], "no facts");
+    assert.equal(game.holds, FolderHolds.Notes, "its research is notes, not files of a kind Genex can't name");
+    assert.equal(kindPendingGame(game), true, "its first message still decides, and a Loop starts on it");
   });
 
   it("a game folder that can't be read, or is gone, has no kind pending", async () => {
@@ -484,29 +505,19 @@ describe("new projects start empty", () => {
     }
   });
 
-  it("a Loop on a folder of its own files of a kind no rule knows says it needs a kind and writes no starter", async () => {
+  it("a Loop on a folder of its own files of a kind no rule knows starts as it is and writes no starter", async () => {
+    // Flipped: such a Loop was refused with "it needs a kind"; it now goes on to the folder's checks.
     const launch = loopRecorder([], { holds: FolderHolds.OwnFiles });
-    await assert.rejects(
-      launchFromIntake(
-        studioOf(launch.ctx) as never,
-        launch.ctx as never,
-        { threadId: "t-1", project: "moth" },
-        { goal: "a moth game" },
-      ),
-      /kind/,
-    );
+    await launchFromIntake(
+      studioOf(launch.ctx) as never,
+      launch.ctx as never,
+      { threadId: "t-1", project: "moth" },
+      { goal: "a moth game" },
+    ).catch((error: Error) => assert.doesNotMatch(error.message, /kind/, "not refused for its kind"));
     assert.deepEqual(
-      launch.sequence((method) => method === HostMethod.GameStart),
-      [],
-      "no starter",
-    );
-    const run = loopRecorder([], { holds: FolderHolds.OwnFiles });
-    const run2 = { runId: "run-1", project: "moth", goal: "g", reference: { name: "r", shots: [] }, budgets: {} };
-    await handleRunStart(studioOf(run.ctx) as never, { type: "run_start", threadId: "t-2", run: run2 } as never);
-    assert.deepEqual(
-      run.sequence((method) => method === HostMethod.GameStart || method === HostMethod.GameScaffold),
-      [],
-      "no starter and no runner",
+      launch.sequence((method) => method === HostMethod.GameStart || method === HostMethod.GameValidate),
+      [HostMethod.GameValidate],
+      "no starter, and the launch goes on",
     );
   });
 
