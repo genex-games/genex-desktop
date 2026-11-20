@@ -21,7 +21,7 @@ import {
 import { createComputerPlay, unrealKey } from "../../src/plugins/unreal/computer-play.ts";
 import { createEditorQueue, LoopTool } from "../../src/plugins/unreal/editor-queue.ts";
 import { tmpDir } from "../helpers/tmp.ts";
-import { playable, TEST, written } from "../helpers/unreal-editor-stand-in.ts";
+import { playable, TEST, THROTTLE, written } from "../helpers/unreal-editor-stand-in.ts";
 
 const STORAGE = "/storage";
 const GAME = "valley";
@@ -71,6 +71,39 @@ describe("the Unreal plugin's play tools for the computer", () => {
     assert.deepEqual(await lead.call(EnginePlayTool.Open), { ...ENGINE_PLAY_VIEW, joined: false });
     assert.equal(lead.tools().filter((tool) => tool === LoopTool.StartPlay).length, 2);
     assert.equal(await lead.agentPlays(), true);
+  });
+
+  it("gives the throttle back at close though switching the light blocks the editor for a moment", async () => {
+    const BLOCK_MS = 100;
+    let blockedUntil = 0;
+    const busy = () => lead.deps.now() < blockedUntil;
+    const lead = playTools({
+      overrides: {
+        [LoopTool.LightPlay]: (args) => {
+          blockedUntil = lead.deps.now() + BLOCK_MS;
+          return { light: args.on === true };
+        },
+        [LoopTool.SetProperties]: (args) => {
+          if (busy()) throw new Error("Not run: the Unreal Editor is running a slow task.");
+          lead.editor.state.throttle = JSON.parse(String(args.values))[THROTTLE];
+          return true;
+        },
+        [LoopTool.StartPlay]: () => {
+          if (busy()) throw new Error("Not run: the Unreal Editor is running a slow task.");
+          lead.editor.state.pie = true;
+          return true;
+        },
+      },
+    });
+    assert.deepEqual(await lead.call(EnginePlayTool.Open), { ...ENGINE_PLAY_VIEW, joined: false });
+    assert.equal(
+      lead.tools().filter((tool) => tool === LoopTool.StartPlay).length,
+      1,
+      "the start waited the block out",
+    );
+    assert.deepEqual(await lead.call(EnginePlayTool.Close), { closed: true });
+    assert.equal(lead.editor.state.throttle, true, "the throttle went back as it was");
+    assert.deepEqual(lead.tools().filter((tool) => tool === LoopTool.LightPlay).length, 2, "the light went back too");
   });
 
   it("gives the throttle back, and keeps no session, when play can't start", async () => {

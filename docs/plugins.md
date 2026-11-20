@@ -565,8 +565,9 @@ Epic's server lists:
   interface is drawn in C++ Slate or on a HUD canvas lists nothing: screenshots are then the only reading.
 - `light_play {on}` lowers the rendering while an agent plays (screen percentage 50, scalability groups at
   most 1) and puts each console variable back exactly when the computer tool's play ends. Unreal 5.9
-  runs no tool for the frames such a change blocks it, so a refused start of play is made once more
-  (`startPlay`), and an open that can't start play gives the rendering and the throttle back.
+  runs no tool for the frames such a change blocks it, so the computer tool leaves the editor a moment after each switch, gives the throttle back
+  before the rendering, and makes a refused start of play once more (`startPlay`); an open that can't
+  start play gives the rendering and the throttle back.
 - `pilot {file, seconds, decide}` starts a pilot and `pilot_step {answer, stop}` steps it
   (`genex_play/pilot.py`). A pilot is a `.py` of the project (`Pilots/<goal>.py`, given relative to it,
   no link or `..`; on Windows `\` separates folders too and the path is compared to its real path

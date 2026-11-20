@@ -65,6 +65,8 @@ import { ensureStarterPilot } from "./starter-pilot.ts";
 const WARMUP_SECONDS = 2;
 /** A play whose clock stands still this long has paused itself (a title menu): it is warm. */
 const WARMUP_STILL_MS = 1.5 * SECOND_MS;
+/** How long Unreal is left alone after the lighter rendering is switched: 5.9 runs no tool for the frames that change blocks it. */
+const LIGHT_SETTLE_MS = 250;
 /** The shortest hold the helper takes, in game seconds: about a tap. */
 const MIN_HOLD_SECONDS = 0.05;
 /** A walk's most game seconds when the call names none, the most it may name, and how near it stops (m). */
@@ -215,18 +217,23 @@ async function endForFresh(
 /**
  * What a new play session takes from the editor and gives back when it ends: the background throttle,
  * and the full rendering (an agent's play renders lighter, so a heavy game plays at a usable rate). An
- * older helper without the light switch is left as it renders.
+ * older helper without the light switch is left as it renders. Switching the light blocks Unreal 5.9
+ * for a frame or more, in which it runs no tool: the next call waits {@link LIGHT_SETTLE_MS}, and the
+ * throttle goes back before the light does.
  */
 async function liftThrottleAndLight(
   port: ReturnType<QueueDeps["editor"]>,
-  platform: NodeJS.Platform | undefined,
+  queueDeps: Pick<QueueDeps, "platform" | "sleep">,
 ): Promise<GiveBack> {
-  const throttle = await liftThrottle(port, platform);
+  const throttle = await liftThrottle(port, queueDeps.platform);
   const lit = await port.call(LoopTool.LightPlay, { on: true }).catch(() => null);
   const lightened = typeof lit === "object" && lit !== null && Reflect.get(lit, "light") === true;
+  if (lightened) await queueDeps.sleep(LIGHT_SETTLE_MS);
   return async () => {
-    if (lightened) await port.call(LoopTool.LightPlay, { on: false }).catch(() => undefined);
     await throttle();
+    if (!lightened) return;
+    await port.call(LoopTool.LightPlay, { on: false }).catch(() => undefined);
+    await queueDeps.sleep(LIGHT_SETTLE_MS);
   };
 }
 
@@ -382,7 +389,7 @@ export function createComputerPlay(deps: {
     const joined = await playing(port);
     // A session that is already open keeps what it owes; only a new one lifts the throttle.
     const known = sessions.get(key);
-    const giveBack = known?.giveBack ?? (await liftThrottleAndLight(port, queueDeps.platform));
+    const giveBack = known?.giveBack ?? (await liftThrottleAndLight(port, queueDeps));
     if (!joined) {
       await startMarked(markerOf(storage, game, queueDeps), queueDeps, port, { giveBack, kept: known !== undefined });
       // UE 5.8 has nothing to capture in a play's first moments.
