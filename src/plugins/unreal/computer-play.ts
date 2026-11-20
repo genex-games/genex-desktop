@@ -230,6 +230,25 @@ async function liftThrottleAndLight(
   };
 }
 
+/**
+ * Starts the agent's own play, marked before it starts (a probe between the two would read the play
+ * as the person's). A play that can't start leaves no session to hold what this one took, so the
+ * mark and what a new session `owes` go back at once.
+ */
+async function startMarked(
+  mark: AgentPlayMarker,
+  queueDeps: QueueDeps,
+  port: ReturnType<QueueDeps["editor"]>,
+  owes: GiveBack | null,
+) {
+  await mark.started();
+  await startPlay(queueDeps, port).catch(async (error: unknown) => {
+    await mark.stopped();
+    await owes?.();
+    throw error;
+  });
+}
+
 /** Where a call's game plays: its queue's clock and its editor's port. */
 type PortOf = (
   storage: string,
@@ -365,14 +384,7 @@ export function createComputerPlay(deps: {
     const known = sessions.get(key);
     const giveBack = known?.giveBack ?? (await liftThrottleAndLight(port, queueDeps.platform));
     if (!joined) {
-      // Marked before play starts: a probe between the two would read the play as the person's.
-      await markerOf(storage, game, queueDeps).started();
-      await startPlay(queueDeps, port).catch(async (error: unknown) => {
-        // No session will hold what this one took, so it goes back now.
-        await markerOf(storage, game, queueDeps).stopped();
-        if (!known) await giveBack();
-        throw error;
-      });
+      await startMarked(markerOf(storage, game, queueDeps), queueDeps, port, known ? null : giveBack);
       // UE 5.8 has nothing to capture in a play's first moments.
       await playForWhileRunning(queueDeps, port, WARMUP_SECONDS, WARMUP_STILL_MS);
     }
