@@ -92,15 +92,15 @@ export const macPath = (...parts: string[]): string => path.posix.join(...parts)
 /** A Mac's folders in a temporary place: a home holding Hub's records folder, and its Applications. */
 export async function macEnv(): Promise<EditorsEnv> {
   const base = await realpath(await tmpDir("unity-mac-"));
-  const home = path.join(base, "home");
+  const home = macPath(base, "home");
   await mkdir(path.join(home, "Library", "Application Support", "UnityHub"), { recursive: true });
   await acceptUnityTerms(home);
   await mkdir(path.join(base, "Applications"), { recursive: true });
   return {
     platform: "darwin",
     home,
-    applications: path.join(base, "Applications"),
-    appData: path.join(home, "AppData"),
+    applications: macPath(base, "Applications"),
+    appData: macPath(home, "AppData"),
   };
 }
 

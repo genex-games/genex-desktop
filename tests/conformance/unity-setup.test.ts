@@ -166,7 +166,7 @@ describe("what the card reads on a Mac", () => {
     const editors = macPath(env.applications, "Unity", "Hub", "Editor");
     await fakeEditor(editors, "2022.3.13f1");
     await fakeEditor(editors, "6000.3.26f1");
-    const machine = path.join(path.dirname(env.applications), "Library", "Application Support", "Unity");
+    const machine = macPath(path.posix.dirname(env.applications), "Library", "Application Support", "Unity");
     await mkdir(machine, { recursive: true });
     await writeFile(path.join(machine, "Unity_lic.ulf"), "<license/>");
     const read = await readFacts(env, null);
