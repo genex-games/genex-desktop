@@ -717,6 +717,10 @@ describe("a run's route when its journal, its folder or the game list can't be r
         },
         { started: 0, scaffolded: 0, inPlace: true, status: "completed" },
       );
+      assert.match(host.prompts()[0] ?? "", /Never write a web starter or a web page into it/, "the lead is told");
+      const godot = await hostOn(Project.GodotGame, { facts: GODOT, turns: [finishes] });
+      await godot.dispatch();
+      assert.doesNotMatch(godot.prompts()[0] ?? "", /web starter/, "a folder of a kind Genex names is told nothing");
     },
   );
 

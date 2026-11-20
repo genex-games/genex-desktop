@@ -514,6 +514,7 @@ describe("new projects start empty", () => {
       { threadId: "t-1", project: "moth" },
       { goal: "a moth game" },
     ).catch((error: Error) => assert.doesNotMatch(error.message, /kind/, "not refused for its kind"));
+    // (The recorder answers no validation, so the launch still stops after it: the order is the proof.)
     assert.deepEqual(
       launch.sequence((method) => method === HostMethod.GameStart || method === HostMethod.GameValidate),
       [HostMethod.GameValidate],
