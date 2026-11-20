@@ -236,6 +236,8 @@ const OWNER_WAIT_MS = 30 * MINUTE_MS;
 const FILE_POLL_MS = 250;
 const SHOT_WAIT_MS = 8 * SECOND_MS;
 const PLAY_WAIT_MS = 15 * SECOND_MS;
+/** How long a refused start of play waits before its one more try: a blocked editor frees within a frame or two. */
+const START_AGAIN_MS = 500;
 /** The play shot's size; the helper's schema needs it on every call. */
 const SHOT_WIDTH = 1280;
 const SHOT_HEIGHT = 720;
@@ -648,7 +650,17 @@ async function probe(port: EditorPort): Promise<PartProbes> {
 
 /** Starts play in the editor and waits until it runs. */
 export async function startPlay(deps: QueueDeps, port: EditorPort) {
-  await port.call(LoopTool.StartPlay, { options: PIE_OPTIONS });
+  const start = () => port.call(LoopTool.StartPlay, { options: PIE_OPTIONS });
+  // Unreal 5.9 runs no tool for the frames a settings change blocks it (a lighter render switched on
+  // just before), and that refusal names its reason only in words, so a refused start is made once
+  // more after a moment. A second start of a play that did begin is refused too: the poll sees it.
+  await start().catch(async (refused: unknown) => {
+    await deps.sleep(START_AGAIN_MS);
+    if (await playing(port)) return;
+    await start().catch(async () => {
+      if (!(await playing(port))) throw refused;
+    });
+  });
   if (!(await pollUntil(deps, () => playing(port), FILE_POLL_MS, PLAY_WAIT_MS)))
     throw new Error(MESSAGE.PlayDidNotStart);
 }

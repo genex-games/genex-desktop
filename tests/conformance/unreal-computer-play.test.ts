@@ -56,6 +56,37 @@ function playTools(
 }
 
 describe("the Unreal plugin's play tools for the computer", () => {
+  // Unreal 5.9 runs no tool for the frames a settings change blocks it, and says so only in words.
+  it("starts play again when the editor refused the first start for a moment", async () => {
+    let refusals = 1;
+    const lead = playTools({
+      overrides: {
+        [LoopTool.StartPlay]: () => {
+          if (refusals-- > 0) throw new Error("Not run: the Unreal Editor is running a slow task.");
+          lead.editor.state.pie = true;
+          return true;
+        },
+      },
+    });
+    assert.deepEqual(await lead.call(EnginePlayTool.Open), { ...ENGINE_PLAY_VIEW, joined: false });
+    assert.equal(lead.tools().filter((tool) => tool === LoopTool.StartPlay).length, 2);
+    assert.equal(await lead.agentPlays(), true);
+  });
+
+  it("gives the throttle back, and keeps no session, when play can't start", async () => {
+    const { call, editor, tools } = playTools({
+      overrides: {
+        [LoopTool.StartPlay]: () => {
+          throw new Error("The level has errors.");
+        },
+      },
+    });
+    await assert.rejects(call(EnginePlayTool.Open), /The level has errors\./);
+    assert.equal(tools().filter((tool) => tool === LoopTool.StartPlay).length, 2, "one more try, no more");
+    assert.deepEqual(written(editor.calls), [false, true], "the throttle went back as it was");
+    assert.deepEqual(await call(EnginePlayTool.Close), { closed: false }, "no session was kept");
+  });
+
   it("starts play with the throttle off, and ends that play and gives the throttle back when it closes", async () => {
     const { call, editor, tools } = playTools();
     assert.deepEqual(await call(EnginePlayTool.Open), { ...ENGINE_PLAY_VIEW, joined: false });

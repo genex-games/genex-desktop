@@ -564,7 +564,9 @@ Epic's server lists:
   visible, enabled button by its text or name through its click event (hit-testing skipped). A game whose
   interface is drawn in C++ Slate or on a HUD canvas lists nothing: screenshots are then the only reading.
 - `light_play {on}` lowers the rendering while an agent plays (screen percentage 50, scalability groups at
-  most 1) and puts each console variable back exactly when the computer tool's play ends.
+  most 1) and puts each console variable back exactly when the computer tool's play ends. Unreal 5.9
+  runs no tool for the frames such a change blocks it, so a refused start of play is made once more
+  (`startPlay`), and an open that can't start play gives the rendering and the throttle back.
 - `pilot {file, seconds, decide}` starts a pilot and `pilot_step {answer, stop}` steps it
   (`genex_play/pilot.py`). A pilot is a `.py` of the project (`Pilots/<goal>.py`, given relative to it,
   no link or `..`; on Windows `\` separates folders too and the path is compared to its real path
@@ -2862,7 +2864,9 @@ packaged Mac app is then let onto the network (`substrate/mac-entitlements.ts`):
 `Sandbox.NoNet.entitlements` (App Sandbox, no network), under which macOS refuses the game every DNS
 lookup, so a sandboxed app without `com.apple.security.network.client` is signed again ad hoc with it
 added and read back; one that can't be fails the package. Like
-`plugin-test` it runs outside ProcessSandbox, with the small environment and its own process group:
+`plugin-test` it runs outside ProcessSandbox, with the small environment and its own process group
+(on Windows attached instead, since a detached AutomationTool has no console and prints nothing, and
+`taskkill /T` ends the tree by process id):
 AutomationTool rewrites its per-user config cache for each new project and the cook needs the
 editor's derived data, Zen store and shader workers, all of which UnrealBuildTool's profile denies.
 On Windows `RunUAT.bat` runs through cmd.exe with every path whole in quotes (`quotedScriptLine`); a

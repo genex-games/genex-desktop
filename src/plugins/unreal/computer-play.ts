@@ -367,7 +367,12 @@ export function createComputerPlay(deps: {
     if (!joined) {
       // Marked before play starts: a probe between the two would read the play as the person's.
       await markerOf(storage, game, queueDeps).started();
-      await startPlay(queueDeps, port);
+      await startPlay(queueDeps, port).catch(async (error: unknown) => {
+        // No session will hold what this one took, so it goes back now.
+        await markerOf(storage, game, queueDeps).stopped();
+        if (!known) await giveBack();
+        throw error;
+      });
       // UE 5.8 has nothing to capture in a play's first moments.
       await playForWhileRunning(queueDeps, port, WARMUP_SECONDS, WARMUP_STILL_MS);
     }
