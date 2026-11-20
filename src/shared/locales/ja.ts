@@ -3566,12 +3566,19 @@ export default {
   "Stop your builds and replies first, then move.": "先にビルドと返信を止めてから移動してください。",
   Stopped: "停止",
   "Stopped adding the Luau checks. Nothing was kept.": "Luauチェックの追加を停止しました。何も保存されていません。",
+  "Stopped before it started — nothing was done. Send a message to go on.":
+    "始まる前に停止しました。何も変更されていません。続行するにはメッセージを送信してください。",
+  "Stopped before the build started — nothing was built.": "ビルドが始まる前に停止しました。何もつくられていません。",
   "Stopped getting Roblox Studio.": "Roblox Studioの入手を止めました。",
   "Stopped getting Roblox Studio. Anything Roblox's installer already put on this computer stays.":
     "Roblox Studioの入手を止めました。Robloxのインストーラーがすでにこのコンピューターに入れたものは残ります。",
   "Stopped play": "プレイを停止しました",
+  "Stopped waiting. Send a message to go on once it's ready.":
+    "待機を停止しました。準備ができたらメッセージを送信して続けてください。",
   "Stopped.": "停止しました。",
   "Stopped. Everything built so far is kept.": "停止しました。ここまでつくったものはすべて残っています。",
+  "Stopped. Finished edits are preserved; send a message to continue.":
+    "停止しました。編集内容は保存されています。続行するにはメッセージを送信してください。",
   "Stopped. What it built is in your game now.": "停止しました。つくったものはゲームに反映されています。",
   "Stopped. What it built is kept in your project.": "停止しました。つくったものはプロジェクトに残っています。",
   "Stopped. Your game is as you left it.": "停止しました。ゲームは元のままです。",

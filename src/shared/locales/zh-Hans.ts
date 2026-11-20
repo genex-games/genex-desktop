@@ -3375,12 +3375,18 @@ export default {
   "Stop your builds and replies first, then move.": "请先停止你的构建和回复，再进行移动。",
   Stopped: "已停止",
   "Stopped adding the Luau checks. Nothing was kept.": "已停止添加 Luau 检查。未保留任何内容。",
+  "Stopped before it started — nothing was done. Send a message to go on.":
+    "开始前已停止，什么都没做。发送消息即可继续。",
+  "Stopped before the build started — nothing was built.": "构建开始前已停止，没有制作任何内容。",
   "Stopped getting Roblox Studio.": "已停止获取 Roblox Studio。",
   "Stopped getting Roblox Studio. Anything Roblox's installer already put on this computer stays.":
     "已停止获取 Roblox Studio。Roblox 安装程序已经放到这台电脑上的内容会保留。",
   "Stopped play": "已停止试玩",
+  "Stopped waiting. Send a message to go on once it's ready.": "已停止等待。准备好后发送消息即可继续。",
   "Stopped.": "已停止。",
   "Stopped. Everything built so far is kept.": "已停止。目前做好的内容都已保留。",
+  "Stopped. Finished edits are preserved; send a message to continue.":
+    "已停止。已完成的修改都已保留，发送消息即可继续。",
   "Stopped. What it built is in your game now.": "已停止。做好的内容已进入你的游戏。",
   "Stopped. What it built is kept in your project.": "已停止。做好的内容保留在你的项目中。",
   "Stopped. Your game is as you left it.": "已停止。你的游戏保持原样。",

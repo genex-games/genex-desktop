@@ -121,6 +121,19 @@ export const MessageUsageSource = {
 } as const;
 export type MessageUsageSource = (typeof MessageUsageSource)[keyof typeof MessageUsageSource];
 
+/**
+ * Which of Genex's own fixed chat lines a `messages` record says (`genex_line`), so the app shows
+ * it in its own language while the record keeps the English the agents read. The seed writes it
+ * (`loop/genex-lines.ts` holds the copy). Persisted: never rename a value.
+ */
+export const GenexLine = {
+  Stopped: "stopped",
+  StoppedWaiting: "stopped_waiting",
+  StoppedBeforeTurn: "stopped_before_turn",
+  StoppedBeforeBuild: "stopped_before_build",
+} as const;
+export type GenexLine = (typeof GenexLine)[keyof typeof GenexLine];
+
 export type EventData =
   | { type: "thread_created"; title?: string; metadata?: Record<string, unknown> }
   | { type: "thread_updated"; title?: string; metadata?: Record<string, unknown> }
@@ -136,6 +149,8 @@ export type EventData =
       usage?: Usage;
       /** Whose engine call `usage` reports when it is not the chat's own: absent on the chat's own calls and older records. */
       usage_source?: MessageUsageSource;
+      /** One of Genex's own fixed lines, by code: the app shows its own words for it. Absent on every other reply. */
+      genex_line?: GenexLine;
     }
   | { type: "tool_requested"; tool_call_id: string; request: { name: string; arguments: unknown } }
   | {

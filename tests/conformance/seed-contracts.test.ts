@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { endsSessions as seedEndsSessions } from "../../src/harness-seed/loop/compaction-log.ts";
 import * as seedDelegatedTurn from "../../src/harness-seed/loop/delegated-turn.ts";
+import * as seedGenexLines from "../../src/harness-seed/loop/genex-lines.ts";
 import * as seedFolderFacts from "../../src/harness-seed/loop/folder-facts.ts";
 import * as seedPagePicture from "../../src/harness-seed/loop/director/open/page-picture.ts";
 import { OPEN_FINISH_PICTURE_LABEL } from "../../src/shared/run-summary.ts";
@@ -104,7 +105,7 @@ import {
   VerdictRule,
 } from "../../src/shared/run-state.ts";
 import { CompletionPolicy as seedCompletionPolicy } from "../../src/harness-seed/loop/completion-policy.ts";
-import { EventKind, type EventEnvelope, MessageUsageSource } from "../../src/shared/event-log.ts";
+import { EventKind, type EventEnvelope, GenexLine, MessageUsageSource } from "../../src/shared/event-log.ts";
 import * as seedEngineSeat from "../../src/harness-seed/loop/engine-seat.ts";
 import { EngineKind, EngineStatusCode } from "../../src/shared/engine-descriptor.ts";
 import { savedByLead } from "../../src/renderer/words.ts";
@@ -450,6 +451,10 @@ describe("vocabularies (src/shared ↔ the seed's copies)", () => {
 
   it("marks a reply's usage source as the log does", () => {
     assert.deepEqual(seedDelegatedTurn.MessageUsageSource, MessageUsageSource);
+  });
+
+  it("names Genex's own chat lines as the log does", () => {
+    assert.deepEqual(seedGenexLines.GenexLine, GenexLine);
   });
 
   it("has the same run execution statuses", () => {

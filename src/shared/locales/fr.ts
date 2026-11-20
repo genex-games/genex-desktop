@@ -3628,12 +3628,19 @@ export default {
   "Stop your builds and replies first, then move.": "Arrête d’abord tes builds et réponses, puis déplace.",
   Stopped: "Arrêté",
   "Stopped adding the Luau checks. Nothing was kept.": "Ajout des vérifications Luau arrêté. Rien n’a été gardé.",
+  "Stopped before it started — nothing was done. Send a message to go on.":
+    "Arrêté avant de commencer : rien n’a été fait. Envoie un message pour continuer.",
+  "Stopped before the build started — nothing was built.": "Arrêté avant le début du build : rien n’a été créé.",
   "Stopped getting Roblox Studio.": "Installation de Roblox Studio arrêtée.",
   "Stopped getting Roblox Studio. Anything Roblox's installer already put on this computer stays.":
     "Installation de Roblox Studio arrêtée. Ce que l’installateur de Roblox a déjà mis sur cet ordinateur reste.",
   "Stopped play": "Jeu arrêté",
+  "Stopped waiting. Send a message to go on once it's ready.":
+    "Attente arrêtée. Envoie un message pour continuer quand tout est prêt.",
   "Stopped.": "Arrêté.",
   "Stopped. Everything built so far is kept.": "Arrêté. Tout ce qui a été créé jusqu’ici est gardé.",
+  "Stopped. Finished edits are preserved; send a message to continue.":
+    "Arrêté. Les modifications terminées sont gardées ; envoie un message pour continuer.",
   "Stopped. What it built is in your game now.": "Arrêté. Ce qui a été créé est maintenant dans ton jeu.",
   "Stopped. What it built is kept in your project.": "Arrêté. Ce qui a été créé est gardé dans ton projet.",
   "Stopped. Your game is as you left it.": "Arrêté. Ton jeu est tel que tu l’as laissé.",

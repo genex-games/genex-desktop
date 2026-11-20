@@ -15,6 +15,7 @@ import { EventKind, ExecutionStatus, RunEvent, writeRunArtifact } from "./run-ev
 import { type ActiveRun, RunnerKind, type RunStart, type Studio, heldRuns } from "./studio-state.ts";
 import { resumeStopped } from "./after-loop-run.ts";
 import { forgetProviderLosses } from "./provider-loss.ts";
+import { GenexLine, genexLineRecord } from "./genex-lines.ts";
 import type { AnyRecord, ForwardedCall, HarnessCtx, HarnessEvent, Host, HostCall, Run } from "../types/harness.d.ts";
 import type { EngineDescriptor, GameProject } from "../types/host-api.d.ts";
 
@@ -45,7 +46,6 @@ const MESSAGE = {
     `A build is already running for **${project}** — nothing new was started. Ask here about the one that is running, or stop it first.`,
   engineExport: (name: string | undefined) =>
     `${name} was exported from a game engine, so the studio cannot edit it — it can only open it, play it and take screenshots. Open the folder with the project's own scenes and scripts, and start the build there.`,
-  stoppedBeforeStart: "Stopped before the build started — nothing was built.",
   olderBuild:
     "This build was paused by an earlier version of Genex and can't go on in this one, so it is closed as it stood: what it built is kept. Ask here for what you want next.",
 } as const;
@@ -402,7 +402,7 @@ async function startReservedRun(
   if (studio.cancels.has(threadId)) {
     // The chat was promised a build: it is told that none started.
     await host
-      .call(HostMethod.EventsAppend, { threadId, batch: [assistantSays(MESSAGE.stoppedBeforeStart)] })
+      .call(HostMethod.EventsAppend, { threadId, batch: [genexLineRecord(GenexLine.StoppedBeforeBuild)] })
       .catch(() => {});
     return;
   }

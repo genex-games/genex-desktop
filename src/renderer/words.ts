@@ -38,6 +38,7 @@ import { EngineFailureKind } from "../shared/engine-requests.ts";
 import { LocalServerProblem } from "../shared/local-server.ts";
 import { computerSettingQuestion, type GithubLookupProblem } from "../shared/plugins.ts";
 import { computerControlOffered } from "../shared/computer-control.ts";
+import { GenexLine } from "../shared/event-log.ts";
 import { CloudBuildFailure, type GenexPublishPhase, MacNotarizeFailure } from "../shared/genex.ts";
 import { PlayCategory, PlayNote, PlayRemixRefusal, PlayShelf, RemixStep } from "../shared/play.ts";
 import {
@@ -2165,6 +2166,17 @@ export const PROJECT_KIND_WORDS = {
 } as const satisfies Partial<Record<CoreFact, string>>;
 
 // ── the chat transcript ───────────────────────────────────────────────────────────────────
+
+/**
+ * Genex's own fixed chat lines, shown by their code (`genex_line`) in the app's language: read
+ * when a transcript is drawn, so a language switch reaches lines already in the chat.
+ */
+export const GENEX_LINE_WORDS = {
+  [GenexLine.Stopped]: () => t("Stopped. Finished edits are preserved; send a message to continue."),
+  [GenexLine.StoppedWaiting]: () => t("Stopped waiting. Send a message to go on once it's ready."),
+  [GenexLine.StoppedBeforeTurn]: () => t("Stopped before it started — nothing was done. Send a message to go on."),
+  [GenexLine.StoppedBeforeBuild]: () => t("Stopped before the build started — nothing was built."),
+} as const satisfies Record<GenexLine, () => string>;
 
 /** The fixed lines, labels and prefills `chat-entries.ts` writes into the transcript. */
 export const TRANSCRIPT_WORDS = {

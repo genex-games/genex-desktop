@@ -3619,12 +3619,19 @@ export default {
   Stopped: "Detenido",
   "Stopped adding the Luau checks. Nothing was kept.":
     "Se dejó de añadir las comprobaciones de Luau. No se guardó nada.",
+  "Stopped before it started — nothing was done. Send a message to go on.":
+    "Detenido antes de empezar: no se hizo nada. Envía un mensaje para continuar.",
+  "Stopped before the build started — nothing was built.": "Detenido antes de que empezara el build: no se creó nada.",
   "Stopped getting Roblox Studio.": "Se dejó de obtener Roblox Studio.",
   "Stopped getting Roblox Studio. Anything Roblox's installer already put on this computer stays.":
     "Se dejó de obtener Roblox Studio. Lo que el instalador de Roblox ya puso en este equipo se queda.",
   "Stopped play": "Detuvo la partida",
+  "Stopped waiting. Send a message to go on once it's ready.":
+    "Se dejó de esperar. Envía un mensaje para seguir cuando esté listo.",
   "Stopped.": "Detenido.",
   "Stopped. Everything built so far is kept.": "Detenido. Todo lo creado hasta ahora se conserva.",
+  "Stopped. Finished edits are preserved; send a message to continue.":
+    "Detenido. Los cambios terminados se conservan; envía un mensaje para continuar.",
   "Stopped. What it built is in your game now.": "Detenido. Lo que creó ya está en tu juego.",
   "Stopped. What it built is kept in your project.": "Detenido. Lo que creó está guardado en tu proyecto.",
   "Stopped. Your game is as you left it.": "Detenido. Tu juego está como lo dejaste.",

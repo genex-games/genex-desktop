@@ -3616,12 +3616,19 @@ export default {
   Stopped: "Parado",
   "Stopped adding the Luau checks. Nothing was kept.":
     "A adição das verificações de Luau foi interrompida. Nada foi guardado.",
+  "Stopped before it started — nothing was done. Send a message to go on.":
+    "Parado antes de começar: nada foi feito. Envie uma mensagem para continuar.",
+  "Stopped before the build started — nothing was built.": "Parado antes de o build começar: nada foi criado.",
   "Stopped getting Roblox Studio.": "O Genex parou de baixar o Roblox Studio.",
   "Stopped getting Roblox Studio. Anything Roblox's installer already put on this computer stays.":
     "O Genex parou de baixar o Roblox Studio. O que o instalador do Roblox já colocou neste computador continua aqui.",
   "Stopped play": "Partida parada",
+  "Stopped waiting. Send a message to go on once it's ready.":
+    "Parei de esperar. Envie uma mensagem para continuar quando estiver pronto.",
   "Stopped.": "Parado.",
   "Stopped. Everything built so far is kept.": "Parado. Tudo o que foi criado até agora foi mantido.",
+  "Stopped. Finished edits are preserved; send a message to continue.":
+    "Parado. As alterações concluídas foram mantidas; envie uma mensagem para continuar.",
   "Stopped. What it built is in your game now.": "Parado. O que foi criado já está no seu jogo.",
   "Stopped. What it built is kept in your project.": "Parado. O que foi criado está guardado no seu projeto.",
   "Stopped. Your game is as you left it.": "Parado. Seu jogo está como você deixou.",

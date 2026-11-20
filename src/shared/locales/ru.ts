@@ -3548,12 +3548,19 @@ export default {
   "Stop your builds and replies first, then move.": "Сначала останови сборки и ответы, потом переноси.",
   Stopped: "Остановлено",
   "Stopped adding the Luau checks. Nothing was kept.": "Добавление проверок Luau остановлено. Ничего не сохранено.",
+  "Stopped before it started — nothing was done. Send a message to go on.":
+    "Остановлено до начала — ничего не сделано. Напиши сообщение, чтобы продолжить.",
+  "Stopped before the build started — nothing was built.": "Остановлено до начала сборки — ничего не собрано.",
   "Stopped getting Roblox Studio.": "Установка Roblox Studio остановлена.",
   "Stopped getting Roblox Studio. Anything Roblox's installer already put on this computer stays.":
     "Установка Roblox Studio остановлена. Всё, что установщик Roblox уже поставил на этот компьютер, останется.",
   "Stopped play": "Игра остановлена",
+  "Stopped waiting. Send a message to go on once it's ready.":
+    "Ожидание остановлено. Напиши сообщение, когда всё будет готово, чтобы продолжить.",
   "Stopped.": "Остановлено.",
   "Stopped. Everything built so far is kept.": "Остановлено. Всё, что успели собрать, сохранено.",
+  "Stopped. Finished edits are preserved; send a message to continue.":
+    "Остановлено. Готовые правки сохранены — напиши сообщение, чтобы продолжить.",
   "Stopped. What it built is in your game now.": "Остановлено. Всё собранное уже в игре.",
   "Stopped. What it built is kept in your project.": "Остановлено. Всё собранное сохранено в твоём проекте.",
   "Stopped. Your game is as you left it.": "Остановлено. Игра осталась как была.",

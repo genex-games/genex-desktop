@@ -36,6 +36,11 @@ language the person writes in, and Genex's own messages in the app's (`studio.la
 - Not translated: identifiers, `data-*` values, storage keys, IPC and event names, log lines,
   model prompts (`*-prompts.ts`), regular expressions that read harness or tool output, and
   everything under `src/harness-seed/` and `src/game-template/`.
+- A fixed line the harness says in the chat (a Stop's "Stopped. Finished edits are preserved…")
+  is recorded in English with a code, `genex_line` (`GenexLine` in `shared/event-log.ts`, the
+  seed's copy in `loop/genex-lines.ts`), and the transcript shows the app's words for that code
+  (`GENEX_LINE_WORDS` in `renderer/words.ts`). A new line gets a code in both copies and its
+  words there; the record keeps the English the agents read.
 - Behavior never depends on displayed words: find elements by `data-*`, not by an `aria-label`.
 
 After adding or changing messages, run `npm run i18n:extract`, then add each new key to every
@@ -110,3 +115,6 @@ Per language:
   spaces between Japanese and Latin words.
 - **한국어**: 해요체; buttons as nouns ("게시하기"); a space after Latin words as Korean spacing needs.
 - **简体中文**: concise; full-width ，。：；a space between Chinese and Latin words or digits.
+
+The README has a copy per language (`README.<locale>.md`, with the same language line at the
+top of each): a README change updates every copy in the same pull request.

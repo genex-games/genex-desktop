@@ -3482,12 +3482,19 @@ export default {
   "Stop your builds and replies first, then move.": "먼저 빌드와 답변을 멈춘 다음 옮기세요.",
   Stopped: "중지됨",
   "Stopped adding the Luau checks. Nothing was kept.": "Luau 검사 추가를 중지했어요. 아무것도 보관하지 않았어요.",
+  "Stopped before it started — nothing was done. Send a message to go on.":
+    "시작하기 전에 중지했어요. 아무것도 하지 않았어요. 계속하려면 메시지를 보내 주세요.",
+  "Stopped before the build started — nothing was built.": "빌드가 시작되기 전에 중지했어요. 아무것도 만들지 않았어요.",
   "Stopped getting Roblox Studio.": "Roblox Studio 받기를 멈췄어요.",
   "Stopped getting Roblox Studio. Anything Roblox's installer already put on this computer stays.":
     "Roblox Studio 받기를 멈췄어요. Roblox 설치 프로그램이 이미 이 컴퓨터에 넣은 것은 그대로 남아요.",
   "Stopped play": "플레이를 멈췄어요",
+  "Stopped waiting. Send a message to go on once it's ready.":
+    "기다리기를 멈췄어요. 준비되면 메시지를 보내 계속하세요.",
   "Stopped.": "중지했어요.",
   "Stopped. Everything built so far is kept.": "중지했어요. 지금까지 만든 것은 모두 남아 있어요.",
+  "Stopped. Finished edits are preserved; send a message to continue.":
+    "중지했어요. 완료된 수정 사항은 저장돼 있어요. 계속하려면 메시지를 보내 주세요.",
   "Stopped. What it built is in your game now.": "중지했어요. 만든 것은 이제 게임에 반영돼 있어요.",
   "Stopped. What it built is kept in your project.": "중지했어요. 만든 것은 프로젝트에 남아 있어요.",
   "Stopped. Your game is as you left it.": "중지했어요. 게임은 그대로예요.",
