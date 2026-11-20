@@ -307,7 +307,8 @@ describe("installing Unity Hub for the person", () => {
     assert.equal(mac.ran[5]?.[1], "detach");
     // Copied beside under another name and renamed into place: a half-copied Hub never reads as installed.
     assert.notEqual(mac.ran[4]?.[2], macPath(mac.env.applications, "Unity Hub.app"));
-    assert.equal(path.posix.dirname(mac.ran[4]?.[2] ?? ""), mac.env.applications);
+    // The copy is the app-wide installer's, which joins with this computer's separator.
+    assert.equal(path.dirname(mac.ran[4]?.[2] ?? ""), path.normalize(mac.env.applications));
     assert.deepEqual(await readdir(mac.env.applications), ["Unity Hub.app"], "in Applications, and nothing else left");
     assert.equal(await mac.installer.job(), null);
     assert.deepEqual(await readdir(path.join(mac.storage, "unity-setup")), ["mount"], "the disk image is gone");
