@@ -85,11 +85,37 @@ const READY_WEB_GAME = [
 ];
 
 /**
- * Whether the engine in `engineDir` holds its own ready-made web game, which Unreal packages a game
- * with no C++ module from (5.9 from Preview 2; Preview 1 built web games from C++ projects only).
+ * The build of Unreal 5.9 Preview 1, whose Windows install holds the receipt too while its own build
+ * tool refuses a game with no C++ module ("Web (Wasm) in UE 5.9 Preview 1 needs a C++ project").
  */
-export const engineHoldsWebGame = (engineDir: string): Promise<boolean> =>
-  isPlainFile(path.join(engineDir, ...READY_WEB_GAME));
+const CPP_ONLY_WEB_CHANGELIST = 60351404;
+const MAX_RECEIPT_BYTES = 4 * 1024 * 1024;
+
+/** The engine build a receipt names (`Version.Changelist`), or undefined when it is no receipt. */
+function receiptChangelist(text: string): number | undefined {
+  let receipt: unknown;
+  try {
+    receipt = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (typeof receipt !== "object" || receipt === null || !("Version" in receipt)) return undefined;
+  const version = receipt.Version;
+  if (typeof version !== "object" || version === null || !("Changelist" in version)) return undefined;
+  return typeof version.Changelist === "number" ? version.Changelist : undefined;
+}
+
+/**
+ * Whether the engine in `engineDir` holds its own ready-made web game, which Unreal packages a game
+ * with no C++ module from (5.9 from Preview 2; Preview 1 built web games from C++ projects only,
+ * whatever its install holds).
+ */
+export async function engineHoldsWebGame(engineDir: string): Promise<boolean> {
+  const file = path.join(engineDir, ...READY_WEB_GAME);
+  const text = await readRegularFile(file, MAX_RECEIPT_BYTES).catch(() => undefined);
+  const changelist = text === undefined ? undefined : receiptChangelist(text.toString("utf8"));
+  return changelist !== undefined && changelist !== CPP_ONLY_WEB_CHANGELIST;
+}
 
 /** The emscripten version the engine in `engineDir` builds web games with; undefined when it names none. */
 export async function emscriptenFor(engineDir: string): Promise<string | undefined> {

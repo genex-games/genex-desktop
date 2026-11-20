@@ -1202,7 +1202,8 @@ What differs on 5.9 beyond that table:
   `system: "web"` on a computer whose Unreal includes that platform (the Mac launcher build from
   Preview 2; Preview 1's held none, and the call is refused there). A game with no C++ module is
   packaged from the engine's own web game where the install holds one (`engineHoldsWebGame`: from
-  Preview 2), and refused with what to do where it doesn't. The emsdk folder is named by
+  Preview 2; Preview 1's Windows install holds that game's receipt and still builds C++ games only,
+  so the receipt's build is read), and refused with what to do where it doesn't. The emsdk folder is named by
   `WASM_EMSDK_ROOT` or `EMSDK`: on Windows as the registry holds them, elsewhere as Genex's own
   environment has them and then as the login shell does (`readLoginVariable`), since an app started
   from the Dock inherits no terminal's variables.
