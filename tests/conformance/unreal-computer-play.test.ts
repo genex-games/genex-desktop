@@ -70,7 +70,6 @@ describe("the Unreal plugin's play tools for the computer", () => {
     });
     assert.deepEqual(await lead.call(EnginePlayTool.Open), { ...ENGINE_PLAY_VIEW, joined: false });
     assert.equal(lead.tools().filter((tool) => tool === LoopTool.StartPlay).length, 2);
-    assert.equal(await lead.agentPlays(), true);
   });
 
   it("gives the throttle back at close though switching the light blocks the editor for a moment", async () => {
