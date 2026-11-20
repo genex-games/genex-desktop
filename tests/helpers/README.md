@@ -115,6 +115,9 @@ folder listing wins. Rules for tests are in [tests/AGENTS.md](../AGENTS.md).
 - `failure-codes.ts`: the analytics failure-code suites' hostile inputs (words, paths, Node codes
   and ids that must never reach an event property, thrown values that must read as no code) and
   `crossed`, a failure carried across IPC as the app carries it (main's `handle`, then the preload).
+- `links.ts`: `linkFolder` and `linkFile` for a test that must also run on Windows, where a folder
+  is linked with a junction (no privilege needed) and a linked file can be made only where
+  `FILE_LINKS` says so; a case about a linked file joins its table behind that check.
 - `processes.ts`: `running(pid)`, whether a process still runs. A test that proves a stop left
   nothing behind asks it, not `process.kill(pid, 0)`, which also finds a process that exited but
   is not reaped yet.

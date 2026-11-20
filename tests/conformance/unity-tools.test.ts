@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { agentPlayFolder, agentPlayMarker } from "../../src/plugins/unity/agent-play.ts";
 import { createUnityBackend, UnityTool } from "../../src/plugins/unity/backend.ts";
@@ -9,6 +9,7 @@ import { type Launch, openProjectLaunch } from "../../src/plugins/unity/editor-l
 import type { UnityEditor } from "../../src/plugins/unity/editors.ts";
 import { PIPELINE_VERSION } from "../../src/plugins/unity/pipeline.ts";
 import { rememberedProject } from "../../src/plugins/unity/project-folder.ts";
+import { linkFolder } from "../helpers/links.ts";
 import {
   backendOn,
   commandsSent,
@@ -336,7 +337,7 @@ describe("open-editor", () => {
     await mkdir(path.join(outside, "__Backupscenes"));
     await writeFile(path.join(outside, "__Backupscenes", "0.backup"), "someone else's");
     const other = await withProject(linked.game, "6000.3.10f1", { "com.unity.pipeline": PIPELINE_VERSION });
-    await symlink(outside, path.join(other, "Temp"));
+    await linkFolder(outside, path.join(other, "Temp"));
     assert.doesNotMatch(String(await linked.call(UnityTool.OpenEditor)), /backups of scenes/);
     assert.equal(
       existsSync(path.join(outside, "__Backupscenes", "0.backup")),

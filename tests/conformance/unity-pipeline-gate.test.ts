@@ -1,9 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { commandAllowed, type GatePlace, GateRefusal, gateCall } from "../../src/plugins/unity/pipeline-gate.ts";
 import type { PipelineCommand } from "../../src/plugins/unity/pipeline.ts";
+import { FILE_LINKS, linkFile, linkFolder } from "../helpers/links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 /** A catalogue entry as the editor lists it, with each parameter's type. */
@@ -133,8 +134,7 @@ describe("the gate on Unity's Pipeline commands", () => {
 
   it("keeps every file a command names inside the game's folder, by real path", async () => {
     const at = await place();
-    await symlink(at.outside, path.join(at.root, "Assets", "Linked"));
-    await symlink(path.join(at.outside, "secret.txt"), path.join(at.game, "assets", "secret.txt"));
+    await linkFolder(at.outside, path.join(at.root, "Assets", "Linked"));
     const inside: Array<[string, Record<string, unknown>]> = [
       ["open_scene", { path: "Assets/Scenes/Main.unity" }],
       ["open_scene", { path: "Scenes/Main.unity" }],
@@ -154,7 +154,6 @@ describe("the gate on Unity's Pipeline commands", () => {
       ["import_asset", { source: "../../outside.txt", path: "x.txt" }, "source"],
       ["import_asset", { source: "..\\..\\outside.txt", path: "x.txt" }, "source"],
       ["import_asset", { source: path.join(at.outside, "secret.txt"), path: "x.txt" }, "source"],
-      ["import_asset", { source: "../assets/secret.txt", path: "x.txt" }, "source"],
       ["import_asset", { source: "Assets/Linked/secret.txt", path: "x.txt" }, "source"],
       ["import_asset", { source: "../assets/ship.glb", path: "Assets/Linked/new/ship.glb" }, "path"],
       ["capture_game_view", { save_path: path.join(at.outside, "shot.png") }, "save_path"],
@@ -166,6 +165,11 @@ describe("the gate on Unity's Pipeline commands", () => {
       ["run_script", { file: path.join(at.outside, "Build.cs") }, "file"],
       ["run_script", { file: "../../Build.cs" }, "file"],
     ];
+    // A linked file can be made only where the computer allows it (helpers/links.ts).
+    if (FILE_LINKS) {
+      await linkFile(path.join(at.outside, "secret.txt"), path.join(at.game, "assets", "secret.txt"));
+      hostile.push(["import_asset", { source: "../assets/secret.txt", path: "x.txt" }, "source"]);
+    }
     for (const [name, parameters, parameter] of hostile)
       assert.deepEqual(
         await gate(at, name, parameters),

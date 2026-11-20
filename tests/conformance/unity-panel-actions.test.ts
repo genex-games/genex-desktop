@@ -13,6 +13,7 @@ import { backendOn, commandsSent, look, manifestOf, ok, ready, withProject } fro
 import {
   editorRow,
   json,
+  macPath,
   type Reply,
   refusedConnection,
   STAND_IN,
@@ -284,7 +285,7 @@ describe("the Unity panel's actions", () => {
     assert.deepEqual(without.launches, [{ command: "/usr/bin/open", args: [UNITY_DOWNLOAD_URL], detached: false }]);
 
     const withHub = await backendOn([]);
-    const hub = path.join(withHub.env.applications, "Unity Hub.app");
+    const hub = macPath(withHub.env.applications, "Unity Hub.app");
     await mkdir(path.join(hub, "Contents"), { recursive: true });
     assert.deepEqual(await withHub.act(UnityAction.GetUnity, { url: "https://example.com", app: "/bin/sh" }), {
       opened: "hub",

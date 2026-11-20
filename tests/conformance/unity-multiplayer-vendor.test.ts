@@ -153,7 +153,10 @@ describe("refreshing the vendored package", () => {
       ["another version", () => sdkRepo("0.9.0"), "0.8.0"],
       ["another package", () => sdkRepo("0.8.0", "com.other.package"), "0.8.0"],
       ["a commit it lacks", async () => ({ ...(await sdkRepo("0.8.0")), commit: "0".repeat(40) }), "0.8.0"],
-      [
+    ];
+    // Git keeps a link as a link only where the disk has them; on Windows it commits a plain file.
+    if (process.platform !== "win32")
+      cases.push([
         "a link in the package",
         async () => {
           const { repo } = await sdkRepo("0.8.0");
@@ -161,8 +164,7 @@ describe("refreshing the vendored package", () => {
           return { repo, commit: await commitAll(repo) };
         },
         "0.8.0",
-      ],
-    ];
+      ]);
     for (const [name, arrange, version] of cases) {
       const { repo, commit } = await arrange();
       const out = await tmpDir("studio-unity-vendor-");

@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, readdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createProject, NewProjectRefusal, newProjectDependencies } from "../../src/plugins/unity/new-project.ts";
 import { PIPELINE_VERSION } from "../../src/plugins/unity/pipeline.ts";
@@ -12,6 +12,7 @@ import {
   setUpProject,
   undoSetup,
 } from "../../src/plugins/unity/setup.ts";
+import { FILE_LINKS, linkFile, linkFolder } from "../helpers/links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import { fakeEditor, macEnv, unityProject } from "../helpers/unity-editor-stand-in.ts";
 
@@ -83,10 +84,10 @@ describe("a new game's Unity project", () => {
       ],
       ["a folder named unity", (game) => mkdir(path.join(game, "unity")), NewProjectRefusal.PlaceTaken],
       ["a file named unity", (game) => writeFile(path.join(game, "unity"), "notes"), NewProjectRefusal.PlaceTaken],
-      ["a link named unity", (game) => symlink(outside, path.join(game, "unity")), NewProjectRefusal.PlaceTaken],
+      ["a link named unity", (game) => linkFolder(outside, path.join(game, "unity")), NewProjectRefusal.PlaceTaken],
       [
         "a link named unity that leads nowhere",
-        (game) => symlink(path.join(outside, "gone"), path.join(game, "unity")),
+        (game) => linkFolder(path.join(outside, "gone"), path.join(game, "unity")),
         NewProjectRefusal.PlaceTaken,
       ],
     ];
@@ -225,22 +226,10 @@ describe("setting an existing Unity project up", () => {
         SetupRefusal.NoManifest,
       ],
       [
-        "a manifest that is a link out of the project",
-        async () => {
-          const root = await unityProject();
-          await mkdir(path.join(root, "Packages"));
-          await symlink(outside.file, path.join(root, "Packages", "manifest.json"));
-          return {
-            place: { root, editorVersion: "6000.6.0f1", storage: await realTmp("unity-storage-"), game: "lantern" },
-          };
-        },
-        SetupRefusal.Unreadable,
-      ],
-      [
         "a Packages folder that is a link out of the project",
         async () => {
           const root = await unityProject();
-          await symlink(path.dirname(outside.file), path.join(root, "Packages"));
+          await linkFolder(path.dirname(outside.file), path.join(root, "Packages"));
           return {
             place: { root, editorVersion: "6000.6.0f1", storage: await realTmp("unity-storage-"), game: "lantern" },
           };
@@ -248,6 +237,20 @@ describe("setting an existing Unity project up", () => {
         SetupRefusal.Unreadable,
       ],
     ];
+    // A linked file can be made only where the computer allows it (helpers/links.ts).
+    if (FILE_LINKS)
+      refused.push([
+        "a manifest that is a link out of the project",
+        async () => {
+          const root = await unityProject();
+          await mkdir(path.join(root, "Packages"));
+          await linkFile(outside.file, path.join(root, "Packages", "manifest.json"));
+          return {
+            place: { root, editorVersion: "6000.6.0f1", storage: await realTmp("unity-storage-"), game: "lantern" },
+          };
+        },
+        SetupRefusal.Unreadable,
+      ]);
     const untouched = await readFile(outside.file, "utf8");
     for (const [what, arrange, code] of refused) {
       const { place } = await arrange();

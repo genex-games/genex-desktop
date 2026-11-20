@@ -83,6 +83,12 @@ export function editor(replies: Reply[], { alive = true }: { alive?: boolean | (
   return { deps, seen, sleeps };
 }
 
+/**
+ * A path on the stand-in Mac, joined the way the app joins a Mac's: with "/" whatever computer the
+ * test runs on, so what a test expects is spelled as the app spells it on Windows too.
+ */
+export const macPath = (...parts: string[]): string => path.posix.join(...parts);
+
 /** A Mac's folders in a temporary place: a home holding Hub's records folder, and its Applications. */
 export async function macEnv(): Promise<EditorsEnv> {
   const base = await realpath(await tmpDir("unity-mac-"));
@@ -124,7 +130,7 @@ export async function fakeEditor(
   version: string,
   packages: Record<string, string | null> = {},
 ): Promise<UnityEditor> {
-  const app = path.join(folder, version, "Unity.app");
+  const app = macPath(folder, version, "Unity.app");
   const builtIn = path.join(app, "Contents", "Resources", "PackageManager", "BuiltInPackages");
   await mkdir(builtIn, { recursive: true });
   for (const [name, packageVersion] of Object.entries(packages)) {

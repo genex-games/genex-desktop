@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, realpath, symlink } from "node:fs/promises";
+import { mkdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import {
   editorStatus,
@@ -9,6 +9,7 @@ import {
   readDescriptor,
   runCommand,
 } from "../../src/plugins/unity/pipeline.ts";
+import { FILE_LINKS, linkFile, linkFolder } from "../helpers/links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import {
   droppedConnection,
@@ -69,17 +70,7 @@ describe("the descriptor of an editor's Pipeline server", () => {
       ["no descriptor", async () => {}],
       [
         "a Library folder that is a link out of the project",
-        (root) => symlink(path.join(outside, "Library"), path.join(root, "Library")),
-      ],
-      [
-        "a descriptor that is a link out of the project",
-        async (root) => {
-          await mkdir(path.join(root, "Library", "Pipeline"), { recursive: true });
-          await symlink(
-            path.join(outside, "Library", "Pipeline", ".unity-pipeline-port"),
-            path.join(root, "Library", "Pipeline", ".unity-pipeline-port"),
-          );
-        },
+        (root) => linkFolder(path.join(outside, "Library"), path.join(root, "Library")),
       ],
       [
         "a descriptor that is a folder",
@@ -107,6 +98,18 @@ describe("the descriptor of an editor's Pipeline server", () => {
         (root) => writeDescriptor(root, { pid: PID, port: PORT, evalToken: TOKEN, pad: "x".repeat(17_000) }),
       ],
     ];
+    // A linked file can be made only where the computer allows it (helpers/links.ts).
+    if (FILE_LINKS)
+      unbelieved.push([
+        "a descriptor that is a link out of the project",
+        async (root) => {
+          await mkdir(path.join(root, "Library", "Pipeline"), { recursive: true });
+          await linkFile(
+            path.join(outside, "Library", "Pipeline", ".unity-pipeline-port"),
+            path.join(root, "Library", "Pipeline", ".unity-pipeline-port"),
+          );
+        },
+      ]);
     for (const [what, arrange] of unbelieved) {
       const root = await realpath(await tmpDir("unity-pipeline-"));
       await arrange(root);

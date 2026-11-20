@@ -7,7 +7,7 @@
  * checked before anything is written, and nothing is written through a link.
  */
 import assert from "node:assert/strict";
-import { lstat, mkdir, readdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import type { PluginScalar } from "../../src/plugin-sdk/index.d.ts";
@@ -20,6 +20,7 @@ import {
   SETTINGS_FILE,
 } from "../../src/plugins/unity/multiplayer.ts";
 import { readSkillFile } from "../../src/substrate/plugins/manifest.ts";
+import { linkFolder } from "../helpers/links.ts";
 import { backendOn, MULTIPLAYER_PACKAGE_SOURCE, manifestOf, realTmp, withProject } from "../helpers/unity-backend.ts";
 
 const UNITY_6 = "6000.0.30f1";
@@ -157,7 +158,7 @@ describe("Genex multiplayer in a Unity game", () => {
       const game = await unityGame();
       const outside = await realTmp("unity-outside-");
       await mkdir(path.dirname(path.join(game.root, at)), { recursive: true });
-      await symlink(outside, path.join(game.root, at));
+      await linkFolder(outside, path.join(game.root, at));
       await assert.rejects(game.call({ slug: "tank-arena" }), /link/, at);
       assert.deepEqual(await readdir(outside), [], `${at}: nothing written outside the project`);
     }

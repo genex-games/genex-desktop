@@ -10,6 +10,7 @@ import {
   fakeEditor,
   json,
   macEnv,
+  macPath,
   pluginContext,
   processTable,
   type Reply,
@@ -35,7 +36,7 @@ export const commandsSent = (seen: Seen[]) =>
 /** A Mac with these Unity versions installed by Hub. */
 export async function mac(versions: string[]): Promise<{ env: EditorsEnv; editors: UnityEditor[] }> {
   const env = await macEnv();
-  const folder = path.join(env.applications, "Unity", "Hub", "Editor");
+  const folder = macPath(env.applications, "Unity", "Hub", "Editor");
   const editors: UnityEditor[] = [];
   for (const version of versions)
     editors.push(await fakeEditor(folder, version, { "com.unity.modules.physics": null, "com.unity.ugui": "2.0.0" }));

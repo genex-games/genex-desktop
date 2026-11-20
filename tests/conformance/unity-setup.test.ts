@@ -31,7 +31,7 @@ import {
   releasesIn,
   UNITY_TEAM_ID,
 } from "../../src/plugins/unity/unity-install.ts";
-import { fakeEditor, macEnv, pluginContext } from "../helpers/unity-editor-stand-in.ts";
+import { fakeEditor, macEnv, macPath, pluginContext } from "../helpers/unity-editor-stand-in.ts";
 import { realTmp } from "../helpers/unity-backend.ts";
 
 const GB = 1024 ** 3;
@@ -163,14 +163,14 @@ describe("what the card reads on a Mac", () => {
     const env = await macEnv();
     assert.deepEqual(await readFacts(env, null), facts());
     await mkdir(path.join(env.applications, "Unity Hub.app"));
-    const editors = path.join(env.applications, "Unity", "Hub", "Editor");
+    const editors = macPath(env.applications, "Unity", "Hub", "Editor");
     await fakeEditor(editors, "2022.3.13f1");
     await fakeEditor(editors, "6000.3.26f1");
     const machine = path.join(path.dirname(env.applications), "Library", "Application Support", "Unity");
     await mkdir(machine, { recursive: true });
     await writeFile(path.join(machine, "Unity_lic.ulf"), "<license/>");
     const read = await readFacts(env, null);
-    assert.equal(read.hub, path.join(env.applications, "Unity Hub.app"));
+    assert.equal(read.hub, macPath(env.applications, "Unity Hub.app"));
     assert.equal(read.signedIn, true, "the machine-wide license counts");
     assert.equal(read.editor?.version, "6000.3.26f1");
 
@@ -306,7 +306,7 @@ describe("installing Unity Hub for the person", () => {
     assert.ok(mac.ran[1]?.some((arg) => arg.startsWith("-R=anchor apple generic") && arg.includes(UNITY_TEAM_ID)));
     assert.equal(mac.ran[5]?.[1], "detach");
     // Copied beside under another name and renamed into place: a half-copied Hub never reads as installed.
-    assert.notEqual(mac.ran[4]?.[2], path.join(mac.env.applications, "Unity Hub.app"));
+    assert.notEqual(mac.ran[4]?.[2], macPath(mac.env.applications, "Unity Hub.app"));
     assert.equal(path.dirname(mac.ran[4]?.[2] ?? ""), mac.env.applications);
     assert.deepEqual(await readdir(mac.env.applications), ["Unity Hub.app"], "in Applications, and nothing else left");
     assert.equal(await mac.installer.job(), null);
@@ -328,7 +328,7 @@ describe("installing Unity 6 through Hub", () => {
   it("starts Hub's install of the chosen release on its own, and the card follows it to its stop", async () => {
     const mac = await installMac({ hub: true });
     await mac.installer.installEditor();
-    const hubProgram = path.join(mac.env.applications, "Unity Hub.app", "Contents", "MacOS", "Unity Hub");
+    const hubProgram = macPath(mac.env.applications, "Unity Hub.app", "Contents", "MacOS", "Unity Hub");
     assert.deepEqual(
       mac.started.map((run) => [run.command, run.args]),
       [[hubProgram, ["--", "--headless", "install", "--version", "6000.6.6f1", "--architecture", "arm64"]]],
@@ -512,7 +512,7 @@ describe("Do it for me", () => {
     mac.installer.setUp();
     await mac.installer.running();
     assert.deepEqual(mac.opened, [
-      { command: "/usr/bin/open", args: ["-a", path.join(mac.env.applications, "Unity Hub.app")], detached: false },
+      { command: "/usr/bin/open", args: ["-a", macPath(mac.env.applications, "Unity Hub.app")], detached: false },
     ]);
     assert.deepEqual(seen, [{ kind: JobKind.SignIn, state: JobState.Running }], "the card waits on the sign-in");
     assert.equal(mac.started.length, 1, "Unity 6's install started once the person signed in");
