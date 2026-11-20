@@ -24,6 +24,7 @@ import {
   type RunUat,
   type UatLaunch,
   uatLaunch,
+  uatSpawnOptions,
 } from "../../src/plugins/unreal/game-package.ts";
 import { MacEntitlement, type MacEntitlements, systemMacSigner } from "../../src/substrate/mac-entitlements.ts";
 import { uatEnv } from "../../src/plugins/unreal/program-env.ts";
@@ -175,6 +176,21 @@ describe("packaging an Unreal game", () => {
       assert.throws(() => uatLaunch(engine, [hostile], "win32", {}), hostile);
     const mac = uatLaunch(ENGINE, ["BuildCookRun"], "darwin");
     assert.deepEqual([mac.file, ...mac.args], [`${ENGINE}/Engine/Build/BatchFiles/RunUAT.sh`, "BuildCookRun"]);
+  });
+
+  it("starts RunUAT attached on Windows, where a detached one prints nothing, and in its own group elsewhere", () => {
+    const windows = uatLaunch("C:\\UE_5.9", ["BuildCookRun"], "win32", { ComSpec: "C:\\Windows\\System32\\cmd.exe" });
+    const onWindows = uatSpawnOptions(windows, "win32");
+    assert.equal(onWindows.detached, false);
+    assert.equal(onWindows.windowsHide, true);
+    assert.equal(onWindows.windowsVerbatimArguments, true);
+    assert.deepEqual(onWindows.stdio, ["ignore", "pipe", "pipe"]);
+    const mac = { ...uatLaunch(ENGINE, ["BuildCookRun"], "darwin"), env: { WASM_EMSDK_ROOT: "/opt/emsdk" } };
+    for (const platform of ["darwin", "linux"] as const) {
+      const options = uatSpawnOptions(mac, platform);
+      assert.equal(options.detached, true, platform);
+      assert.equal(options.env?.WASM_EMSDK_ROOT, "/opt/emsdk");
+    }
   });
 
   it("saves Unreal's work first, then names the Mac app the stage holds", async () => {

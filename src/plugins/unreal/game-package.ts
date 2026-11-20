@@ -28,7 +28,7 @@
  * what they see; an Unreal that answers but can't save leaves nothing packaged. One package runs
  * per project; what reaches an agent names paths relative to the game, never the computer's.
  */
-import { spawn } from "node:child_process";
+import { type SpawnOptions, spawn } from "node:child_process";
 import { lstat, readdir, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import type { PluginContext } from "../../plugin-sdk/index.d.ts";
@@ -358,16 +358,27 @@ export function uatLaunch(
   return { file: commandInterpreter(env), args: ["/d", "/v:off", "/s", "/c", `"${line}"`], verbatim: true };
 }
 
-/** The product's runner: no shell, the small environment, a process group of its own, output within the cap. */
+/**
+ * How RunUAT's process starts on `platform`: no shell, the small environment, its output piped. On a
+ * Mac and Linux it leads a process group of its own, which ending it signals. On Windows it stays
+ * attached: `taskkill /T` ends its tree by process id, and a detached one has no console, where
+ * AutomationTool prints nothing to the pipe (all that arrived was RunUAT.bat's own two lines, so a
+ * finished package read as failed).
+ */
+export function uatSpawnOptions(launch: UatLaunch, platform: NodeJS.Platform): SpawnOptions {
+  return {
+    env: { ...uatEnv(), ...launch.env },
+    detached: platform !== WINDOWS,
+    windowsHide: true,
+    windowsVerbatimArguments: launch.verbatim,
+    stdio: ["ignore", "pipe", "pipe"],
+  };
+}
+
+/** The product's runner: RunUAT as {@link uatSpawnOptions} starts it, its output within the cap. */
 export const systemRunUat: RunUat = (launch, { signal, timeoutMs }) =>
   new Promise((resolve, reject) => {
-    const child = spawn(launch.file, launch.args, {
-      env: { ...uatEnv(), ...launch.env },
-      detached: true,
-      windowsHide: true,
-      windowsVerbatimArguments: launch.verbatim,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const child = spawn(launch.file, launch.args, uatSpawnOptions(launch, process.platform));
     const output = outputCollector();
     child.stdout?.on("data", output.add);
     child.stderr?.on("data", output.add);
