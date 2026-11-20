@@ -6334,4 +6334,6 @@ export default {
   "Sees images": "이미지 인식",
   "Step {n} of {total} · {name}": "{total}단계 중 {n}단계 · {name}",
   "Version {version} is in your game": "버전 {version}이 게임에 들어갔어요",
+  "Show all {count}": "{count}개 모두 보기",
+  "{at} of {count}": "{at} / {count}",
 } satisfies LocaleCatalog;

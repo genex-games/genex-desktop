@@ -6523,4 +6523,6 @@ export default {
   "Sees images": "Распознает изображения",
   "Step {n} of {total} · {name}": "Шаг {n} из {total} · {name}",
   "Version {version} is in your game": "Версия {version} уже в игре",
+  "Show all {count}": "Показать все {count}",
+  "{at} of {count}": "{at} из {count}",
 } satisfies LocaleCatalog;

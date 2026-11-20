@@ -55,3 +55,33 @@ test("a still already read is there at once for a card that mounts again; a retr
     restore();
   }
 });
+
+test("a long list's thumbnails are read a few at a time, and an opened picture never waits behind them", async () => {
+  let running = 0;
+  let most = 0;
+  const gates: Array<() => void> = [];
+  const studio = fakeStudioApi({
+    readRunStill: async (file) => {
+      running++;
+      most = Math.max(most, running);
+      if (file.startsWith("row-")) await new Promise<void>((resolve) => gates.push(resolve));
+      running--;
+      return { mimeType: "image/jpeg", data: file };
+    },
+  });
+  const restore = installFakeStudio(studio);
+  try {
+    const rows = Array.from({ length: 30 }, (_, i) => loadStill({ run: `row-${i}`, maxPx: 256 }));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(running, 4, "four thumbnails at once, the rest wait their turn");
+    assert.equal(await loadStill({ run: "opened" }), "data:image/jpeg;base64,opened", "a full picture is read at once");
+    while (gates.length) {
+      gates.shift()?.();
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    await Promise.all(rows);
+    assert.ok(most <= 5, `never more than the lane and the opened picture at once (saw ${most})`);
+  } finally {
+    restore();
+  }
+});

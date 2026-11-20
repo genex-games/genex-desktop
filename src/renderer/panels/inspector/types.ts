@@ -13,6 +13,7 @@ import type { NoteTarget } from "../../reply-about.ts";
 import type { PartRow, Step } from "../../run-steps.ts";
 import type { BuildTimeline } from "../../run-graph-builds.ts";
 import type { Notify } from "../../state/toasts.ts";
+import type { StillSource } from "../../stills.ts";
 
 export type { NoteTarget } from "../../reply-about.ts";
 
@@ -26,10 +27,12 @@ export interface Reply {
   target?: NoteTarget;
 }
 
-/** The lightbox's one picture: a run-folder still by path, or a data URL already in hand. */
+/** The lightbox's one picture: a run-folder still by path, a picture read by `still`, or a data URL already in hand. */
 export interface LightItem {
   path: string | null;
   src: string | null;
+  /** where the picture is read from, when it is neither a run-folder still by path nor in hand */
+  still?: StillSource;
   title: string;
   caption: string;
 }

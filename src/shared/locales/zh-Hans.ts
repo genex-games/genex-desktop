@@ -6112,4 +6112,6 @@ export default {
   "Sees images": "可识图",
   "Step {n} of {total} · {name}": "第 {n} 步，共 {total} 步 · {name}",
   "Version {version} is in your game": "版本 {version} 已加入你的游戏",
+  "Show all {count}": "显示全部 {count} 个",
+  "{at} of {count}": "第 {at} 个，共 {count} 个",
 } satisfies LocaleCatalog;

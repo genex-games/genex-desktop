@@ -6488,4 +6488,6 @@ export default {
   "Sees images": "画像認識",
   "Step {n} of {total} · {name}": "ステップ {n}/{total} · {name}",
   "Version {version} is in your game": "バージョン {version} がゲームに入りました",
+  "Show all {count}": "すべて表示（{count}）",
+  "{at} of {count}": "{at} / {count}",
 } satisfies LocaleCatalog;

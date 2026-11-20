@@ -1,30 +1,48 @@
-/** The Builds tab's lightbox: one still at a time, stepped with the arrow keys when there are several. */
+/**
+ * The Builds tab's lightbox: one picture at a time over the whole window, at its own shape with
+ * nothing framed around it, Close in the top corner (the app's own lightbox, `ui/Lightbox.tsx`);
+ * with several, ← and → step through them and the bar under the picture says which one it is.
+ */
 import type { JSX } from "react";
 import { useEffect } from "react";
 import { t } from "../../../shared/i18n.ts";
-import { useStill } from "../../stills.ts";
-import { Button } from "../../ui/Button.tsx";
-import { PanelButton } from "./chrome.tsx";
-import type { LightItem } from "./types.ts";
+import { useStillRead } from "../../stills.ts";
+import { Icon } from "../../ui/icons.tsx";
+import { Lightbox as WindowLightbox } from "../../ui/Lightbox.tsx";
 import { Pending } from "../../ui/Pending.tsx";
 import { Skeleton } from "../../ui/Skeleton.tsx";
+import type { LightItem } from "./types.ts";
 
-/** One still over the Builds tab, with its title and caption. */
+const MESSAGE = {
+  loading: t("Loading…"),
+  previous: t("Previous (←)"),
+  next: t("Next (→)"),
+  position: (at: number, count: number) => t("{at} of {count}", { at, count }),
+} as const;
+
+/** The skeleton's size while a picture is on its way. */
+const PENDING_SIZE = { width: 320, height: 240, radius: 12 } as const;
+
+/** One picture over the window, its name and, with several, where it is among them. */
 export function Lightbox({
   item,
+  index,
   count,
   onPrev,
   onNext,
   onClose,
 }: {
   item: LightItem;
+  /** where the picture is among the ones open, from 0 */
+  index: number;
   count: number;
   onPrev: () => void;
   onNext: () => void;
   onClose: () => void;
 }): JSX.Element {
-  const loaded = useStill(!item.src && item.path ? { run: item.path } : null);
-  const src = item.src ?? loaded;
+  const source = item.still ?? (!item.src && item.path ? { run: item.path } : null);
+  const loaded = useStillRead(source);
+  const src = item.src ?? loaded.src;
   const several = count > 1;
   useEffect(() => {
     if (count < 2) return;
@@ -36,34 +54,48 @@ export function Lightbox({
     return () => window.removeEventListener("keydown", onKey);
   }, [count, onPrev, onNext]);
   return (
-    <div
-      className="absolute inset-0 z-[6] flex flex-col items-center justify-center gap-3 p-6"
-      style={{ background: "color-mix(in oklab, var(--tooltip-bg) 88%, transparent)" }}
-      onPointerDown={(event) => event.stopPropagation()}
-      onClick={onClose}
-    >
-      <div
-        className="grid min-h-0 max-w-full flex-1 place-items-center overflow-hidden rounded-card bg-[#0c1017]"
-        style={{ boxShadow: "var(--shadow-overlay)", maxHeight: "calc(100% - 56px)" }}
-        onClick={(event) => event.stopPropagation()}
-      >
-        {src ? (
-          <img src={src} alt="" className="block max-h-full max-w-full object-contain" draggable={false} />
-        ) : (
-          <Pending label={t("Loading…")}>
-            <Skeleton width={240} height={160} radius={14} className="skeleton-on-dark" />
-          </Pending>
-        )}
+    <WindowLightbox title={item.title} testId="builds-lightbox" onDismiss={onClose}>
+      {src ? (
+        <img
+          src={src}
+          alt={item.title}
+          draggable={false}
+          className="lightbox-media block max-h-[calc(100vh-176px)] max-w-[calc(100vw-160px)] object-contain"
+        />
+      ) : (
+        <Pending label={MESSAGE.loading}>
+          <Skeleton {...PENDING_SIZE} />
+        </Pending>
+      )}
+      <div className="lightbox-bar">
+        {several ? (
+          <button
+            type="button"
+            aria-label={MESSAGE.previous}
+            title={MESSAGE.previous}
+            className="lightbox-chip"
+            onClick={onPrev}
+          >
+            <Icon name="chevron-left" size={16} />
+          </button>
+        ) : null}
+        <span className="max-w-[48vw] truncate px-2 text-xs text-ink">{item.title}</span>
+        {item.caption ? <span className="max-w-[32vw] truncate text-xs text-ink-3">{item.caption}</span> : null}
+        {several ? (
+          <span className="px-2 font-mono text-xs text-ink-3 tabular-nums">{MESSAGE.position(index + 1, count)}</span>
+        ) : null}
+        {several ? (
+          <button
+            type="button"
+            aria-label={MESSAGE.next}
+            title={MESSAGE.next}
+            className="lightbox-chip"
+            onClick={onNext}
+          >
+            <Icon name="chevron-right" size={16} />
+          </button>
+        ) : null}
       </div>
-      <div className="flex items-center gap-2.5" onClick={(event) => event.stopPropagation()}>
-        {several ? <PanelButton label={t("Previous (←)")} icon="chevron-left" onClick={onPrev} /> : null}
-        <span className="text-xs text-ink">{item.title}</span>
-        {item.caption ? <span className="text-xs text-ink-3">{item.caption}</span> : null}
-        {several ? <PanelButton label={t("Next (→)")} icon="chevron-right" onClick={onNext} /> : null}
-        <Button variant="ghost" onClick={onClose}>
-          {t("Close")}
-        </Button>
-      </div>
-    </div>
+    </WindowLightbox>
   );
 }

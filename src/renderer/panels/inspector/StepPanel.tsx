@@ -17,6 +17,7 @@ import { useRoundStill, useSavePointShot } from "../run-stills.ts";
 import { NotesSection, Panel, Para, Quote } from "./chrome.tsx";
 import { capitalise } from "./format.ts";
 import { Cameras, Compare, Single, TryThumb } from "./pictures.tsx";
+import { MadeSounds } from "./MadeSounds.tsx";
 import { LiveScreen, usePartScreen } from "./screen.tsx";
 import { Status } from "./tone.tsx";
 import type { StepPanelProps } from "./types.ts";
@@ -232,6 +233,7 @@ function StepView(props: StepPanelProps & { node: IterationNode; onPick: (at: nu
             <TryStills picture={picture} onLine={step.onLine} label={rightLabel} onOpen={open} />
           )}
           <TriesStrip graph={graph} tries={tries} node={node} onPick={props.onPick} />
+          <MadeSounds project={props.project} cards={step.assets ?? []} />
         </div>
       }
     >

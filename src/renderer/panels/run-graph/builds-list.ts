@@ -124,7 +124,7 @@ function stepOrder(step: Step): number {
 }
 
 /** What one thing a step made is: its newest version's kind, by its files, else the modeller's model. */
-function madeKind(card: AssetCard): AssetKind {
+export function madeKind(card: AssetCard): AssetKind {
   const newest = card.versions.at(-1);
   const file = newest?.preview?.file ?? newest?.files[0] ?? newest?.file;
   if (file) return assetKind(file);

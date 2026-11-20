@@ -6597,4 +6597,6 @@ export default {
   "Sees images": "Voit les images",
   "Step {n} of {total} · {name}": "Étape {n} sur {total} · {name}",
   "Version {version} is in your game": "La version {version} est dans ton jeu",
+  "Show all {count}": "Tout afficher ({count})",
+  "{at} of {count}": "{at} sur {count}",
 } satisfies LocaleCatalog;

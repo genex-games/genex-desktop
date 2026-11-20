@@ -14,7 +14,7 @@ import {
   savePointShot,
 } from "../run-graph-pictures.ts";
 import { PictureSource, type WorkerPicture } from "../run-steps.ts";
-import { loadStill, type StillSource, useStill } from "../stills.ts";
+import { loadStill, type StillSource, useStill, useStillRead } from "../stills.ts";
 
 /** How often a round still in hand looks for a newer saved frame. */
 const LIVE_FRAME_POLL_MS = 5 * SECOND_MS;
@@ -239,29 +239,39 @@ export interface WorkerStill {
   src: string | null;
   asset: ProjectAsset | null;
   borrowed: boolean;
+  /** its still is on its way: a skeleton stands in */
+  loading: boolean;
 }
 
-/** Where a worker's picture is read from, when it is a still. */
-function workerStillSource(
+/**
+ * Where a worker's picture is read from, when it is a still, at most `maxPx` on its largest side
+ * (none: the whole picture, as the lightbox shows it).
+ */
+export function workerStillSource(
   project: string | null,
   picture: WorkerPicture | undefined,
   reviewed: Shot | null,
+  maxPx: number | undefined = NODE_PICTURE_PX,
 ): StillSource | null {
-  if (picture?.source === PictureSource.File)
-    return project ? { project, asset: picture.file, maxPx: NODE_PICTURE_PX } : null;
+  const size = maxPx === undefined ? {} : { maxPx };
+  if (picture?.source === PictureSource.File) return project ? { project, asset: picture.file, ...size } : null;
   // A render, a kept copy and the merged build are files under the run's folder.
-  if (picture && "path" in picture) return { run: picture.path, maxPx: NODE_PICTURE_PX };
-  return reviewed ? { run: reviewed.path, maxPx: NODE_PICTURE_PX } : null;
+  if (picture && "path" in picture) return { run: picture.path, ...size };
+  return reviewed ? { run: reviewed.path, ...size } : null;
 }
 
 /**
  * A worker's picture (`run-steps.ts` `WorkerPicture`): a picture it delivered, its model as the
  * Assets stage draws it, or for a reader the save point it looked at, borrowed.
  */
-export function useWorkerStill(project: string | null, picture: WorkerPicture | undefined): WorkerStill {
+export function useWorkerStill(
+  project: string | null,
+  picture: WorkerPicture | undefined,
+  maxPx: number = NODE_PICTURE_PX,
+): WorkerStill {
   const round = picture?.source === PictureSource.Reviewed ? picture.round : null;
   const reviewed = useSavePointShot(round, null);
-  const src = useStill(workerStillSource(project, picture, reviewed));
+  const { src, loading } = useStillRead(workerStillSource(project, picture, reviewed, maxPx));
   const asset = picture?.source === PictureSource.Asset && project ? picture.asset : null;
-  return { src, asset, borrowed: round !== null };
+  return { src, asset, borrowed: round !== null, loading };
 }
