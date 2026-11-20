@@ -198,8 +198,8 @@ describe("a made-up Mac for testing the card in the real app", () => {
 describe("choosing what to install", () => {
   it("takes the newest final release of the measured line, else the newest final Unity 6", () => {
     const listed = ["7000.0.0a10", "6000.7.0b5", "6000.3.26f1", "6000.3.9f1", "6000.0.85f1", "6000.6.6f1"];
-    assert.equal(chooseRelease(listed), "6000.3.26f1");
-    assert.equal(chooseRelease(["6000.6.6f1", "6000.0.85f1", "6000.7.0b5"]), "6000.6.6f1");
+    assert.equal(chooseRelease(listed), "6000.6.6f1");
+    assert.equal(chooseRelease(["6000.3.26f1", "6000.0.85f1", "6000.7.0b5"]), "6000.3.26f1");
     assert.equal(chooseRelease(["2022.3.13f1", "7000.0.0a10"]), undefined);
   });
 
@@ -331,11 +331,11 @@ describe("installing Unity 6 through Hub", () => {
     const hubProgram = path.join(mac.env.applications, "Unity Hub.app", "Contents", "MacOS", "Unity Hub");
     assert.deepEqual(
       mac.started.map((run) => [run.command, run.args]),
-      [[hubProgram, ["--", "--headless", "install", "--version", "6000.3.26f1", "--architecture", "arm64"]]],
+      [[hubProgram, ["--", "--headless", "install", "--version", "6000.6.6f1", "--architecture", "arm64"]]],
     );
     assert.deepEqual(await mac.installer.job(), {
       kind: JobKind.Editor,
-      version: "6000.3.26f1",
+      version: "6000.6.6f1",
       percent: 15,
       state: JobState.Running,
     });
@@ -352,13 +352,13 @@ describe("installing Unity 6 through Hub", () => {
     // Hub says it is done, but put Unity somewhere Genex doesn't look (another install folder).
     await writeFile(
       mac.started[0]?.log ?? "",
-      "[Unity (6000.3.26f1)] installed successfully.\nAll Tasks Completed Successfully.\n",
+      "[Unity (6000.6.6f1)] installed successfully.\nAll Tasks Completed Successfully.\n",
     );
     const elsewhere = await mac.installer.job();
-    assert.match(String(elsewhere?.why), /says it installed Unity 6000\.3\.26f1/);
+    assert.match(String(elsewhere?.why), /says it installed Unity 6000\.6\.6f1/);
     assert.doesNotMatch(String(elsewhere?.why), /stopped/);
 
-    await fakeEditor(path.join(mac.env.applications, "Unity", "Hub", "Editor"), "6000.3.26f1");
+    await fakeEditor(path.join(mac.env.applications, "Unity", "Hub", "Editor"), "6000.6.6f1");
     assert.equal(await mac.installer.job(), null, "an install that ended with Unity there is done");
   });
 

@@ -3087,7 +3087,7 @@ The plugin makes, sets up and opens that project itself (`backend.ts`), with no 
   it opens Unity's page.
   `open-hub` opens Hub for the sign-in, which stays the person's. `install-unity` checks for about
   12 GB free, asks Hub for its releases (`-- --headless editors --releases --json`), picks the
-  newest final release of the line Genex was measured on (`INSTALL_LINE`, else the newest final
+  newest final release of the line Genex was measured on (`INSTALL_LINE`, Unity 6.6; else the newest final
   Unity 6) and starts `-- --headless install` on its own, its output kept in
   `unity-setup/editor-install.log` and read back for the row's percentage or why it stopped.
   `stop` (the card's Stop while Genex works) ends the download, the copy, the sign-in wait, Hub's
