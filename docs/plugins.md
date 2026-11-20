@@ -514,7 +514,7 @@ folder (New game puts it in `unreal/`); a project elsewhere is not.
 Epic's toolsets cannot press the player's buttons, so the plugin also ships the **Genex editor
 helper** (`src/plugins/unreal/GenexEditorHelper`), a Python-only plugin for Unreal itself (a
 `.uplugin` folder), so nothing compiles. Setup copies it into a project's `Plugins/` folder.
-Because it is enabled by default, Unreal loads it without a `.uproject` entry. Its `init_unreal.py` then registers the toolset `genex_play.tools.GenexPlayTools`, which
+Because it is enabled by default, Unreal loads it without a `.uproject` entry. It asks for each plugin it needs in the editor only (`TargetAllowList`): a packaged game still knows the helper, and one whose platform leaves such a plugin out (the web build has no Geometry Script) stopped at its start. Its `init_unreal.py` then registers the toolset `genex_play.tools.GenexPlayTools`, which
 Epic's server lists:
 - `project_file` names the project the editor has open (the bridge's check above).
 - `list_actions` lists the game's controls.
