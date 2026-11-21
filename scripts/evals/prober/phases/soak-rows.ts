@@ -8,7 +8,8 @@
  * leak is invisible to it, and the detail says so.
  *
  * `l2.no_soft_lock_5min`: state must keep changing, above a STILLNESS floor (a quarter of the
- * baseline's p95), not the much higher input threshold, in most soak windows. A sampler too coarse
+ * baseline's p95, never under the baseline's absolute floor), not the much higher input threshold,
+ * in most soak windows. A sampler too coarse
  * for its windows cannot tell stopped from slow and says `unknown`. Only a fail decided by the
  * stillness measurement is routed through the door demotions: a crash happened whichever side of a
  * door the page sat on.
@@ -27,7 +28,7 @@ import {
   type LookInputVerdict,
   type PointerLockState,
 } from "../verdicts.ts";
-import { MIN_CHANGE_DIFF, type PageBaseline } from "./baseline.ts";
+import { changeFloor, type PageBaseline } from "./baseline.ts";
 import { applyDemotions, machineRow } from "./row.ts";
 import {
   COARSE_WINDOW_SHARE,
@@ -54,7 +55,14 @@ const seconds = (ms: number) => (ms / SECOND_MS).toFixed(0);
 
 /** The stillness floor a soak window must clear to count as change. */
 export function stillnessThreshold(baseline: PageBaseline): number {
-  return Math.max(MIN_CHANGE_DIFF, baseline.pageP95Diff * STILLNESS_SHARE);
+  return Math.max(changeFloor(baseline), baseline.pageP95Diff * STILLNESS_SHARE);
+}
+
+/** Where a baseline's stillness floor comes from, for the row's detail. */
+function stillnessSource(baseline: PageBaseline): string {
+  const fromDrift = baseline.pageP95Diff * STILLNESS_SHARE > changeFloor(baseline);
+  if (fromDrift) return `a quarter of the p95 of the ${baseline.name} baseline`;
+  return `the absolute floor, since the ${baseline.name} baseline drifted less than that`;
 }
 
 /** The heap series' growth, when it is a measurement at all. */
@@ -211,6 +219,6 @@ export function softLockRow(
       ]
     : [];
   const { result, detail } = applyDemotions(raw, steps);
-  const floor = ` The stillness floor (${stillness.toFixed(4)}) is a quarter of the p95 of the ${baseline.name} baseline. Autoplay is a seeded stream (seed ${soak.seed}), so the trace replays.`;
+  const floor = ` The stillness floor (${stillness.toFixed(4)}) is ${stillnessSource(baseline)}. Autoplay is a seeded stream (seed ${soak.seed}), so the trace replays.`;
   return machineRow(id, result, `${detail}${floor}`, value);
 }

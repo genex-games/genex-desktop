@@ -91,7 +91,10 @@ file.
 The CLI runs as a detached process group. Each stdout line lands in `stream.jsonl` as
 `{"receivedAt": <epoch ms>, "line": "<raw line>"}` as it arrives; `stdout.log` and `stderr.log`
 keep the raw output. At deadline plus 5 minutes the group gets SIGTERM, then SIGKILL 10 s later;
-anything the agent left running is reaped the same way. Guards read typed fields only, never
+anything the agent left running is reaped the same way. A run ends when the group's leader
+exits, for the Genex app too: output that a process outside the group still holds open (a server
+the agent left running keeps Electron's crash handler alive, and that holds the app's stderr) is
+read for 5 s more, then dropped. Guards read typed fields only, never
 message text: Claude's assistant error codes, 401/429 and rejected rate-limit events; Claude's
 init line must show no MCP servers, plugins or operator skills and the pinned permission mode;
 Codex's parent rollout must list only stock skills and inject no `AGENTS.md`. A run that writes
@@ -113,7 +116,8 @@ writes resolves outside `spec.workRoot` (the lane root) or inside `~/AI Games` o
 profile. Games live in `spec.gamesRoot`, the only allowed project root; background improvement
 is off.
 
-`runEvalLane` checks the engine is ready and lists the model, turns off the spec's
+`runEvalLane` checks the engine is ready and lists the model (a model list that is still loading
+is read again every second for up to two minutes, `CATALOG_WAIT_MS`), turns off the spec's
 `disabledPlugins` as the Plugins panel's switch does and reads each back, opens a fresh game chat
 in the pinned permission mode, sends the brief and suffix with the commission, answers each `ask_user`
 question with the policy sentence and approves plan reviews (up to `maxAnswers`), and waits for
@@ -123,8 +127,8 @@ budgets, run ids, the permission mode and mode served, questions and answers, th
 against the shipped seed, the template digest taken when the app seeded the game, the first
 preview proxy, CLI versions, every installed plugin with whether it was on at the end, and errors. Exit is 0 when the lane reported, 1 when it failed.
 
-The runner types the app's failures like a raw lane's: an engine that was not ready is
-`engine-not-ready`; an unknown model, a plugin to turn off that is not installed or stays on, a
+The runner types the app's failures like a raw lane's: an engine that was not ready, or whose
+model list never finished loading, is `engine-not-ready`; a model missing from a loaded list, a plugin to turn off that is not installed or stays on, a
 failed thread, an unwritten report, a report ending in a harness failure, or a refused (78) or
 failed (1) launch with no report is `app-failed`. Any `engine_fallback` event during a run is
 `contamination`, and so is a report that does not show a lane's `disabledPlugins` off (a build
@@ -304,12 +308,19 @@ stopped for 30 minutes, atomically (renamed aside, then checked again).
   server's own origin, `data:`/`blob:` and https reads of the preview's CDN hosts
   (`PREVIEW_CDN_HOSTS`, the product preview's rule). Every other request is aborted and recorded
   as `blocked-by-policy`, WebSockets are closed and service workers blocked. The policy's digest
-  is part of `PROBER_VERSION` (`genex-prober/6+desktop.3+cdn.<digest>`), so changing the CDN list
+  is part of `PROBER_VERSION` (`genex-prober/6+desktop.4+cdn.<digest>`), so changing the CDN list
   asks for a new calibration and regrades.
+- **Pointer lock**: the page instrument never passes a game's `requestPointerLock()` to the
+  browser, because on macOS even headless Chromium then takes the real cursor of whoever is at
+  the Mac. The game gets a synthetic lock instead (`pointerLockElement`, `pointerlockchange`,
+  movement deltas), and the snapshot says so (`pointerLock.shimmed`).
 - **Quick probe** (`grade/quick-probe.ts`, `PROBER_VERSION` in `scripts/evals/prober/types.ts`):
   boot within the first-draw timeout, a 3 s idle baseline, the entrance judged by witnesses (never
   a pixel diff), a 4 s gameplay baseline and seven input bursts. It answers the eight quick rows
-  with a 20 s error window. Headless Chromium uses ANGLE Metal, falling back to SwiftShader; the
+  with a 20 s error window. An input response must clear three times the no-input baseline's p95
+  and an absolute floor: 0.4% of the frame, or a quarter of one cell of the instrument's 64×36
+  frame mirror when the baseline never changed at all (`STILL_CHANGE_DIFF`), so one small thing
+  moving on a still board counts. The soak's stillness floor uses the same absolute floor. Headless Chromium uses ANGLE Metal, falling back to SwiftShader; the
   renderer is read back and frame-rate rows never gate on software.
 - **Full prober** (`prober/full-probe.ts`, phases in `prober/phases/`): the quick phases, then
   directions, acknowledgement, interaction, a look sweep, a seeded 300 s soak and a 390×844 phone

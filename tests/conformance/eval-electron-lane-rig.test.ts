@@ -11,6 +11,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
+  CATALOG_WAIT_MS,
   type EvalLaneClock,
   type EvalLaneCore,
   type EvalLaneDeps,
@@ -33,7 +34,9 @@ import {
   QuestionKind,
 } from "../../src/shared/eval-lane.ts";
 import { EventKind } from "../../src/shared/event-log.ts";
+import { ModelCatalogState, type ModelCatalogStatus } from "../../src/shared/model-catalog.ts";
 import { GENEX_PLUGIN_ID } from "../../src/shared/genex.ts";
+import { SECOND_MS } from "../../src/shared/duration.ts";
 import { PermissionMode } from "../../src/shared/permissions.ts";
 import { EngineId } from "../../src/shared/providers.ts";
 import { FIXTURE_MODEL } from "../../src/main/dev/fixture-kit.ts";
@@ -169,6 +172,41 @@ function recording(core: StudioCore): { lane: EvalLaneCore; calls: string[] } {
     },
   };
   return { lane, calls };
+}
+
+/** A model catalog whose first read has not answered yet, as a live launch's first moments have it. */
+const CATALOG_LOADING: ModelCatalogStatus = { state: ModelCatalogState.Loading, revision: 0, refreshing: true };
+
+/**
+ * The core's engines as a live launch reads them while the spec's engine still loads its model
+ * list: for the first `loadingReads` reads its catalog is loading and the pinned model is not
+ * listed yet; after them the list is the core's own. `reads()` counts the reads made.
+ */
+function lateCatalog(
+  core: StudioCore,
+  spec: EvalLaneSpec,
+  loadingReads: number,
+): { engines: EvalLaneCore["engines"]; reads: () => number } {
+  let reads = 0;
+  return {
+    reads: () => reads,
+    engines: {
+      describe: async () => {
+        const list = await core.engines.describe();
+        reads += 1;
+        if (reads > loadingReads) return list;
+        return list.map((engine) =>
+          engine.id === spec.engine
+            ? {
+                ...engine,
+                catalog: CATALOG_LOADING,
+                models: engine.models.filter((model) => model.id !== spec.model),
+              }
+            : engine,
+        );
+      },
+    },
+  };
 }
 
 async function readReport(spec: EvalLaneSpec): Promise<EvalLaneReport> {
@@ -308,5 +346,42 @@ describe("eval lane on a real core", () => {
     assert.deepEqual(calls, []);
     assert.equal(report.threadId, "");
     assert.equal(report.templateDigest, null);
+  });
+
+  it("waits for a model list that is still loading, then sends the brief", async () => {
+    const { core, spec } = await laneCore();
+    const { lane, calls } = recording(core);
+    const late = lateCatalog(core, spec, 2);
+
+    const code = await runEvalLane({ ...lane, engines: late.engines }, spec, QUICK_CLOCK);
+
+    assert.equal(code, EVAL_LANE_EXIT.Ok);
+    const report = await readReport(spec);
+    assert.deepEqual(report.errors, []);
+    assert.equal(report.endedHow, EndedHow.AgentFinished);
+    assert.equal(calls.includes("sendUserMessage"), true);
+    assert.equal(late.reads(), 3, "the lane reads the engines again until the list has loaded, and no more");
+  });
+
+  it("gives up as engine-not-ready when the model list is still loading at the catalog deadline", async () => {
+    const { core, spec } = await laneCore();
+    const { lane, calls } = recording(core);
+    const late = lateCatalog(core, spec, Number.POSITIVE_INFINITY);
+
+    const code = await runEvalLane({ ...lane, engines: late.engines }, spec, virtualClock());
+
+    assert.equal(code, EVAL_LANE_EXIT.Failed);
+    const report = await readReport(spec);
+    assert.equal(report.endedHow, EndedHow.HarnessFailure);
+    assert.deepEqual(
+      report.errors.map((error) => error.code),
+      [EvalLaneErrorCode.EngineNotReady],
+      "a list that never loaded says nothing about the model: the engine was not ready",
+    );
+    assert.deepEqual(calls, []);
+    assert.equal(report.threadId, "");
+    const waitedMs = Date.parse(report.endedAt) - Date.parse(report.startedAt);
+    assert.ok(waitedMs >= CATALOG_WAIT_MS, `waited ${waitedMs} ms, under the deadline`);
+    assert.ok(waitedMs <= CATALOG_WAIT_MS + 2 * SECOND_MS, `waited ${waitedMs} ms, past the deadline`);
   });
 });

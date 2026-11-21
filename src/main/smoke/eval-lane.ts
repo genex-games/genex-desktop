@@ -42,6 +42,7 @@ import {
 } from "../../shared/eval-lane.ts";
 import { type EventEnvelope, EventKind } from "../../shared/event-log.ts";
 import { messageQueueState, QueueState } from "../../shared/message-queue.ts";
+import { ModelCatalogState, type ModelCatalogStatus } from "../../shared/model-catalog.ts";
 import { isPermissionMode, PermissionMode } from "../../shared/permissions.ts";
 import { isPluginId } from "../../shared/plugin-id.ts";
 import { isCompletionPolicy, RUN_START_EVENTS, RunState } from "../../shared/run-state.ts";
@@ -63,6 +64,12 @@ const POLL_MS = SECOND_MS;
 const IDLE_SETTLE_POLLS = 2;
 /** How long the core stop path gets to leave the chat idle before the report is written anyway. */
 const STOP_SETTLE_MS = 2 * MINUTE_MS;
+/**
+ * How long preflight waits for the engine to finish reading its model list. A launch's first read
+ * is still running when the lane starts, and a failed read is tried again a minute later, so two
+ * minutes cover the first read and one retry.
+ */
+export const CATALOG_WAIT_MS = 2 * MINUTE_MS;
 /** The largest spec file a launch reads. */
 const SPEC_MAX_BYTES = 256 * 1024;
 /** The version a report carries when the core was given none. */
@@ -78,9 +85,11 @@ const AUTOPILOT_RUN_MODE = "autopilot";
 
 /** What the lane says; the typed-question answer is the shared sentence (`EVAL_LANE_ANSWER_TEXT`, §5.2). */
 const MESSAGE = {
-  unknownModel: (engine: string, model: string) => `${engine} does not list the model ${model}`,
+  unknownModel: (engine: string, model: string, listed: string[]) =>
+    `${engine} does not list the model ${model} (it lists: ${listed.join(", ")})`,
   engineNotReady: (engine: string, status: string) => `${engine} is not ready (${status})`,
   noEngine: (engine: string) => `${engine} is not registered in this launch`,
+  catalogNotLoaded: (engine: string, state: string) => `${engine} did not finish listing its models (${state})`,
   pluginNotDisabled: (id: string, why: string) => `plugin ${id} could not be turned off: ${why}`,
   pluginStillOn: "it is still on",
   refused: (code: string, detail: string) => `eval lane refused (${code}): ${detail}`,
@@ -103,10 +112,12 @@ export const SYSTEM_CLOCK: EvalLaneClock = { now: () => Date.now(), sleep: (ms) 
 /** The plugin calls the lane makes: the ones the Plugins panel's switch and list make. */
 export type EvalLanePlugins = Pick<StudioCore["plugins"], "list" | "enabled" | "setEnabled">;
 
+/** The engine call the lane makes: the list the model picker reads. */
+export type EvalLaneEngines = Pick<StudioCore["engines"], "describe">;
+
 /** The parts of the core the lane drives: the same calls the composer, the plan card, Stop and the Plugins panel make. */
 export type EvalLaneCore = Pick<
   StudioCore,
-  | "engines"
   | "layout"
   | "options"
   | "store"
@@ -118,7 +129,7 @@ export type EvalLaneCore = Pick<
   | "requestRunFinish"
   | "stopThread"
   | "activeBuilders"
-> & { plugins: EvalLanePlugins };
+> & { engines: EvalLaneEngines; plugins: EvalLanePlugins };
 
 /** A chat the core bound to a game folder (`UiEvent.ThreadBound`). */
 export type ThreadBound = UiEventMap[typeof UiEvent.ThreadBound];
@@ -662,18 +673,51 @@ function sendOptions(run: LaneRun) {
   return { thread: run.threadId, engine: spec.engine, model: spec.model, effort: spec.effort, ...spec.commission };
 }
 
-/** The engine can run the requested model, or the error that says why not. */
-async function preflight(core: EvalLaneCore, spec: EvalLaneSpec): Promise<EvalLaneError | null> {
-  const descriptor = (await core.engines.describe()).find((engine) => engine.id === spec.engine);
-  if (!descriptor) return { code: EvalLaneErrorCode.EngineNotReady, detail: MESSAGE.noEngine(spec.engine) };
-  if (descriptor.status.code !== EngineStatusCode.Ready)
-    return {
-      code: EvalLaneErrorCode.EngineNotReady,
-      detail: MESSAGE.engineNotReady(spec.engine, descriptor.status.code),
-    };
-  const listed = descriptor.models.some((model) => model.id === spec.model || model.resolvedModel === spec.model);
-  if (!listed) return { code: EvalLaneErrorCode.UnknownModel, detail: MESSAGE.unknownModel(spec.engine, spec.model) };
-  return null;
+/**
+ * Has the engine a whole model list to answer from? A catalog that is loading, being read again
+ * or unavailable lists only what the engine knows without its provider.
+ */
+function catalogSettled(catalog: ModelCatalogStatus | undefined): boolean {
+  if (!catalog) return true;
+  const listed = catalog.state === ModelCatalogState.Ready || catalog.state === ModelCatalogState.Stale;
+  return listed && !catalog.refreshing;
+}
+
+/** A listed model as the report names it: its id, and the model that id resolves to when it differs. */
+function listedModel(model: { id: string; resolvedModel?: string }): string {
+  const resolved = model.resolvedModel;
+  return resolved && resolved !== model.id ? `${model.id} = ${resolved}` : model.id;
+}
+
+/**
+ * The engine can run the requested model, or the error that says why not. A launch's first read of
+ * the model list is still running when the lane starts, so a model missing from a list that has
+ * not settled is read again, up to `CATALOG_WAIT_MS`.
+ */
+async function preflight(core: EvalLaneCore, spec: EvalLaneSpec, clock: EvalLaneClock): Promise<EvalLaneError | null> {
+  const giveUpAt = clock.now() + CATALOG_WAIT_MS;
+  for (;;) {
+    const descriptor = (await core.engines.describe()).find((engine) => engine.id === spec.engine);
+    if (!descriptor) return { code: EvalLaneErrorCode.EngineNotReady, detail: MESSAGE.noEngine(spec.engine) };
+    if (descriptor.status.code !== EngineStatusCode.Ready)
+      return {
+        code: EvalLaneErrorCode.EngineNotReady,
+        detail: MESSAGE.engineNotReady(spec.engine, descriptor.status.code),
+      };
+    const { models } = descriptor;
+    if (models.some((model) => model.id === spec.model || model.resolvedModel === spec.model)) return null;
+    if (catalogSettled(descriptor.catalog))
+      return {
+        code: EvalLaneErrorCode.UnknownModel,
+        detail: MESSAGE.unknownModel(spec.engine, spec.model, models.map(listedModel)),
+      };
+    if (clock.now() >= giveUpAt)
+      return {
+        code: EvalLaneErrorCode.EngineNotReady,
+        detail: MESSAGE.catalogNotLoaded(spec.engine, descriptor.catalog?.state ?? ModelCatalogState.Loading),
+      };
+    await clock.sleep(POLL_MS);
+  }
 }
 
 /**
@@ -845,7 +889,8 @@ async function buildReport(run: LaneRun, endedHow: EndedHow, deps: EvalLaneDeps)
  */
 async function begin(run: LaneRun, deps: EvalLaneDeps): Promise<boolean> {
   const refused =
-    (await preflight(run.core, run.spec)) ?? (await turnPluginsOff(run.core.plugins, run.spec.disabledPlugins ?? []));
+    (await preflight(run.core, run.spec, run.clock)) ??
+    (await turnPluginsOff(run.core.plugins, run.spec.disabledPlugins ?? []));
   if (refused) {
     run.errors.push(refused);
     return false;

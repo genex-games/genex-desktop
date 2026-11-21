@@ -32,6 +32,8 @@ export const RAIL_GRACE_MS = 5 * MINUTE_MS;
 export const RAIL_KILL_AFTER_MS = 10 * SECOND_MS;
 /** How often a stopping process group is asked whether it is gone. */
 const REAP_POLL_MS = 250;
+/** How long an exited leader's output may stay open before the supervisor stops reading it. */
+export const OUTPUT_DRAIN_MS = 5 * SECOND_MS;
 /** A process ended by a signal exits 128 + the signal's number, as a shell reports it. */
 const SIGNAL_EXIT_BASE = 128;
 /** How many typed questions a Genex lane answers with the policy's sentence. */
@@ -354,7 +356,7 @@ export interface ChildLike {
   stdin: Writable | null;
   stdout: Readable | null;
   stderr: Readable | null;
-  on(event: "close", listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown;
+  on(event: "exit" | "close", listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown;
   on(event: "error", listener: (error: Error) => void): unknown;
 }
 
@@ -617,9 +619,28 @@ function leaveLive(pid: number, run: SupervisedRun): void {
 }
 
 /**
+ * Wait for an exited leader's output to end, at most `OUTPUT_DRAIN_MS`, then stop reading it. A
+ * process the leader started outside its group holds those pipes for as long as it runs (a server
+ * the lane's agent left behind, and Electron's crash handler that such a server keeps alive), so
+ * the output's end is not the run's end.
+ */
+async function drainOutput(child: ChildLike, closed: Promise<void>, clock: RailClock): Promise<void> {
+  let cancel = (): void => {};
+  const late = new Promise<boolean>((resolve) => {
+    cancel = clock.setTimer(() => resolve(true), OUTPUT_DRAIN_MS);
+  });
+  const heldOpen = await Promise.race([closed.then(() => false), late]);
+  cancel();
+  if (!heldOpen) return;
+  child.stdout?.destroy();
+  child.stderr?.destroy();
+}
+
+/**
  * Run one process in its own process group under the rail: each stdout line is written as a
  * `{receivedAt, line}` record the moment it arrives, stdout and stderr are kept raw, and when the
- * leader exits whatever it left behind in its group is reaped (SIGTERM, then SIGKILL).
+ * leader exits whatever it left behind in its group is reaped (SIGTERM, then SIGKILL). The run ends
+ * when the leader exits, not when its output closes (`drainOutput`).
  */
 export async function superviseProcess(
   run: SupervisedRun,
@@ -646,13 +667,17 @@ export async function superviseProcess(
     // A child that exits before reading its prompt closes the pipe; that is its exit to report, not a crash here.
     child.stdin?.on("error", () => {});
     if (run.stdin !== null) child.stdin?.end(run.stdin);
+    const closed = new Promise<void>((resolve) => {
+      child.on("close", () => resolve());
+    });
     const ended = await new Promise<{ code: number | null; signal: string | null; error: string | null }>((resolve) => {
       child.on("error", (error) => resolve({ code: null, signal: null, error: error.message }));
-      child.on("close", (code, signal) => resolve({ code, signal, error: null }));
+      child.on("exit", (code, signal) => resolve({ code, signal, error: null }));
     });
     rail.cancel();
-    sink.push(decoder.end());
     const reapKilled = child.pid === undefined ? false : await reapGroup(child.pid, deps.group);
+    if (ended.error === null) await drainOutput(child, closed, deps.clock);
+    sink.push(decoder.end());
     if (child.pid !== undefined) leaveLive(child.pid, run);
     return {
       startedAtMs,

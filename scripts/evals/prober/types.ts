@@ -17,9 +17,12 @@ import { PROBE_NETWORK_POLICY_DIGEST } from "./network-policy.ts";
  * a grade's kind is its own pin (`probe.quick`, `soakMs`; a calibration records which prober it ran).
  * `.2` is the full prober's arrival (directions, ack, soak, audio and phone rows on desktop); `.3`
  * holds the page to the preview's network policy, whose CDN-list digest rides on the end (Rule 8:
- * network is an explicit pin), so a change of allowed hosts is a recalibration and a regrade too.
+ * network is an explicit pin), so a change of allowed hosts is a recalibration and a regrade too;
+ * `.4` never asks the browser for pointer lock, which takes the real cursor on macOS (the page's
+ * request engages the synthetic lock at once instead of after the browser's refusal), and gives a
+ * baseline that never changed the fine change floor (`STILL_CHANGE_DIFF`).
  */
-export const PROBER_VERSION = `genex-prober/6+desktop.3+cdn.${PROBE_NETWORK_POLICY_DIGEST}`;
+export const PROBER_VERSION = `genex-prober/6+desktop.4+cdn.${PROBE_NETWORK_POLICY_DIGEST}`;
 
 /** The layer a row gates: L1 fails the floor, L2 is play, L3 flags for a human and never gates. */
 export const CheckLayer = {

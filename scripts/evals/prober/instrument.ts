@@ -98,11 +98,13 @@ export type ProbeState = {
   };
   heap: { available: boolean; samples: Array<{ t: number; used: number; total: number }>; note: string };
   /**
-   * THE CLICK-TO-LOCK DOOR. `requested` counts real `requestPointerLock()`
-   * calls; `grantedNatively` means the browser actually locked; `shimmed` means
-   * it refused and the probe engaged a synthetic lock so the game could be
-   * entered anyway. All three are reported so a reader can tell a game that was
-   * never asked about pointer lock from one the probe had to fake its way past.
+   * THE CLICK-TO-LOCK DOOR. `requested` counts the page's `requestPointerLock()`
+   * calls; `shimmed` means the probe engaged a synthetic lock in the browser's
+   * place so the game could be entered; `grantedNatively` means the browser
+   * itself held a lock, which the probe never asks for (it would take the real
+   * cursor), so it is true only in probes retained from before `desktop.4`.
+   * All three are reported so a reader can tell a game that never asked about
+   * pointer lock from one the probe had to fake its way past.
    */
   pointerLock: {
     requested: number;
@@ -136,15 +138,13 @@ export type ProbeState = {
     /**
      * `navigator.userActivation.isActive` at the FIRST `requestPointerLock()`
      * call — `null` when the API is absent. A request made with no activation
-     * is refused for every real player too, which is the fact that separates a
-     * headless refusal (the shim's case) from a defect in the game. Also
+     * is refused for every real player, which is the fact that separates a
+     * lock the shim alone made possible from one a player gets too. Also
      * counted per request as `requestsWithActivation`, since a game may ask
      * once at boot and again on a click.
      */
     userActivationAtRequest: boolean | null;
     requestsWithActivation: number;
-    /** How the browser refused, verbatim — the evidence that the shim was needed. */
-    lastRefusal: string | null;
     /**
      * THE HEADING SINCE THE LOCK, accumulated as it happens — the record the
      * delivered-look verdict reads. It exists because the camera SAMPLES cannot
@@ -352,7 +352,6 @@ export function installProbe() {
       deltasSupplied: 0,
       userActivationAtRequest: null,
       requestsWithActivation: 0,
-      lastRefusal: null,
       look: {
         windowMs: PL_LOOK_WINDOW_MS,
         samples: 0,
@@ -443,8 +442,8 @@ export function installProbe() {
    *
    * Measured on a first-person game: its only entrance was
    * a full-screen overlay whose click handler called `requestPointerLock()` and
-   * which hid ONLY on `pointerlockchange`. Headless Chromium never grants
-   * pointer lock, the promise rejected, the game swallowed the rejection, and
+   * which hid ONLY on `pointerlockchange`. The headless Chromium of that run
+   * granted no lock, the promise rejected, the game swallowed the rejection, and
    * the prober clicked that overlay 17 times over 395s while the scene ran
    * perfectly behind a 94%-opaque blur. `l2.input_changes_state` and
    * `l2.no_soft_lock_5min` both failed, every judge frame was the menu, and
@@ -460,25 +459,25 @@ export function installProbe() {
    * same reason: a reader must be able to see that the page was changed.
    *
    * THREE RULES, and each one is what keeps this from hiding a real defect.
-   * 1. THE REAL LOCK WINS. The shim engages only after the browser has refused —
-   *    a rejected promise, a `pointerlockerror`, a synchronous throw, or a grace
-   *    period with `document.pointerLockElement` still null — and the shadowed
-   *    getter returns the real element whenever there is one.
+   * 1. THE BROWSER IS NEVER ASKED. On macOS a page's `requestPointerLock()`
+   *    takes the real system cursor even in headless Chromium, and a person is
+   *    working at the Mac that grades. So the page's request never reaches the
+   *    browser's own function: the synthetic lock engages in its place, a
+   *    moment after the call, the way a grant arrives. Earlier versions asked
+   *    first and shimmed only a refusal (through `desktop.3`).
    * 2. NOTHING IS FABRICATED. `requested` counts real calls. A page that never
    *    asks is never touched: no getter is shadowed, no event is dispatched.
    * 3. IT IS OBSERVABLE. requested / grantedNatively / shimmed / firstRequestAtMs
-   *    ride the snapshot, so the scorecard can say which of the three happened —
-   *    including "asked, refused, and the shim did not engage either", which is
-   *    the state that must demote a check rather than fail it.
+   *    ride the snapshot, so the scorecard can say what happened, including
+   *    "asked, and the shim did not engage", which is the state that must
+   *    demote a check rather than fail it.
    */
   var PL = D.pointerLock;
   var plElement = null;
   var plRealGet = null;
-  var plPending = null;
   var plInstalled = false;
   /** Last cursor position PER EVENT TYPE — see the movement note in `plInstall`. */
   var plLastClient = {};
-  var PL_GRACE_MS = 500;
 
   // Captured EAGERLY, before anything is shadowed, so "did the browser really
   // lock?" is answerable at every point below including inside the shim.
@@ -510,7 +509,7 @@ export function installProbe() {
     }
   }
 
-  /** Shadow the three surfaces a locked game reads. Runs once, on first refusal. */
+  /** Shadow the three surfaces a locked game reads. Runs once, on the first request. */
   function plInstall() {
     if (plInstalled) return;
     plInstalled = true;
@@ -667,9 +666,10 @@ export function installProbe() {
     plLookPrevT = s.t;
   }
 
-  function plLock(el, why) {
+  /** Engage the synthetic lock on `el`; a lock already held stays as it is. */
+  function plLock(el) {
     if (!el) return;
-    // The browser granted it after all — prefer reality, always.
+    // A real lock, should one ever exist, is reported as what it is.
     if (plRealElement()) {
       PL.grantedNatively = true;
       return;
@@ -680,19 +680,17 @@ export function installProbe() {
     PL.shimmed = true;
     PL.locked = true;
     if (PL.engagedAtMs === null) PL.engagedAtMs = now();
-    PL.lastRefusal = why ? String(why).slice(0, 300) : null;
     plFire();
   }
 
   try {
     var origRPL = window.Element && Element.prototype ? Element.prototype.requestPointerLock : null;
     if (typeof origRPL === "function") {
-      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: installProbe is serialized with toString() into the page
+      // THE BROWSER'S OWN REQUEST IS NEVER MADE: `origRPL` is read only to know the API exists.
       Element.prototype.requestPointerLock = function () {
         PL.requested++;
-        // Read INSIDE the call, because activation is consumed by the request
-        // itself and expires ~5 s after the gesture; a value read later would
-        // describe a different moment.
+        // Read INSIDE the call: activation expires ~5 s after the gesture, so a
+        // value read later would describe a different moment.
         var activation = null;
         try {
           var ua = window.navigator && window.navigator.userActivation;
@@ -705,55 +703,14 @@ export function installProbe() {
           PL.userActivationAtRequest = activation;
         }
         if (activation === true) PL.requestsWithActivation++;
-        plPending = this;
-        var ret;
-        try {
-          ret = origRPL.apply(this, arguments);
-        } catch (e) {
-          plLock(this, "requestPointerLock threw: " + e);
-          return undefined;
-        }
-        // The browser gets its grace period first; the shim is the fallback for
-        // a call that neither resolves nor rejects.
-        try {
-          setTimeout(() => {
-            if (plRealElement()) {
-              PL.grantedNatively = true;
-              return;
-            }
-            plLock(this, "no pointer lock " + PL_GRACE_MS + "ms after the request");
-          }, PL_GRACE_MS);
-        } catch (e) {
-          /* ignore */
-        }
-        if (ret && typeof ret.then === "function") {
-          return ret.then(
-            (v) => {
-              if (plRealElement()) PL.grantedNatively = true;
-              return v;
-            },
-            /**
-             * RESOLVED, never re-thrown. We just granted a lock, so a game that
-             * awaits the promise must not take its error path — the two would
-             * disagree about the same fact. A game that ignores the promise (the
-             * measured one did) sees no difference either way.
-             */
-            (err) => {
-              plLock(this, "requestPointerLock rejected: " + err);
-            },
-          );
-        }
-        return ret;
+        // Granted a moment later, as a browser grants: the caller's own code
+        // runs to its end before `pointerlockchange` fires, and a game that
+        // awaits the promise resumes with its element locked.
+        return Promise.resolve().then(() => {
+          plLock(this);
+        });
       };
     }
-    // The legacy signature reports failure by event rather than by rejection.
-    document.addEventListener(
-      "pointerlockerror",
-      () => {
-        plLock(plPending, "pointerlockerror");
-      },
-      true,
-    );
     document.addEventListener(
       "pointerlockchange",
       () => {

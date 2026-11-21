@@ -163,6 +163,23 @@ describe("l2.no_soft_lock_5min", () => {
     assert.match(demoted.detail, /Gameplay was never reached/);
   });
 
+  it("on a page that never changes without input, a small thing moving in most windows passes, and a frozen page fails", () => {
+    // The known-good mini golf: a still baseline, and a ball rolling for a second after each shot
+    // moves the mirror by 0.0006.
+    const stillBaseline = buildBaseline(BaselineName.PostEntrance, Array<number>(120).fill(0));
+    const shots = soakSamples(SPEC_SOAK_MS, (t) => (t % 8000 < 1000 ? 0.0006 : 0));
+    const played = soakWindows(shots, 0, SPEC_SOAK_MS, stillnessThreshold(stillBaseline));
+    assert.equal(played.withChange, played.windows);
+    assert.equal(softLockRow(run(), played, stillBaseline, openDoors).result, CheckResult.Pass);
+
+    const stopped = soakSamples(SPEC_SOAK_MS, (t) => (t < 30_000 && t % 8000 < 1000 ? 0.0006 : 0));
+    const lost = soakWindows(stopped, 0, SPEC_SOAK_MS, stillnessThreshold(stillBaseline));
+    assert.equal(softLockRow(run(), lost, stillBaseline, openDoors).result, CheckResult.Fail);
+    // Against a baseline with drift of its own the same small change is not told from the drift.
+    const drifting = soakWindows(shots, 0, SPEC_SOAK_MS, stillnessThreshold(baseline));
+    assert.equal(drifting.withChange, 0);
+  });
+
   it("A CRASH IS NEVER DEMOTED: it happened whichever side of a door the page sat on", () => {
     const w = soakWindows(frozen, 0, SPEC_SOAK_MS, stillnessThreshold(baseline));
     const stuck = { ...openDoors, gameplay: { reached: false, why: "a door was never seen to open" } };
