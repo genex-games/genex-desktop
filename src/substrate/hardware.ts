@@ -28,6 +28,7 @@ import catalog from "./models-catalog.json" with { type: "json" };
 import { SECOND_MS } from "../shared/duration.ts";
 import { StudioPlatform } from "../shared/boot.ts";
 import { detectGpus, type GpuInfo } from "./gpu-memory.ts";
+import { versionGte } from "./plugins/marketplace.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -270,7 +271,20 @@ function choice(id: string, model: CatalogModel, hw: HardwareInfo): CatalogChoic
   return { ...shown, model: id, ...fitFor(model.sizeGb, hw) };
 }
 
-export async function recommendModels(hardware?: HardwareInfo): Promise<Recommendation> {
+/** Whether `ollamaVersion` can pull `model`; null (no Ollama running) can, since installing it brings a new one. */
+function ollamaCanPull(model: string, ollamaVersion: string | null): boolean {
+  const minimum = (catalog as { requiresOllama: Record<string, string> }).requiresOllama[model];
+  return !minimum || ollamaVersion === null || versionGte(ollamaVersion, minimum);
+}
+
+/**
+ * The models that fit this machine, ranked, with the rest under More models. A model the running
+ * Ollama (`ollamaVersion`) is too old to pull is never a pick: its Download would fail.
+ */
+export async function recommendModels(
+  hardware?: HardwareInfo,
+  ollamaVersion: string | null = null,
+): Promise<Recommendation> {
   const hw = hardware ?? (await detectHardware());
   const tier = tierFor(tierRamGb(hw));
   const models = catalogModels();
@@ -281,7 +295,7 @@ export async function recommendModels(hardware?: HardwareInfo): Promise<Recommen
       const model = offeredById.get(id);
       return model ? [choice(id, model, hw)] : [];
     })
-    .filter((pick) => pick.fits);
+    .filter((pick) => pick.fits && ollamaCanPull(pick.model, ollamaVersion));
   // A model on the card answers many times faster than one split with RAM: those rank first.
   const picks = [...ranked.filter((pick) => !pick.split), ...ranked.filter((pick) => pick.split)];
   const shown = new Set(picks.map((pick) => pick.model));

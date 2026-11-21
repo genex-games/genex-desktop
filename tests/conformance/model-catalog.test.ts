@@ -92,6 +92,22 @@ describe("model catalog", () => {
     }
   });
 
+  it("never makes a model the running Ollama is too old to pull the Best fit", async () => {
+    // Ollama 0.32.14 refuses Inkling's pull (HTTP 412): Download would fail where Bonsai installs.
+    const old = await recommendModels(machine(64, true), "0.32.14");
+    assert.equal(old.defaultModel, "bonsai-2:27b-pq2_0");
+    assert.ok(!old.picks.some((p) => p.model === "inkling-2-mini:26b-a5b"));
+    assert.ok(
+      old.more.some((p) => p.model === "inkling-2-mini:26b-a5b"),
+      "still listed under More models",
+    );
+    for (const version of ["0.40.17", "0.41.0", null]) {
+      // No Ollama running: installing it now brings a version that can pull it.
+      const { defaultModel } = await recommendModels(machine(64, true), version);
+      assert.equal(defaultModel, "inkling-2-mini:26b-a5b", String(version));
+    }
+  });
+
   it("never offers Inkling 2 Mini off Apple Silicon: Ollama ships only its MLX build", async () => {
     for (const hw of [machine(64, false), pc(32, [RTX_24]), pc(64, [RTX_24])]) {
       const { picks, more } = await recommendModels(hw);

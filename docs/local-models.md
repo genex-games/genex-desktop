@@ -5,7 +5,10 @@ Best fit on Macs up to 47 GB and the first ready choice in chat; PTQ1_0 is the s
 alternative. From 48 GB, Best fit on Apple Silicon is Inkling 2 Mini (`inkling-2-mini:26b-a5b`,
 through Ollama 0.40.17 or later, vision and tools), with Bonsai PQ2_0 next up to 96 GB. While
 Ollama does not answer, the welcome's local screen offers the first pick that installs without it
-(Bonsai), since that screen cannot install Ollama; Settings keeps the ranking. Below 48 GB Inkling
+(Bonsai), since that screen cannot install Ollama; Settings keeps the ranking. A model the running
+Ollama is too old to pull (the catalog's `requiresOllama`, such as Inkling before 0.40.17) is never
+a pick there or in Settings; it stays under More models. The welcome screen keeps a model that is
+downloading or already installed from the picks. Below 48 GB Inkling
 is not offered: on a 32 GB Mac it ran out of GPU memory before answering Genex's first prompt,
 although the fit rule below estimates that it fits. Ollama ships Inkling only as an MLX build, so
 Windows and Linux keep their own picks until Ollama runs it there. Existing explicit model

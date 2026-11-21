@@ -275,7 +275,7 @@
     "qwen3.6:27b": "qwen3.8:27b"
   },
   "requiresOllama": {
-    "$comment": "Minimum Ollama version per model; the app warns instead of failing a pull that cannot work.",
+    "$comment": "Minimum Ollama version per model: a model the running Ollama is too old to pull is never a Best fit or ranked pick (hardware.ts ollamaCanPull).",
     "qwen3.8:27b": "0.32.12",
     "qwen3.8:27b-mlx": "0.32.12",
     "gemma4:26b": "0.32.0",

@@ -712,8 +712,13 @@ function useLocalModel(engines: EngineDescriptor[], onEnginesRefresh: () => void
   const [pulling, setPulling] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // The model last downloaded: it stays the pick between its download ending and the engines listing it.
+  const [lastPulled, setLastPulled] = useState<string | null>(null);
   const asked = useRef(false);
   useDownloadEvents(onEnginesRefresh, { setPulling, setProgress, setError });
+  useEffect(() => {
+    if (pulling) setLastPulled(pulling);
+  }, [pulling]);
 
   const load = useCallback(() => {
     if (asked.current) return;
@@ -733,7 +738,8 @@ function useLocalModel(engines: EngineDescriptor[], onEnginesRefresh: () => void
   const ollama = () => engines.find((engine) => engine.id === EngineId.Ollama);
   const isInstalled = (id: string) =>
     engines.some((engine) => engine.models.some((model) => canonicalModel(model.id) === canonicalModel(id)));
-  const pick = bestFit(hardware, needsOllama(ollama()), { pulling, installed: isInstalled });
+  const held = pulling ?? (error ? null : lastPulled);
+  const pick = bestFit(hardware, needsOllama(ollama()), { pulling: held, installed: isInstalled });
   const installed = Boolean(pick && isInstalled(pick.model));
   const download = async () => {
     if (!pick) return;
