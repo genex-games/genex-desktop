@@ -4585,12 +4585,12 @@ button.chat-header-title:hover {
   z-index: 0;
   border-radius: inherit;
 }
-[data-chat-status] .chat-disclosure > :not(.chat-status-press) {
+.chat-disclosure:has(> .chat-status-press) > :not(.chat-status-press) {
   position: relative;
   z-index: 1;
   pointer-events: none;
 }
-[data-chat-status] .chat-disclosure:has(> .chat-status-press:focus-visible) {
+.chat-disclosure:has(> .chat-status-press:focus-visible) {
   color: var(--ink);
 }
 .chat-status-words {
