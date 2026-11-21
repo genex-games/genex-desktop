@@ -3917,8 +3917,9 @@ Genex:
   open, taken down, not approved and public again are a toast with **Open** for 8 s
   (`reviewToasts`). A click anywhere opens the game's chat with Publish (`openPluginSetupFor`, which
   waits for that game's strip) and sends nothing. The sidebar's second line under a game on Genex
-(Public in green, In review, Human review, Not approved and Taken down in red, Fixing n things
-with the working dot, Checking fixes; none for a game Genex doesn't know) comes from
+(small grey words after a mark: Public with a globe, In review, Human review and Checking fixes with
+a clock, Not approved and Taken down in orange with the warning triangle, Fixing n things with the
+working dot; none for a game Genex doesn't know) comes from
   `studio:plugins.genex-review-lines` (fixture-safe; `core/genex-review-lines.ts`): the kept
   review, the chat's newest fix press (Fixing while the agent works, Checking fixes once the app went
   again) and the publish record (Public for any listed game), each game's review part kept until

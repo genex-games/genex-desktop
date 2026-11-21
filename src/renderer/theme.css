@@ -3095,7 +3095,8 @@ button.chat-header-title:hover {
   background: var(--inset);
   color: var(--ink);
 }
-/* A game on Genex says where it stands under its name: Public in green, Not approved and Taken down in red. */
+/* A game on Genex says where it stands under its name, small and grey after its mark (a globe for
+   Public); Not approved and Taken down in orange. */
 .sidebar-game-names {
   display: flex;
   min-width: 2rem;
@@ -3107,15 +3108,20 @@ button.chat-header-title:hover {
   min-width: 0;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 16px;
+  letter-spacing: 0;
   color: var(--ink-3);
 }
-.sidebar-game-line[data-review-tone="ok"] {
-  color: var(--green);
+.sidebar-game-line > svg {
+  flex: none;
 }
-.sidebar-game-line[data-review-tone="err"] {
-  color: var(--red);
+.sidebar-game-line[data-review-tone="warn"] {
+  color: var(--orange);
+}
+/* The light theme's orange is a fill colour; as small text it takes a little of the ink to read on white. */
+:root[data-theme="light"] .sidebar-game-line[data-review-tone="warn"] {
+  color: color-mix(in oklab, var(--orange) 80%, var(--ink));
 }
 /* The pin and the working dot sit where ⋯ appears, centred in its 28px slot, and give way to it on hover. */
 .sidebar-pin,

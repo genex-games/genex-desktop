@@ -7,8 +7,9 @@ import { NoCover } from "./NoCover.tsx";
 import type { PlayRecentEntry } from "./play-model.ts";
 
 /**
- * A game's small cover, a rectangle so Play's rows read apart from Create's round game pictures: its
- * cover, or the no-cover drawing while it has none or it fails to load (then `onMissing` hears of it).
+ * A game's small cover, a rounded square so Play's rows read apart from Create's round game pictures:
+ * its cover, or the no-cover drawing cut to the square while it has none or it fails to load (then
+ * `onMissing` hears of it).
  */
 export function PlayThumb({ src, onMissing }: { src: string | null; onMissing?: () => void }): JSX.Element {
   // The address that failed: a new one is tried again.
@@ -20,7 +21,7 @@ export function PlayThumb({ src, onMissing }: { src: string | null; onMissing?: 
   if (!src || missing)
     return (
       <span className="play-thumb play-thumb-blank" aria-hidden="true">
-        <NoCover small />
+        <NoCover small fill />
       </span>
     );
   return (
