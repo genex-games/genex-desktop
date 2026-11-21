@@ -36,9 +36,31 @@ Genex is early: expect rough edges, and tell us about them in
 → Any AI: Claude Code, Codex (ChatGPT), Antigravity, Cursor, Grok, OpenCode and OpenRouter\
 → Or local models: Ollama, LM Studio, llama.cpp\
 → Multi-agent: mix models across the main agent, workers and reviewers\
-→ Built-in game dev tools: Blender, Tripo, Meshy, Uthana, ElevenLabs, fal\
+→ Built-in game dev tools: Blender, Tripo, Meshy, Uthana, ElevenLabs, fal ([Genex Tools](#genex-tools))\
 → Server-authoritative multiplayer in one prompt\
 → Publish to Web, Mac, Windows and Linux
+
+### Genex Tools
+
+The best AI tools for game assets behind one CLI and one MCP server. Your coding agent calls one
+tool, and Genex routes the job to the right model:
+
+| Asset | Tools |
+| --- | --- |
+| 3D models | Tripo, Meshy |
+| Rigged characters | Meshy |
+| Animation | Uthana |
+| Sound effects, music and voice | ElevenLabs |
+| Images, textures and video | GPT Image, Gemini, MiniMax, fal |
+| Local 3D editing | Blender |
+
+One account and one credit balance. Genex Tools are built into the app and work from Claude Code,
+Codex or any MCP client:
+
+- CLI: `npx @genex-ai/cli-demo`
+- MCP server: `https://mcp.genex.games/mcp`
+
+More at [genex.games/tools](https://genex.games/tools).
 
 > [!TIP]
 > Have a tool your games need? [Build a plugin](#build-a-plugin) and put it in the Genex
