@@ -25,15 +25,9 @@ export function PlayThumb({ src, onMissing }: { src: string | null; onMissing?: 
       </span>
     );
   return (
-    <img
-      className="play-thumb"
-      src={src}
-      alt=""
-      aria-hidden="true"
-      draggable={false}
-      decoding="async"
-      onError={() => setFailed(src)}
-    />
+    <span className="play-thumb" aria-hidden="true">
+      <img src={src} alt="" draggable={false} decoding="async" onError={() => setFailed(src)} />
+    </span>
   );
 }
 
