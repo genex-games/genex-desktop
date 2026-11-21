@@ -33,6 +33,7 @@ import type { EngineDescriptor, ThreadMeta } from "../types.ts";
 import { ThreadKind } from "../../shared/event-log.ts";
 import { ModelCatalogState } from "../../shared/model-catalog.ts";
 import { EngineKind, EngineStatusCode, splitsRoles } from "../../shared/engine-descriptor.ts";
+import { isMetered } from "../../shared/providers.ts";
 import { modelKey as keyOf, parseModelKey } from "../model-key.ts";
 import type { ComposerSendOptions } from "../../shared/composer.ts";
 import type { ComposerExtras, ComposerModelProps, ModelChoice, RoleRecord } from "../ui/PromptBar.tsx";
@@ -298,6 +299,34 @@ export function pickReplaced(input: {
   return engines.some((candidate) => candidate.id === engine) ? ModelReplaced.ModelDropped : ModelReplaced.ProviderGone;
 }
 
+/** What a chat showed at its last render: the model it named, and every row the picker had then. */
+export interface ShownModel {
+  selected: string | null;
+  choices: readonly ModelChoice[];
+}
+
+/**
+ * The model a chat with no pick of its own keeps when a model that just arrived (a finished
+ * download, a local server that started) would lead the automatic order instead: the one it
+ * showed, while that one still runs on a provider the studio may choose by itself. The new model
+ * joins the picker; it takes the chat only when nothing else could run. Null when the chat has its own pick or nothing needs keeping.
+ */
+export function keptShownModel(input: {
+  modelKey: string | null;
+  before: ShownModel | null;
+  selected: string | null;
+  choices: readonly ModelChoice[];
+}): string | null {
+  const { modelKey, before, selected, choices } = input;
+  if (modelKey || !before?.selected || !selected || before.selected === selected) return null;
+  const arrived = !before.choices.some((choice) => choice.key === selected);
+  const shown = choices.find((choice) => choice.key === before.selected);
+  const stillRuns = shown !== undefined && !shown.disabled && !shown.hidden;
+  // A free model of a paid provider stood in only because nothing else could run (`autoChoice`).
+  const ownChoice = !isMetered(parseModelKey(before.selected).engine);
+  return arrived && stillRuns && ownChoice ? before.selected : null;
+}
+
 /** A model picked in the composer, with the one before it. */
 function trackModelPick(pick: {
   key: string;
@@ -470,6 +499,34 @@ export function sendBlockOf(model: Pick<ComposerModelView, "choices">, key: stri
   return choiceAvailable(model.choices, key) ? null : SendBlock.ModelUnavailable;
 }
 
+/**
+ * A chat with no pick of its own keeps the model it shows when a newly arrived one would lead
+ * (`keptShownModel`): it becomes the chat's pick, remembered as if it had been picked. Weighed after
+ * every render, against the choices the chat had when it last showed its model.
+ */
+function useKeptShownModel(
+  now: {
+    thread: { id: string; meta: ThreadMeta } | null;
+    studio: boolean;
+    storage: KeyValueStorage;
+    modelKey: string | null;
+    selected: string | null;
+    choices: ModelChoice[];
+  },
+  setModelKey: (key: string) => void,
+): void {
+  const shown = useRef<(ShownModel & { thread: string | undefined }) | null>(null);
+  useEffect(() => {
+    const threadId = now.thread?.id;
+    const before = shown.current?.thread === threadId ? shown.current : null;
+    shown.current = { thread: threadId, selected: now.selected, choices: now.choices };
+    const kept = keptShownModel({ ...now, before });
+    if (!kept) return;
+    setModelKey(kept);
+    if (now.thread) rememberChatModel(now.storage, now.thread.id, kept, now.studio);
+  });
+}
+
 /** The model a chat shows: its pick made this session, else the one it remembers. */
 function pickedKey(
   pick: { thread?: string; key: string | null },
@@ -530,6 +587,8 @@ export function useComposerModel({
     setModelKey(opening.modelKey);
     setEffort(opening.effort);
   }, [threadId]);
+
+  useKeptShownModel({ thread, studio, storage, modelKey, selected, choices: view.choices }, setModelKey);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: preferences follow the selected model
   useEffect(() => {

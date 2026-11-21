@@ -1,8 +1,10 @@
 # Managed local models
 
 Studio offers Bonsai 2 27B on Apple Silicon Macs with at least 16 GiB RAM. PQ2_0 is the
-Best fit on those Macs up to 96 GB and the first ready choice in chat; PTQ1_0 is the smaller
-alternative. Existing explicit model selections remain selected.
+Best fit on those Macs up to 96 GB; PTQ1_0 is the smaller alternative. A local model leads the
+automatic choice, so a chat with nothing else to run opens on it. A finished download (or a local
+server that starts) never replaces the model a chat already shows: that chat keeps it as its pick
+(`keptShownModel`) and the new model joins the picker. Explicit picks always remain selected.
 
 `substrate/models-catalog.json` holds one entry per model: name, size, tools, vision and a
 one-line `about` of at most 60 characters. Measurement evidence lives in `notes`, which is never

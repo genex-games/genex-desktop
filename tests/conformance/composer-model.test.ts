@@ -10,6 +10,7 @@ import {
   composerSendOptions,
   effectiveRoles,
   effortOnModelPick,
+  keptShownModel,
   pinComposerOpening,
   pickedKeys,
   pickReplaced,
@@ -426,6 +427,60 @@ describe("a game chat's own effort", () => {
     });
     assert.equal(pinComposerOpening(studioStore, studioChat).effort, "low");
     assert.equal(studioStore.getItem("studio.threadEffort.s"), null, "Studio pins no effort of its own");
+  });
+});
+
+describe("a model that finishes downloading while a chat shows another", () => {
+  // Field case (Inkling 2 Mini test, 11-21): a fresh profile showed Opus, nobody had picked a model,
+  // and the Ollama model that finished downloading took over the chat and all three roles.
+  const noModels: EngineDescriptor = { ...local, models: [] };
+  const downloaded: EngineDescriptor = { ...local, models: [model("inkling")] };
+  const view = (engines: EngineDescriptor[], modelKey: string | null = null) =>
+    resolveComposerModel({ studio: false, engines, modelKey, effort: null });
+  const shown = (engines: EngineDescriptor[]) => {
+    const { selected, choices } = view(engines);
+    return { selected, choices };
+  };
+  const kept = (before: EngineDescriptor[], after: EngineDescriptor[], modelKey: string | null = null) => {
+    const { selected, choices } = view(after, modelKey);
+    return keptShownModel({ modelKey, before: shown(before), selected, choices });
+  };
+
+  it("keeps the model the chat shows, so the new one only joins the picker", () => {
+    assert.equal(view([downloaded, claude]).selected, "ollama::inkling", "a local model leads the automatic order");
+    const key = kept([noModels, claude], [downloaded, claude]);
+    assert.equal(key, "claude-code::default");
+    const after = view([downloaded, claude], key);
+    assert.equal(after.selectedEngine?.id, "claude-code", "the chat stays on the model it showed");
+    assert.ok(
+      after.choices.some((choice) => choice.key === "ollama::inkling"),
+      "the downloaded model is offered in the picker",
+    );
+  });
+
+  it("lets the new model take the chat when nothing else could run", () => {
+    assert.equal(kept([noModels], [downloaded]), null);
+    assert.equal(kept([noModels, signedOut], [downloaded, signedOut]), null, "a signed-out provider runs nothing");
+    const freeOnly: EngineDescriptor = {
+      ...codex,
+      id: "opencode",
+      label: "OpenCode",
+      models: [model("big-pickle", { free: true })],
+    };
+    assert.equal(view([noModels, freeOnly]).selected, "opencode::big-pickle", "a free model stands in alone");
+    assert.equal(kept([noModels, freeOnly], [downloaded, freeOnly]), null, "a free stand-in gives way");
+  });
+
+  it("leaves a chat alone whose pick is its own, or whose shown model stopped running", () => {
+    assert.equal(kept([noModels, claude], [downloaded, claude], "codex::gpt"), null, "a saved pick already stays");
+    const gone = { ...claude, status: { code: "needs_login", detail: "" } } as EngineDescriptor;
+    assert.equal(kept([noModels, claude], [downloaded, gone]), null, "a model that no longer runs is not kept");
+  });
+
+  it("holds nothing when no new model arrived", () => {
+    const both = { ...local, models: [model("qwen")] };
+    assert.equal(kept([both, claude], [both, claude]), null);
+    assert.equal(kept([claude], [codex]), null, "a provider that left takes its model along");
   });
 });
 
