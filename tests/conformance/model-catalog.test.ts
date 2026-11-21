@@ -67,18 +67,31 @@ describe("model catalog", () => {
     }
   });
 
-  it("recommends Bonsai PQ2_0 by default on a 32 GB Apple Silicon Mac", async () => {
+  it("recommends Inkling 2 Mini by default on a 32 GB Apple Silicon Mac, Bonsai PQ2_0 next", async () => {
     const { defaultModel, hardware, picks } = await recommendModels(machine(32, true));
-    assert.equal(defaultModel, "bonsai-2:27b-pq2_0");
+    assert.equal(defaultModel, "inkling-2-mini:26b-a5b");
     assert.equal(picks[0]?.model, defaultModel);
+    assert.equal(picks[1]?.model, "bonsai-2:27b-pq2_0");
     assert.ok(hardware.usableModelGb >= 23, `Metal is handed ~76% of unified memory, got ${hardware.usableModelGb}`);
   });
 
-  it("makes Qwen 3.5 122B the Best fit on 128 GB and larger Apple Silicon Macs", async () => {
-    for (const ram of [128, 192]) {
+  it("makes Inkling 2 Mini the Best fit on every Apple Silicon Mac from 32 GB, and keeps Bonsai below", async () => {
+    for (const ram of [32, 36, 48, 64, 96, 128, 192]) {
       const { defaultModel, picks } = await recommendModels(machine(ram, true));
-      assert.equal(defaultModel, "qwen3.5:122b");
-      assert.ok(picks[0]?.vision && picks[0].tools, "the large-Mac Best fit must build and see the game");
+      assert.equal(defaultModel, "inkling-2-mini:26b-a5b", `${ram} GB`);
+      assert.ok(picks[0]?.vision && picks[0].tools, "the Best fit must build and see the game");
+    }
+    for (const ram of [16, 24]) {
+      const { defaultModel, more } = await recommendModels(machine(ram, true));
+      assert.equal(defaultModel, "bonsai-2:27b-pq2_0", `${ram} GB: Inkling's ~22 GB does not fit`);
+      assert.equal(more.find((p) => p.model === "inkling-2-mini:26b-a5b")?.needsRamGb, 32);
+    }
+  });
+
+  it("never offers Inkling 2 Mini off Apple Silicon: Ollama ships only its MLX build", async () => {
+    for (const hw of [machine(64, false), pc(32, [RTX_24]), pc(64, [RTX_24])]) {
+      const { picks, more } = await recommendModels(hw);
+      assert.ok(![...picks, ...more].some((p) => p.model.startsWith("inkling-2-mini")));
     }
   });
 

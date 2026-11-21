@@ -1,14 +1,17 @@
 # Managed local models
 
 Studio offers Bonsai 2 27B on Apple Silicon Macs with at least 16 GiB RAM. PQ2_0 is the
-Best fit on those Macs up to 96 GB and the first ready choice in chat; PTQ1_0 is the smaller
-alternative. Existing explicit model selections remain selected.
+Best fit on 16 and 24 GB Macs and the first ready choice in chat; PTQ1_0 is the smaller
+alternative. From 32 GB, Best fit on Apple Silicon is Inkling 2 Mini (`inkling-2-mini:26b-a5b`,
+through Ollama, vision and tools), with Bonsai PQ2_0 next. Ollama ships Inkling only as an MLX
+build, so Windows and Linux keep their own picks until Ollama runs it there. Existing explicit
+model selections remain selected.
 
 `substrate/models-catalog.json` holds one entry per model: name, size, tools, vision and a
 one-line `about` of at most 60 characters. Measurement evidence lives in `notes`, which is never
 displayed. Each RAM tier ranks model ids; `recommendModels` shows the ranked models that fit, and
-the first is Best fit. From 128 GB, Best fit is Qwen 3.5 122B (vision and tools); 192 GB adds
-Qwen 3.8 Flash Next. Every other model the architecture can run is under More models, smallest
+the first is Best fit. From 128 GB, Qwen 3.5 122B (vision and tools) follows Inkling 2 Mini; 192 GB
+adds Qwen 3.8 Flash Next. Every other model the architecture can run is under More models, smallest
 first, with "Needs a N GB Mac" when it does not fit (on a PC, "Needs ~N GB to run"). Download is
 offered only for a model that fits. One build per model is shown: MLX on Apple Silicon, the
 portable GGUF elsewhere. The fit rule is weights + KV cache (0.5–3 GB) + 1.5 GB within 72% of

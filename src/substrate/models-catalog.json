@@ -1,6 +1,6 @@
 {
   "$comment": "Curated local-model picks. Data, not code. `models` holds one entry per model; `about` is the one line the user reads (60 characters at most) and `notes` is evidence that is never displayed. `tiers` rank model ids for a RAM class: the first that fits the machine is Best fit. Sizes are download sizes of the pinned tag, read from registry.ollama.ai manifests on 22 Sep 2026 for the models added then. The 32 GB Qwen MLX figures were measured on a real M2 Max, 21 Aug 2026; the large-Mac models added 22 Sep 2026 have not been measured in Studio.",
-  "updated": "2026-09-22",
+  "updated": "2026-11-21",
   "models": {
     "bonsai-2:27b-pq2_0": {
       "engine": "bonsai",
@@ -49,6 +49,15 @@
       "vision": false,
       "about": "Fast, dependable builder.",
       "notes": "Best tool-calling in class; reasoning effort is configurable — keep it low for long runs. Text-only, so it cannot judge a screenshot."
+    },
+    "inkling-2-mini:26b-a5b": {
+      "name": "Inkling 2 Mini",
+      "sizeGb": 18.6,
+      "tools": true,
+      "vision": true,
+      "appleSilicon": true,
+      "about": "Best for building games. Fast for its size.",
+      "notes": "Thinking Machines, 20 Nov 2026, Apache 2.0. 26.4B looped mixture-of-experts, 5.4B effective active parameters, trained in NVFP4. Ollama ships one MLX build (latest, 26b-a5b and 26b-a5b-nvfp4 share a digest), listed for Apple silicon; the vendor names Macs with 32 GB or more. Unsloth's GGUF needs an unmerged llama.cpp branch (looped layers), so Ollama cannot run it on Windows or Linux yet: lift appleSilicon once it can. Vision, tools and thinking on ollama.com. Leads open models under 100B on DeepSWE v1.1 (48.2%) and SWE-bench Pro v2 (77.9%), vendor-reported."
     },
     "qwen3.8:27b-mlx": {
       "name": "Qwen 3.8 27B",
@@ -163,6 +172,7 @@
       "expectation": "good",
       "label": "32 GB — the sweet spot",
       "picks": [
+        "inkling-2-mini:26b-a5b",
         "bonsai-2:27b-pq2_0",
         "qwen3.8:27b-mlx",
         "qwen3.8:27b",
@@ -176,6 +186,7 @@
       "expectation": "good",
       "label": "64 GB — comfortable",
       "picks": [
+        "inkling-2-mini:26b-a5b",
         "bonsai-2:27b-pq2_0",
         "qwen3.8:27b-mlx",
         "qwen3.8:27b",
@@ -188,13 +199,22 @@
       "minRamGb": 96,
       "expectation": "strong",
       "label": "96 GB — roomy",
-      "picks": ["bonsai-2:27b-pq2_0", "gemma4:31b", "qwen3-coder-next", "qwen3.8:27b-mlx", "qwen3.8:27b", "qwen3.6:35b"]
+      "picks": [
+        "inkling-2-mini:26b-a5b",
+        "bonsai-2:27b-pq2_0",
+        "gemma4:31b",
+        "qwen3-coder-next",
+        "qwen3.8:27b-mlx",
+        "qwen3.8:27b",
+        "qwen3.6:35b"
+      ]
     },
     {
       "minRamGb": 128,
       "expectation": "strong",
       "label": "128 GB — large models",
       "picks": [
+        "inkling-2-mini:26b-a5b",
         "qwen3.5:122b",
         "devstral-2:123b",
         "gpt-oss:120b",
@@ -209,6 +229,7 @@
       "expectation": "strong",
       "label": "192 GB+",
       "picks": [
+        "inkling-2-mini:26b-a5b",
         "qwen3.5:122b",
         "qwen3.8-flash-next:125b-mlx",
         "devstral-2:123b",
@@ -221,7 +242,7 @@
   ],
   "judges": {
     "$comment": "Blind judging needs vision. On 32 GB only one large model is resident at a time, so prefer using ONE vision+tools model for both roles over swapping two — swapping costs more than the quality difference. Local judging of 3D 'feel' is still unproven; the contractor engine is the fallback.",
-    "local": ["qwen3.8:27b-mlx", "qwen3.8:27b", "gemma4:26b", "gemma4:12b"],
+    "local": ["inkling-2-mini:26b-a5b", "qwen3.8:27b-mlx", "qwen3.8:27b", "gemma4:26b", "gemma4:12b"],
     "delegated": ["claude-code", "codex"]
   },
   "superseded": {
