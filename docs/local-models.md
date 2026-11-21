@@ -11,6 +11,15 @@ although the fit rule below estimates that it fits. Ollama ships Inkling only as
 Windows and Linux keep their own picks until Ollama runs it there. Existing explicit model
 selections remain selected.
 
+Inkling on a PC today goes through a model server rather than Ollama: Unsloth's GGUF builds
+(`unsloth/Inkling-2-Mini-GGUF`, 8 to 23 GB) run on Unsloth's llama.cpp prebuilts, and on
+mainline llama.cpp once ggml-org/llama.cpp #32704 lands (the looped layers). `llama-server --jinja`
+answers on port 8080, which Local server finds by itself ([your own model
+server](connections-and-context.md#your-own-model-server)), so game chats and builds run on it
+with no Genex change. When Ollama can pull a build for Windows and Linux, add it to the catalog as
+the portable entry with `mlx` naming `inkling-2-mini:26b-a5b`, which then stays the Apple Silicon
+build, and measure it on a PC before ranking it.
+
 `substrate/models-catalog.json` holds one entry per model: name, size, tools, vision and a
 one-line `about` of at most 60 characters. Measurement evidence lives in `notes`, which is never
 displayed. Each RAM tier ranks model ids; `recommendModels` shows the ranked models that fit, and
