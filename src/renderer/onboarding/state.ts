@@ -287,3 +287,24 @@ export function genexSignInEnd(account: GenexAccountStatus | null, answered: boo
 
 /** Ollama names an untagged pull `:latest`; installed models are compared the same way. */
 export const canonicalModel = (id: string): string => (id.includes(":") ? id : `${id}:latest`);
+
+/** What the local screen needs of a hardware recommendation. */
+interface LocalRecommendation<Pick extends { model: string; engine?: string }> {
+  picks: Pick[];
+  defaultModel: string | null;
+}
+
+/**
+ * The model the local screen offers: the recommendation's Best fit, or, while Ollama does not
+ * answer, the first pick that installs without it (Bonsai). The screen has no Install Ollama
+ * step, so an Ollama Best fit's Download could only fail there; Settings still ranks it first.
+ */
+export function onboardingPick<Pick extends { model: string; engine?: string }>(
+  recommendation: LocalRecommendation<Pick>,
+  ollamaMissing: boolean,
+): Pick | null {
+  const best =
+    recommendation.picks.find((pick) => pick.model === recommendation.defaultModel) ?? recommendation.picks[0] ?? null;
+  if (!best || best.engine || !ollamaMissing) return best;
+  return recommendation.picks.find((pick) => pick.engine) ?? best;
+}

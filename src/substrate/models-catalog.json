@@ -184,7 +184,7 @@
     {
       "minRamGb": 48,
       "expectation": "good",
-      "label": "48 GB — Inkling fits",
+      "label": "48 GB — more room",
       "picks": [
         "inkling-2-mini:26b-a5b",
         "bonsai-2:27b-pq2_0",

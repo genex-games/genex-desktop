@@ -61,6 +61,7 @@ import {
 } from "../analytics/welcome-vocabulary.ts";
 import { preloadHomeBackdrop } from "../home-backdrop/preload.ts";
 import { defaultModelKey } from "../model-choices.ts";
+import { needsOllama } from "../model-download.ts";
 import { Button } from "../ui/Button.tsx";
 import { GenexLogo } from "../ui/GenexLogo.tsx";
 import { Icon } from "../ui/icons.tsx";
@@ -116,6 +117,7 @@ import {
   ConnectViewKind,
   installsCli,
   markState,
+  onboardingPick,
   startTrouble,
   type ConnectView,
   type Subscription,
@@ -629,11 +631,11 @@ function useCodexLogin(): CodexLoginState | null {
 
 type ModelPick = NonNullable<Hardware["recommendation"]>["picks"][number];
 
-/** The model the recommendation calls Best fit, or its first pick when it names none. */
-function bestFit(hardware: Hardware | null): ModelPick | null {
+/** The Best fit this screen can install: an Ollama one only while Ollama answers (`onboardingPick`). */
+function bestFit(hardware: Hardware | null, ollamaMissing: boolean): ModelPick | null {
   const recommendation = hardware?.recommendation;
   if (!recommendation) return null;
-  return recommendation.picks.find((p) => p.model === recommendation.defaultModel) ?? recommendation.picks[0] ?? null;
+  return onboardingPick(recommendation, ollamaMissing);
 }
 
 /** A pick's name as the row shows it, with its variant when it has one. */
@@ -724,12 +726,12 @@ function useLocalModel(engines: EngineDescriptor[], onEnginesRefresh: () => void
         setHardwareError(problemWords(err));
       });
   }, []);
-  const pick = bestFit(hardware);
+  const ollama = () => engines.find((engine) => engine.id === EngineId.Ollama);
+  const pick = bestFit(hardware, needsOllama(ollama()));
   const installed = Boolean(
     pick &&
       engines.some((engine) => engine.models.some((model) => canonicalModel(model.id) === canonicalModel(pick.model))),
   );
-  const ollama = () => engines.find((engine) => engine.id === EngineId.Ollama);
   const download = async () => {
     if (!pick) return;
     setPulling(pick.model);

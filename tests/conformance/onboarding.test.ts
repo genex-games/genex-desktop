@@ -12,6 +12,7 @@ import {
   genexSignInEnd,
   genexStep,
   markState,
+  onboardingPick,
   shouldWelcome,
   startTrouble,
   WELCOMED_KEY,
@@ -627,5 +628,28 @@ describe("first-launch art", () => {
         const [px, py] = call.args as number[];
         assert.ok(px >= x && px <= x + width && py >= y && py <= y + height, `${call.name}(${px}, ${py}) at ${t}s`);
       }
+  });
+});
+
+describe("the local screen's Best fit", () => {
+  const recommendation = (picks: { model: string; engine?: string }[]) => ({
+    picks,
+    defaultModel: picks[0]?.model ?? null,
+  });
+  const big = recommendation([{ model: "inkling-2-mini:26b-a5b" }, { model: "bonsai-2:27b-pq2_0", engine: "bonsai" }]);
+
+  it("offers the recommended Best fit when Ollama answers", () => {
+    assert.equal(onboardingPick(big, false)?.model, "inkling-2-mini:26b-a5b");
+  });
+
+  it("offers a model that installs without Ollama when Ollama does not answer, since onboarding cannot install it", () => {
+    // A 64 GB Mac's Best fit is an Ollama model; without Ollama its Download could only fail.
+    assert.equal(onboardingPick(big, true)?.model, "bonsai-2:27b-pq2_0");
+  });
+
+  it("keeps the Ollama Best fit when no pick installs without Ollama", () => {
+    const ollamaOnly = recommendation([{ model: "qwen3.5:122b" }, { model: "devstral-2:123b" }]);
+    assert.equal(onboardingPick(ollamaOnly, true)?.model, "qwen3.5:122b");
+    assert.equal(onboardingPick(recommendation([]), true), null);
   });
 });
