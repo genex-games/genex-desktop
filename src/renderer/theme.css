@@ -4953,6 +4953,10 @@ button.chat-header-title:hover {
 [data-chat-entry]:focus-within .chat-user-action {
   opacity: 1;
 }
+/* While the chat answers, Rewind waits: the conversation says so once (chat/ChatConversation.tsx). */
+[data-chat-scroll][data-rewind-off] .chat-rewind {
+  display: none;
+}
 @media (hover: none) {
   .chat-user-action {
     opacity: 1;

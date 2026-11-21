@@ -36,12 +36,17 @@ import { HeldFirstMessage } from "./HeldFirstMessage.tsx";
 import type { HeldFirstSend } from "./use-launch-handover.ts";
 import { PLAN_PROVIDERS } from "../ui/usage-words.ts";
 import { VirtualTranscript } from "./VirtualTranscript.tsx";
+import { useRowFactSource } from "./row-facts.ts";
 
 /** The transcript's context: the chat's run, game and pictures, and what its cards and bubbles do. */
 function useTranscriptContext(parts: ChatParts): TranscriptContext {
   const latest = useRef(parts);
   latest.current = parts;
   const { props, chat, rewind } = parts;
+  const rewindable = useRowFactSource(rewind.offers);
+  const { activeRunId, pausedRunId } = chat;
+  const runsNow = useMemo(() => ({ activeRunId, pausedRunId }), [activeRunId, pausedRunId]);
+  const runs = useRowFactSource(useCallback(() => runsNow, [runsNow]));
   const actions = useMemo(
     () => ({
       onApprovePlan: () => latest.current.submit(PLAN_WORDS.go, undefined, true),
@@ -60,8 +65,7 @@ function useTranscriptContext(parts: ChatParts): TranscriptContext {
   );
   return useMemo(
     () => ({
-      activeRunId: chat.activeRunId,
-      pausedRunId: chat.pausedRunId,
+      runs,
       project: chat.project,
       threadId: chat.threadId ?? null,
       images: chat.transcript.imagesByEntry,
@@ -70,15 +74,14 @@ function useTranscriptContext(parts: ChatParts): TranscriptContext {
       onOpenStudio: props.onOpenStudio,
       onNotice: props.onNotice,
       ...actions,
-      canRewind: rewind.offers,
+      canRewind: rewindable,
       onRewind: rewind.open,
       ...(!chat.isStudioThread && chat.project && chat.threadId
         ? { commands: { threadId: chat.threadId, project: chat.project } }
         : {}),
     }),
     [
-      chat.activeRunId,
-      chat.pausedRunId,
+      runs,
       chat.project,
       chat.threadId,
       chat.transcript.imagesByEntry,
@@ -88,7 +91,7 @@ function useTranscriptContext(parts: ChatParts): TranscriptContext {
       props.onOpenStudio,
       props.onNotice,
       actions,
-      rewind.offers,
+      rewindable,
       rewind.open,
     ],
   );
@@ -171,6 +174,7 @@ export function ChatConversation(parts: ChatParts): JSX.Element {
     // A Stop already under way sends what waits once it settles: nothing more to press.
     onSendNow: parts.work.stoppable && !parts.work.stop.stopping ? actions.sendNow : null,
     onEditQueued: actions.editQueued,
+    rewindAvailable: parts.rewind.available,
   });
   return <ConversationContent view={view} context={context} onAsk={actions.ask} onStreaming={actions.streaming} />;
 }
@@ -211,6 +215,8 @@ type ConversationView = {
   onSendNow: (() => void) | null;
   /** Take a waiting message off the queue and back to the composer. */
   onEditQueued: (message: TakenBack) => Promise<void>;
+  /** The bubbles' Rewind can be pressed now (between answers); otherwise it is hidden. */
+  rewindAvailable: boolean;
 };
 
 /**
@@ -244,13 +250,17 @@ const ConversationContent = memo(function ConversationContent({
   const { history, follow, transcript, sends, threadId, studioIntro, loading, onNotice } = view;
   const studioEmpty = studioIntro && transcript.readingEntries.length === 0 && view.idle;
   const renderItem = useCallback(
-    (entry: Parameters<typeof TranscriptEntry>[0]["entry"]) => <TranscriptEntry entry={entry} context={context} />,
+    (entry: Parameters<typeof TranscriptEntry>[0]["entry"]) => (
+      <PerformanceBoundary id={PerformanceComponent.TranscriptRow}>
+        <TranscriptEntry entry={entry} context={context} />
+      </PerformanceBoundary>
+    ),
     [context],
   );
   return (
     <PerformanceBoundary id={PerformanceComponent.ChatConversation}>
       <div className="relative min-h-0 flex-1 overflow-hidden">
-        <ChatScroll follow={follow}>
+        <ChatScroll follow={follow} rewindAvailable={view.rewindAvailable}>
           {studioIntro && <StudioIntro empty={studioEmpty} disabled={view.noModel} onAsk={onAsk} />}
           {history.pageError && <EarlierFailed onRetry={history.loadEarlier} />}
           <VirtualTranscript
@@ -296,12 +306,25 @@ const ConversationContent = memo(function ConversationContent({
   );
 });
 
-/** The transcript's scroller: it follows the newest entry until the reader scrolls away. */
-function ChatScroll({ follow, children }: { follow: FollowScroll; children: ReactNode }): JSX.Element {
+/**
+ * The transcript's scroller: it follows the newest entry until the reader scrolls away. Whether
+ * Rewind can be pressed is said here, once, rather than by each bubble, so its coming and going
+ * between answers draws no row again.
+ */
+function ChatScroll({
+  follow,
+  rewindAvailable,
+  children,
+}: {
+  follow: FollowScroll;
+  rewindAvailable: boolean;
+  children: ReactNode;
+}): JSX.Element {
   return (
     <div
       ref={follow.scroller}
       {...follow.handlers}
+      data-rewind-off={rewindAvailable ? undefined : ""}
       // The virtual transcript owns anchoring. Native anchoring to the active workers
       // below it would jump past an expanded tool list and unmount its disclosure.
       style={{ overflowAnchor: "none" }}

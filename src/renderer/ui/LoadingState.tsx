@@ -1,6 +1,6 @@
 /** Compact current-work indicator: the current phase, and beside it the time the work has taken. */
 import type { JSX, ReactNode } from "react";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { useClockText } from "../use-polling.ts";
 import { clockWords } from "../words.ts";
@@ -9,7 +9,7 @@ import { prefersReducedMotion } from "./media-queries.ts";
 import { CLOSE_MS, OPEN_MS } from "./motion.ts";
 import { Presence, useLinger } from "./Presence.tsx";
 import { StatusOrb } from "./StatusOrb.tsx";
-import { useSteadyStatus, useTextFade, useWidthGlide } from "./label-motion.ts";
+import { useSharedSweep, useSteadyStatus, useTextFade, useWidthGlide } from "./label-motion.ts";
 
 /** How a clock's first words come in: unseen while their box opens halfway, then fading in. */
 const CLOCK_ARRIVAL: Keyframe[] = [{ opacity: 0 }, { opacity: 0, offset: 0.5 }, { opacity: 1 }];
@@ -121,49 +121,50 @@ export function LoadingState({
   const held = useSteadyStatus({ label, since: workStarted, waiting });
   const { label: shown, since: startedAt } = held;
   const status = useRef<HTMLSpanElement>(null);
+  const root = useRef<HTMLDivElement>(null);
+  const statusId = useId();
   useTextFade(status, shown);
   useWidthGlide(status, shown);
+  useSharedSweep(root);
   // The chevron comes and goes with the work's details: it fades in, and fades out before it goes.
   const disclosure = useLinger(Boolean(details), CLOSE_MS);
   const chevronClass = `chat-chevron ${open ? "rotate-90" : ""} ${disclosure.leaving ? "chat-chevron-leaving" : ""}`;
   // Waiting on the user has no clock and no loader: they close when the wait begins and open again
   // when work resumes, so the words beside them slide. The words and the clock shimmer together.
-  const line = (
-    <>
-      <span aria-hidden className="chat-status-orb-slot" data-gone={held.waiting || undefined}>
-        <StatusOrb />
-      </span>
-      <span className="chat-status-words">
-        {/* The label can be the agent's own words about the work. */}
-        <span
-          ref={status}
-          role="status"
-          data-analytics-mask
-          data-shimmer={!held.waiting || undefined}
-          className={`${held.waiting ? "text-ink-2" : "chat-status-shimmer"} min-w-0 truncate`}
-        >
-          {shown}
-        </span>
-        <StatusClock since={startedAt} hidden={held.waiting} shimmer={!held.waiting} />
-      </span>
-    </>
-  );
+  // The line is one element whether or not it opens details: the press that opens them lies over
+  // it, so the loader, the words and their shimmer are never drawn anew when details come or go.
   return (
-    <div data-chat-status data-loader-variant={variant} className="min-w-0 text-status">
+    <div ref={root} data-chat-status data-loader-variant={variant} className="min-w-0 text-status">
       <div className="flex min-w-0 items-center">
-        {disclosure.on ? (
-          <button
-            type="button"
-            aria-expanded={open}
-            onClick={() => setOpen((value) => !value)}
-            className="chat-disclosure min-w-0"
-          >
-            {line}
-            <Icon name="chevron-right" size={12} className={chevronClass} />
-          </button>
-        ) : (
-          <div className="chat-status-line">{line}</div>
-        )}
+        <div className={disclosure.on ? "chat-disclosure relative min-w-0" : "chat-status-line"}>
+          {disclosure.on && (
+            <button
+              type="button"
+              aria-expanded={open}
+              aria-labelledby={statusId}
+              onClick={() => setOpen((value) => !value)}
+              className="absolute inset-0 rounded-[inherit]"
+            />
+          )}
+          <span aria-hidden className="chat-status-orb-slot" data-gone={held.waiting || undefined}>
+            <StatusOrb />
+          </span>
+          <span className="chat-status-words">
+            {/* The label can be the agent's own words about the work. */}
+            <span
+              ref={status}
+              id={statusId}
+              role="status"
+              data-analytics-mask
+              data-shimmer={!held.waiting || undefined}
+              className={`${held.waiting ? "text-ink-2" : "chat-status-shimmer"} min-w-0 truncate`}
+            >
+              {shown}
+            </span>
+            <StatusClock since={startedAt} hidden={held.waiting} shimmer={!held.waiting} />
+          </span>
+          {disclosure.on && <Icon name="chevron-right" size={12} className={chevronClass} />}
+        </div>
       </div>
       <Presence>{open && details ? [{ key: "details", node: details }] : []}</Presence>
     </div>

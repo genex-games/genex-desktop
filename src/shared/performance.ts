@@ -18,6 +18,8 @@ export interface PerformanceMark {
 export const PerformanceComponent = {
   App: "App",
   ChatConversation: "ChatConversation",
+  /** Every row of the chat's transcript: how often rows are drawn, never which. */
+  TranscriptRow: "TranscriptRow",
   RunGraph: "RunGraph",
   StepNode: "StepNode",
 } as const;

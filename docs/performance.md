@@ -80,6 +80,13 @@ counters carry the regression gates.
   the composer, and a chat the reader pressed in holds still; an empty composer is as tall as a
   wrapping placeholder needs. `STUDIO_CHAT_SCROLL_PASS=composer`
   runs only that, `game` only the flings beside the game.
+- `npm run test:ui -- chat-motion-ui`: plays the production chat through a turn, many tools, a
+  streamed reply, a question, a build, a message to a build's lead and sent pictures coming back
+  into sight, in a short, a long and a 400-message chat, and records every frame. Besides jumps,
+  pops and flashes it fails on a row or the status line drawn anew where it stood, a shimmer that
+  starts its sweep over, a sent picture shown blank once loaded, and a long chat drawing its rows
+  more often than a short one. It bundles React DOM's profiling build (production React whose
+  Profiler reports), so `TranscriptRow` counts every row drawn without development React's cost.
 - Fixture messages for journeys: `fixture:stream` (a short streamed reply) and `fixture:stream-long`
   (about ten thousand characters of Markdown and code, streamed at a fast model's pace, in a game chat).
 - `dist/renderer/bundle-report.json`: eager renderer bytes against the budget in
@@ -98,6 +105,8 @@ counters carry the regression gates.
 | Eager renderer bytes, development | 6,000,000 | `scripts/renderer-build.mjs` |
 | three.js in the eager renderer graph | none | `scripts/renderer-build.mjs` |
 | Production React in a packaged app | required | `tests/e2e/run-packaged-smoke.mjs` |
+| Chat rows drawn again for a turn in a long chat, over a short one | 6 | `tests/e2e/run-chat-motion-ui.mjs` |
+| Chat parts drawn anew in place, shimmer restarts, blank sent pictures | none | `tests/e2e/run-chat-motion-ui.mjs` |
 | sandbox-runtime, the Agent SDK or the MCP SDK imported at the top of main | none | `scripts/main-build.mjs` |
 | A language catalog inside `app.mjs` | none | `scripts/main-build.mjs` |
 | Chat typing commits | unchanged per key | `tests/e2e/run-chat-ui.mjs` |

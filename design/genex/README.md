@@ -1019,9 +1019,11 @@ checks real adapter translation of synthetic partial messages and completed resu
 not certify a live account. Build smoke retains loading/error/Stop and supported viewport/zoom
 checks; design-gallery acceptance covers shared primitives and reduced motion. `npm run test:ui --
 chat-motion-ui` plays the production ChatPanel through a send, work and its clock, tools, a streamed
-reply, a question and a build, in a short and a long chat, frame by frame: it fails on a part that moves its
-whole way in one frame, comes or goes at full opacity, or a status label shown under 300ms, and on
-any motion left under reduced motion.
+reply, a question, a build and sent pictures, in a short, a long and a very long chat, frame by frame: it
+fails on a part that moves its whole way in one frame, comes or goes at full opacity, or a status label
+shown under 300ms; on a row or the status line drawn anew where it stood, a shimmer that starts its sweep
+over, a sent picture shown blank once loaded, and earlier rows drawn again; and on any motion left under
+reduced motion.
 
 Use `npm run test:design-ui` for shared Genex primitive changes selected by the scope table. It builds the development-only
 gallery and tests it in credential-disabled disposable Electron: actual per-script font

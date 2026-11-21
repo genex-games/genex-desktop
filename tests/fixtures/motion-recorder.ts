@@ -1,7 +1,9 @@
 /**
  * What a person sees move in the chat, frame by frame: the live parts' boxes, opacity and the
- * status line's words, and the jumps, pops and flashes they add up to. Runs in the page, on
- * requestAnimationFrame, so a bad frame is caught where it is drawn.
+ * status line's words, and the jumps, pops and flashes they add up to; also what is drawn anew
+ * where it already stood (a row or the status line rebuilt in place), a shimmer that skips back
+ * to its start and pictures shown blank. Runs in the page, on requestAnimationFrame, so a bad
+ * frame is caught where it is drawn.
  */
 
 /** A part of the chat the recorder follows, by its data hook. */
@@ -15,6 +17,27 @@ const LIVE_PARTS = {
   // The status line's chevron, which slides as the words before it change.
   chevron: "[data-chat-status] .chat-chevron",
 } as const;
+
+/**
+ * Parts whose element must stay the same one while it is seen: built anew in place, its
+ * animations start over (the orb's plasma, the shimmer) and its content is laid out again.
+ * Rows are followed too, by their entry id.
+ */
+const KEPT_PARTS = {
+  status: "[data-chat-status]",
+  label: "[data-chat-status] [role=status]",
+  orb: "[data-chat-status] .chat-status-orb",
+  build: "[data-build-status]",
+} as const;
+
+/** The shimmers whose sweep must run on across frames, never back to its start. */
+const SWEEPS = {
+  label: "[data-chat-status] [role=status]",
+  clock: "[data-chat-status] .chat-clock .chat-status-shimmer",
+  build: "[data-build-status] .chat-status-shimmer",
+} as const;
+/** The shimmer's keyframes (theme.css). */
+const SWEEP_ANIMATION = "shimmer-sweep";
 
 /** One part as drawn in one frame: its top and height on screen, how opaque it looks, and whether it can be seen. */
 export interface PartBox {
@@ -31,6 +54,12 @@ export interface MotionFrame {
   parts: Record<string, PartBox>;
   label: string | null;
   running: number;
+  /** Which element each kept part and row was (a number per element), where it can be seen. */
+  nodes: Record<string, number>;
+  /** How far into its sweep each shimmer on show is (ms) and how long one sweep lasts. */
+  sweeps: Record<string, { at: number; length: number }>;
+  /** Pictures in a sent message that can be seen but show nothing yet. */
+  blankPictures: number;
 }
 
 /** A recording: its frames and the long tasks the main thread ran meanwhile (ms each). */
@@ -44,6 +73,19 @@ export interface Jump {
   part: string;
   at: number;
   by: number;
+}
+
+/** A part seen in two frames in a row, drawn by a new element in the second. */
+export interface Rebuilt {
+  part: string;
+  at: number;
+}
+
+/** A shimmer whose sweep, from one frame to the next, did not go on from where it was. */
+export interface Skip {
+  sweep: string;
+  at: number;
+  byMs: number;
 }
 
 /** A part that came or went at (nearly) full opacity. */
@@ -85,6 +127,10 @@ export interface MotionReport {
   labels: string[];
   /** Frames in which some finite animation still ran (an entrance, an exit or a resize). */
   animatedFrames: number;
+  rebuilt: Rebuilt[];
+  skips: Skip[];
+  /** Frames that showed a sent picture blank. */
+  blankPictureFrames: number;
 }
 
 /** Below this a move is no move; at or above `JUMP_PX` in one still-to-still frame it is a jump. */
@@ -94,6 +140,8 @@ const JUMP_PX = 6;
 const POP_OPACITY = 0.9;
 /** A label shown for less than this before another replaced it flashed. */
 const FLASH_MS = 300;
+/** A sweep that lands further than this (ms) from where the frame's time takes it skipped. */
+const SKIP_MS = 120;
 /** A frame that took longer than this was dropped. */
 const LONG_FRAME_MS = 34;
 /** A part that hands over to another at the same place (±px) in the same frame is one surface. */
@@ -142,7 +190,62 @@ function snapshot(): Omit<MotionFrame, "at"> {
     const takesTime = Number(timing?.activeDuration ?? 0) > 1;
     return a.playState === "running" && takesTime && timing?.iterations !== Number.POSITIVE_INFINITY;
   }).length;
-  return { parts, label, running };
+  return { parts, label, running, nodes: nodesOf(band), sweeps: sweepsOf(), blankPictures: blankPictures(band) };
+}
+
+const elementIds = new WeakMap<Element, number>();
+let lastElementId = 0;
+/** A number for an element, the same one for as long as it lives. */
+function elementId(element: Element): number {
+  let id = elementIds.get(element);
+  if (id === undefined) {
+    id = ++lastElementId;
+    elementIds.set(element, id);
+  }
+  return id;
+}
+
+const inSight = (element: Element, band: { top: number; bottom: number }): boolean => {
+  const rect = element.getBoundingClientRect();
+  return rect.height > 0 && rect.bottom > band.top && rect.top < band.bottom;
+};
+
+/** The element behind each kept part and row that can be seen. */
+function nodesOf(band: { top: number; bottom: number }): Record<string, number> {
+  const nodes: Record<string, number> = {};
+  for (const [name, selector] of Object.entries(KEPT_PARTS)) {
+    const element = document.querySelector(selector);
+    if (element && inSight(element, band)) nodes[name] = elementId(element);
+  }
+  for (const row of document.querySelectorAll<HTMLElement>("[data-chat-entry]"))
+    if (inSight(row, band)) nodes[`row:${row.dataset.chatEntry}`] = elementId(row);
+  return nodes;
+}
+
+/** Where each shimmer on show is in its sweep. */
+function sweepsOf(): Record<string, { at: number; length: number }> {
+  const sweeps: Record<string, { at: number; length: number }> = {};
+  for (const [name, selector] of Object.entries(SWEEPS)) {
+    const sweep = document
+      .querySelector(selector)
+      ?.getAnimations()
+      .find((animation) => animation instanceof CSSAnimation && animation.animationName === SWEEP_ANIMATION);
+    const length = Number(sweep?.effect?.getComputedTiming().duration ?? 0);
+    const time = Number(sweep?.currentTime ?? Number.NaN);
+    if (sweep?.playState === "running" && length > 0 && Number.isFinite(time)) sweeps[name] = { at: time % length, length };
+  }
+  return sweeps;
+}
+
+/** Sent pictures in sight that show nothing yet: a stand-in tile, or an image not yet loaded. */
+function blankPictures(band: { top: number; bottom: number }): number {
+  let blank = 0;
+  for (const tile of document.querySelectorAll("[data-message-images] > *")) {
+    if (!inSight(tile, band)) continue;
+    const image = tile.querySelector("img");
+    if (!image || !image.complete || image.naturalWidth === 0) blank++;
+  }
+  return blank;
 }
 
 /**
@@ -272,6 +375,39 @@ function flashesOf(frames: MotionFrame[]): { flashes: Flash[]; labels: string[] 
   return { flashes, labels: shown.map((item) => item.label) };
 }
 
+/** Parts seen in two frames in a row whose element changed between them: drawn anew where they stood. */
+function rebuiltOf(frames: MotionFrame[]): Rebuilt[] {
+  const rebuilt: Rebuilt[] = [];
+  for (let i = 1; i < frames.length; i++) {
+    const before = frames[i - 1]?.nodes ?? {};
+    const after = frames[i]?.nodes ?? {};
+    for (const [part, node] of Object.entries(after)) {
+      const was = before[part];
+      if (was !== undefined && was !== node) rebuilt.push({ part, at: frames[i]?.at ?? 0 });
+    }
+  }
+  return rebuilt;
+}
+
+/** Shimmers that did not sweep on by the time between two frames: started over, or held. */
+function skipsOf(frames: MotionFrame[]): Skip[] {
+  const skips: Skip[] = [];
+  for (let i = 1; i < frames.length; i++) {
+    const before = frames[i - 1];
+    const after = frames[i];
+    if (!before || !after) continue;
+    for (const [sweep, now] of Object.entries(after.sweeps)) {
+      const was = before.sweeps[sweep];
+      if (!was) continue;
+      const expected = (was.at + after.at - before.at) % now.length;
+      let off = Math.abs(now.at - expected);
+      off = Math.min(off, now.length - off);
+      if (off > SKIP_MS) skips.push({ sweep, at: after.at, byMs: Math.round(off) });
+    }
+  }
+  return skips;
+}
+
 /** How `part` held over these frames: each frame it is absent or not fully opaque, and how far it moved against `anchor`. */
 export function heldStill(frames: MotionFrame[], part: string, anchor: string): Held {
   const offset = (frame: MotionFrame | undefined): number | null => {
@@ -308,5 +444,8 @@ export function motionReport({ frames, longTasks }: Recording, history: Readonly
     pops: popsOf(frames, live),
     ...flashesOf(frames),
     animatedFrames: frames.filter((frame) => frame.running > 0).length,
+    rebuilt: rebuiltOf(frames),
+    skips: skipsOf(frames),
+    blankPictureFrames: frames.filter((frame) => frame.blankPictures > 0).length,
   };
 }

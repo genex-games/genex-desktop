@@ -2,11 +2,12 @@
  * The open chat's transcript, split the way the panel draws it: what it reads (the conversation),
  * what waits on the user (consents and intake questions) and the follow-ups still in the queue.
  */
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import type { EventEnvelope } from "../../shared/event-log.ts";
 import { type QueuedMessage, QueueState, type QueueView } from "../../shared/message-queue.ts";
 import { EntryKind } from "../chat-entries.ts";
 import type { ConversationEntry } from "./conversation-entries.ts";
+import { keptValue, useKept } from "./kept-value.ts";
 import {
   chatReportEntryIds,
   isPendingConsent,
@@ -79,11 +80,13 @@ export function useThreadTranscript(input: {
     [queue, holdsInPlace],
   );
   // Pictures sent with a message were saved beside it for the agent; the bubble shows them too.
-  const imagesByEntry = useMemo(() => sentImages(queue.messages.values()), [queue]);
+  const imagesByEntry = useKept(useMemo(() => sentImages(queue.messages.values()), [queue]));
+  // Read anew after every event; what did not change stays the object it was, so its row stays still.
+  const shown = useRef<ConversationEntry[] | undefined>(undefined);
   const entries = useMemo(() => {
     // What the chat wrote itself (a command's result) went to the agent; it is not the user's bubble.
     const reports = chatReportEntryIds(queue.messages.values());
-    return transcriptEntries({
+    const read = transcriptEntries({
       events,
       stateEvents,
       threadEvents,
@@ -92,6 +95,8 @@ export function useThreadTranscript(input: {
       activeRunId,
       studio,
     }).filter((entry) => !reports.has(entry.id));
+    shown.current = keptValue(shown.current, read);
+    return shown.current;
   }, [events, stateEvents, threadEvents, queue, activeRunId, studio]);
   const pendingConsents = useMemo(() => entries.filter(isPendingConsent), [entries]);
   const pendingPermissions = useMemo(() => entries.filter(isPendingPermission), [entries]);
