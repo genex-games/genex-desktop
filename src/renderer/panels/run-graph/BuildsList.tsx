@@ -142,7 +142,8 @@ function StepStill({
   runId: string;
 }): JSX.Element | null {
   const shot = useSavePointShot(step.shown, step.earlier);
-  const round = useRoundStill({ runId }, step.facetId, step.shown?.iteration ?? 1, shot?.path ?? null, false);
+  const iteration = step.shown?.iteration ?? 1;
+  const round = useRoundStill({ runId }, step.facetId, iteration, shot?.path ?? null, false, ROW_PICTURE_PX);
   const own = step.picture && !BORROWED.has(step.picture.source) ? step.picture : undefined;
   const worker = useWorkerStill(project, own, ROW_PICTURE_PX);
   const src = round ?? worker.src;
