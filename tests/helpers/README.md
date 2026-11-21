@@ -25,7 +25,8 @@ folder listing wins. Rules for tests are in [tests/AGENTS.md](../AGENTS.md).
   answer (`startFakeAnswer`, an Auto check's verdict). `fake-xai-responses.ts`: the same for the real Grok Build CLI over
   xAI's (Grok's session service stood in for, signed in with a made-up token in a test's own home).
   `fake-openai-chat.ts`: the same for the real Pi CLI over OpenAI's chat completions (a provider in
-  a test's own Pi folder, signed in with a made-up key).
+  a test's own Pi folder, signed in with a made-up key), and for the real OpenCode 2.x CLI (a
+  provider in a test's own OpenCode config).
 - `snapshot-fixtures.ts`: dirty, untracked and nested user repositories.
 - `unreal-moment-bus.ts`: a fake of Genex's hook bus that plans each moment from a plugin manifest;
   `unreal-editor-stand-in.ts`: the editor the Unreal plugin's queue talks to;

@@ -7,7 +7,8 @@
  */
 import assert from "node:assert/strict";
 import { constants } from "node:fs";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:net";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { setImmediate } from "node:timers/promises";
@@ -33,7 +34,62 @@ import { EngineError, type DelegateEvent } from "../../src/substrate/engines/typ
 import { GENEX_MARK } from "../../src/substrate/engines/genex-mark-prompts.ts";
 import { MessageFrom } from "../../src/shared/engine-requests.ts";
 import { ProcessSandbox } from "../../src/substrate/spawn.ts";
+import { cliName, writeCliLauncher } from "../helpers/external-cli.ts";
 import { tmpDir } from "../helpers/tmp.ts";
+
+/**
+ * A stand-in for 2.x's CLI, run by Node: `serve --port <n>` answers on that port to its password
+ * alone, and `run` prints one event saying how it was started (its server's answer with `--server`).
+ */
+const STAND_IN_V2_CLI = `const http = require("node:http");
+const { readFileSync } = require("node:fs");
+const args = process.argv.slice(2);
+const authorization = "Basic " + Buffer.from("opencode:" + process.env.OPENCODE_PASSWORD).toString("base64");
+const flag = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
+if (args[0] === "serve") {
+  const server = http.createServer((request, response) => {
+    response.statusCode = request.headers.authorization === authorization ? 200 : 401;
+    response.end(process.cwd());
+  });
+  server.on("error", () => process.exit(1));
+  server.listen({ port: Number(flag("--port")), host: flag("--hostname"), exclusive: true });
+} else {
+  const standalone = args.includes("--standalone");
+  const brief = readFileSync(0, "utf8");
+  const server = flag("--server");
+  if (!server) console.log(JSON.stringify({ standalone, brief }));
+  else
+    fetch(server, { headers: { authorization } }).then(async (response) => {
+      console.log(JSON.stringify({ standalone, brief, server, status: response.status, served: await response.text() }));
+    });
+}
+`;
+
+/** The stand-in written in `dir` as a program of its own, as OpenCode's is: its path. */
+async function standInV2Cli(dir: string): Promise<string> {
+  const script = path.join(dir, "stand-in.cjs");
+  await writeFile(script, STAND_IN_V2_CLI);
+  const cli = path.join(dir, cliName("opencode"));
+  await writeCliLauncher(cli, `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`, STAND_IN_V2_CLI);
+  return cli;
+}
+
+/** A listener on a loopback port (0: the system's pick). */
+async function listenOn(port: number): Promise<Server> {
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen({ port, host: "127.0.0.1", exclusive: true }, () => resolve());
+  });
+  return server;
+}
+
+/** The port a listener holds. */
+function portOf(server: Server): number {
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  return address.port;
+}
 
 const FIXTURES = path.join(import.meta.dirname, "..", "fixtures", "transcripts");
 const fixture = (name: string) => readFile(path.join(FIXTURES, name), "utf8");
@@ -327,6 +383,79 @@ describe("OpenCode sessions", () => {
     } finally {
       await sandbox.dispose();
     }
+  });
+
+  it("where the sandbox fences loopback, a 2.x session's server listens on a port the sandbox opens", async () => {
+    const root = await tmpDir("opencode-fenced-");
+    const cli = await standInV2Cli(root);
+    const taken = await listenOn(0);
+    const top = portOf(taken);
+    // The top of the range is another program's, so the session's server takes a port below it.
+    const range = [top - 20, top] as const;
+    const real = await ProcessSandbox.create({
+      writableRoots: [root],
+      scratchDir: path.join(root, "scratch"),
+      secretPaths: [],
+      enabled: false,
+    });
+    const sandbox = {
+      spawnLongLived: (request: Parameters<ProcessSandbox["spawnLongLived"]>[0]) => real.spawnLongLived(request),
+      loopbackPorts: () => range,
+    };
+    const seen: Array<Record<string, unknown>> = [];
+    try {
+      const invocation = {
+        argv: ["run", "--format", "json", "--standalone", "--agent", "build"],
+        cwd: root,
+        prompt: "Write hello",
+        env: {},
+        signal: new AbortController().signal,
+        domains: [],
+      };
+      for await (const event of openCodeEvents(sandbox, cli, invocation)) seen.push(event);
+    } finally {
+      await real.dispose();
+      await new Promise((resolve) => taken.close(resolve));
+    }
+    const [event] = seen;
+    assert.equal(event?.standalone, false, "never a server on a port of OpenCode's own choosing");
+    const port = Number(new URL(String(event?.server)).port);
+    assert.ok(port >= range[0] && port < top, `port ${port} is in the range, below the taken one`);
+    assert.equal(event?.status, 200, "the run reached its server with the server's password");
+    assert.equal(event?.brief, "Write hello");
+    assert.equal(event?.served, await realpath(root), "the server works in the session's folder");
+    const freed = await listenOn(port);
+    await new Promise((resolve) => freed.close(resolve));
+  });
+
+  it("where loopback is the session's own, 2.x starts its server itself", async () => {
+    const root = await tmpDir("opencode-open-");
+    const cli = await standInV2Cli(root);
+    const real = await ProcessSandbox.create({
+      writableRoots: [root],
+      scratchDir: path.join(root, "scratch"),
+      secretPaths: [],
+      enabled: false,
+    });
+    const sandbox = {
+      spawnLongLived: (request: Parameters<ProcessSandbox["spawnLongLived"]>[0]) => real.spawnLongLived(request),
+      loopbackPorts: () => null,
+    };
+    const seen: Array<Record<string, unknown>> = [];
+    try {
+      const invocation = {
+        argv: ["run", "--format", "json", "--standalone"],
+        cwd: root,
+        prompt: "Write hello",
+        env: {},
+        signal: new AbortController().signal,
+        domains: [],
+      };
+      for await (const event of openCodeEvents(sandbox, cli, invocation)) seen.push(event);
+    } finally {
+      await real.dispose();
+    }
+    assert.deepEqual(seen, [{ standalone: true, brief: "Write hello" }]);
   });
 
   it("a prompt Genex wrote reads under the non-user mark; the person's words go in as written", async () => {

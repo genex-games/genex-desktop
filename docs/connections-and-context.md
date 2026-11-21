@@ -177,11 +177,17 @@ request is sent once more asking for 90% of that), 429 a rate limit. Errors are 
 spoken, picked by the version `opencode --version` prints (`openCodeRelease` in
 [opencode-cli.ts](../src/substrate/engines/opencode-cli.ts)), never guessed: 1.18 (`--pure`,
 `--variant`, the `permission` map, `opencode models --verbose`) and 2.x from 2.0.20 (Homebrew ships
-2.x while OpenCode's own installer still ships 1.18). A 2.x newer than the tested 2.0.26 runs and
+2.x while OpenCode's own installer still ships 1.18). A 2.x newer than the tested 2.3.2 runs and
 its status says so; an older 2.x, 3.x or an unreadable version is refused, and discovery then tries
 the next OpenCode on the search path (a manual choice never yields). On 2.x every session passes
 `--standalone --agent build`: OpenCode's shared background server runs outside the sandbox with the
-settings of whoever started it, so each session runs a private one inside `ProcessSandbox`. 2.x
+settings of whoever started it, so each session runs a private one inside `ProcessSandbox`. Where
+the sandbox fences loopback (Windows, `loopbackPorts`), `openCodeEvents` starts that server itself:
+`opencode serve --port <n>` in the same sandbox, folder and environment, on the highest free port
+of the range, with a password made for it, and the run gets `--server` in place of `--standalone`,
+whose server listens on a port of the system's choosing that the session may not connect to
+("Transport: EACCES" from 2.2: newer 2.x reaches loopback past the sandbox's proxy). The server is
+stopped with its session; with every port of the range held, the session says so. 2.x
 reads its folder from `PWD`, gets `OPENCODE_DISABLE_PROJECT_CONFIG=1` (a game's own OpenCode config,
 plugins and agents never load, as `--pure` kept them out on 1.18) and an empty `OPENCODE_TEST_HOME`
 (2.x stops when the sandbox refuses it the home folder's `.claude`), and takes the effort as
@@ -231,7 +237,8 @@ sign in again; and a failure on one of OpenCode's free models says so, keeping i
 lists every OpenAI model even on a ChatGPT sign-in, where OpenAI refuses some, so while Codex is
 signed in the picker starts OpenCode's GPT models with the ones Codex lists (`runnableModels` in
 `renderer/model-lineup.ts`). Recorded streams and listings: `tests/fixtures/transcripts/opencode-*`
-(OpenCode 1.18 and 2.0.20).
+(OpenCode 1.18 and 2.0.20); `STUDIO_OPENCODE_CLI_TESTS=1` runs a real 2.x CLI in the real sandbox
+against a made-up provider (`opencode-cli-live.test.ts`).
 
 **Pi** ([pi.ts](../src/substrate/engines/pi.ts)) is the Pi coding agent (`pi --mode json`), not the
 `pi-ai` HTTP client. Sign in and `--list-models` run with `--no-extensions --offline`; of Pi's

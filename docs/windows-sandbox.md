@@ -60,7 +60,9 @@ the setup screen opens on `git-missing`. What differs from macOS:
   `allowLocalBinding: false` on Windows for every session and command (`toRuntimeConfig`), since
   srt-win refuses the other mode (`wfp_loopback_mismatch`). A sandboxed command reaches no server
   on localhost but the proxies, as before 0.0.81; the harness inbox and the live-input relay listen
-  inside the sandbox, which the filter does not refuse. Proxy variables reach a command in lower
+  inside the sandbox, which the filter does not refuse. A server a sandboxed command's own client
+  must reach listens on a free port of that range (`loopbackPorts`): a game's room, and an OpenCode
+  2.x session's own server. Proxy variables reach a command in lower
   case only.
 - srt-win starts every command as `srt-sandbox` through CreateProcessWithLogonW, which the
   Secondary Logon service (`seclogon`) carries out; where hardening disabled it, Windows refuses

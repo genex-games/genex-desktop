@@ -104,7 +104,9 @@ Genex's API, `windows-game-live.test.ts`), `STUDIO_GODOT_LIVE=1` for the Godot p
 sandbox against `fake-xai-responses.ts` (`grok-cli-live.test.ts`; `STUDIO_GROK_BIN` names one, which
 must sit outside `~/.grok`: the test's sandbox denies the person's own Grok home), `STUDIO_PI_CLI_TESTS=1` for the real Pi CLI in the real
 sandbox against `fake-openai-chat.ts` (`pi-cli-live.test.ts`; `STUDIO_PI_BIN` names one; on Linux the fake
-listens on `127.0.0.2`, which a session reaches through the sandbox's proxy). `STUDIO_ANTIGRAVITY_CLI_TESTS=1`
+listens on `127.0.0.2`, which a session reaches through the sandbox's proxy),
+`STUDIO_OPENCODE_CLI_TESTS=1` for a real OpenCode 2.x CLI in the real sandbox against the same fake
+(`opencode-cli-live.test.ts`; `STUDIO_OPENCODE_BIN` names one). `STUDIO_ANTIGRAVITY_CLI_TESTS=1`
 runs the real Antigravity CLI in the real sandbox on the Google account it is signed in to
 (`antigravity-cli-live.test.ts`; it uses that account's plan, so only with permission). Never make a default test depend on this machine. `STUDIO_RIG_UNSANDBOXED=1`
 runs rigs without the process sandbox, for a container where it cannot start (no user
