@@ -52,12 +52,13 @@
     },
     "inkling-2-mini:26b-a5b": {
       "name": "Inkling 2 Mini",
-      "sizeGb": 18.6,
+      "sizeGb": 18.8,
       "tools": true,
       "vision": true,
       "appleSilicon": true,
+      "minRamGb": 48,
       "about": "Best for building games. Fast for its size.",
-      "notes": "Thinking Machines, 20 Nov 2026, Apache 2.0. 26.4B looped mixture-of-experts, 5.4B effective active parameters, trained in NVFP4. Ollama ships one MLX build (latest, 26b-a5b and 26b-a5b-nvfp4 share a digest), listed for Apple silicon; the vendor names Macs with 32 GB or more. Unsloth's GGUF needs an unmerged llama.cpp branch (looped layers), so Ollama cannot run it on Windows or Linux yet: lift appleSilicon once it can. Vision, tools and thinking on ollama.com. Leads open models under 100B on DeepSWE v1.1 (48.2%) and SWE-bench Pro v2 (77.9%), vendor-reported."
+      "notes": "Thinking Machines, 20 Nov 2026, Apache 2.0. 26.4B looped mixture-of-experts, 5.4B effective active parameters, trained in NVFP4. Ollama ships one MLX build (latest, 26b-a5b and 26b-a5b-nvfp4 share a digest; 20,188,097,271 bytes), listed for Apple silicon; Ollama 0.32.14 refuses the pull (412), 0.40.17 runs it. Unsloth's GGUF needs an unmerged llama.cpp branch (looped layers), so Ollama cannot run it on Windows or Linux yet: lift appleSilicon once it can. Measured on an M2 Max/32 GB, 21 Nov 2026: tool calls correct, ~24 tokens/s out, but Ollama reached 25-26 GB and Metal failed with Insufficient Memory after ~12K prompt tokens, so Genex's first ~15K-token prompt never got an answer. Hence minRamGb 48 although the fit rule's estimate says 32 GB, and not on the 32 GB tier; 48 and 64 GB Macs are not measured yet. Leads open models under 100B on DeepSWE v1.1 (48.2%) and SWE-bench Pro v2 (77.9%), vendor-reported."
     },
     "qwen3.8:27b-mlx": {
       "name": "Qwen 3.8 27B",
@@ -172,6 +173,19 @@
       "expectation": "good",
       "label": "32 GB — the sweet spot",
       "picks": [
+        "bonsai-2:27b-pq2_0",
+        "qwen3.8:27b-mlx",
+        "qwen3.8:27b",
+        "gemma4:26b",
+        "gpt-oss:20b",
+        "bonsai-2:27b-ptq1_0"
+      ]
+    },
+    {
+      "minRamGb": 48,
+      "expectation": "good",
+      "label": "48 GB — Inkling fits",
+      "picks": [
         "inkling-2-mini:26b-a5b",
         "bonsai-2:27b-pq2_0",
         "qwen3.8:27b-mlx",
@@ -242,7 +256,7 @@
   ],
   "judges": {
     "$comment": "Blind judging needs vision. On 32 GB only one large model is resident at a time, so prefer using ONE vision+tools model for both roles over swapping two — swapping costs more than the quality difference. Local judging of 3D 'feel' is still unproven; the contractor engine is the fallback.",
-    "local": ["inkling-2-mini:26b-a5b", "qwen3.8:27b-mlx", "qwen3.8:27b", "gemma4:26b", "gemma4:12b"],
+    "local": ["qwen3.8:27b-mlx", "qwen3.8:27b", "gemma4:26b", "gemma4:12b"],
     "delegated": ["claude-code", "codex"]
   },
   "superseded": {
@@ -265,6 +279,7 @@
     "qwen3.8:27b": "0.32.12",
     "qwen3.8:27b-mlx": "0.32.12",
     "gemma4:26b": "0.32.0",
-    "gemma4:31b": "0.32.0"
+    "gemma4:31b": "0.32.0",
+    "inkling-2-mini:26b-a5b": "0.40.17"
   }
 }

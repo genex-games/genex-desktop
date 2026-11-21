@@ -67,24 +67,28 @@ describe("model catalog", () => {
     }
   });
 
-  it("recommends Inkling 2 Mini by default on a 32 GB Apple Silicon Mac, Bonsai PQ2_0 next", async () => {
+  it("recommends Bonsai PQ2_0 by default on a 32 GB Apple Silicon Mac", async () => {
     const { defaultModel, hardware, picks } = await recommendModels(machine(32, true));
-    assert.equal(defaultModel, "inkling-2-mini:26b-a5b");
+    assert.equal(defaultModel, "bonsai-2:27b-pq2_0");
     assert.equal(picks[0]?.model, defaultModel);
-    assert.equal(picks[1]?.model, "bonsai-2:27b-pq2_0");
     assert.ok(hardware.usableModelGb >= 23, `Metal is handed ~76% of unified memory, got ${hardware.usableModelGb}`);
   });
 
-  it("makes Inkling 2 Mini the Best fit on every Apple Silicon Mac from 32 GB, and keeps Bonsai below", async () => {
-    for (const ram of [32, 36, 48, 64, 96, 128, 192]) {
+  it("makes Inkling 2 Mini the Best fit on Apple Silicon Macs from 48 GB, Bonsai PQ2_0 next", async () => {
+    for (const ram of [48, 64, 96, 128, 192]) {
       const { defaultModel, picks } = await recommendModels(machine(ram, true));
       assert.equal(defaultModel, "inkling-2-mini:26b-a5b", `${ram} GB`);
       assert.ok(picks[0]?.vision && picks[0].tools, "the Best fit must build and see the game");
     }
-    for (const ram of [16, 24]) {
-      const { defaultModel, more } = await recommendModels(machine(ram, true));
-      assert.equal(defaultModel, "bonsai-2:27b-pq2_0", `${ram} GB: Inkling's ~22 GB does not fit`);
-      assert.equal(more.find((p) => p.model === "inkling-2-mini:26b-a5b")?.needsRamGb, 32);
+    assert.equal((await recommendModels(machine(48, true))).picks[1]?.model, "bonsai-2:27b-pq2_0");
+  });
+
+  it("never offers Inkling 2 Mini below 48 GB, where it ran out of memory on Genex's first prompt", async () => {
+    // Measured on a 32 GB M2 Max: the fit estimate said it fits, Metal failed at ~12K prompt tokens.
+    for (const ram of [16, 24, 32, 36]) {
+      const { defaultModel, picks, more } = await recommendModels(machine(ram, true));
+      assert.equal(defaultModel, "bonsai-2:27b-pq2_0", `${ram} GB`);
+      assert.ok(![...picks, ...more].some((p) => p.model.startsWith("inkling-2-mini")), `${ram} GB offers Inkling`);
     }
   });
 
