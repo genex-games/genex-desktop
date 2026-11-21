@@ -1468,7 +1468,7 @@ export default {
   "Fit every asset": "Ajustar todos los recursos",
   "Fit everything": "Ajustar todo",
   "Tidy up": "Ordenar",
-  "Genex is drawing {title}": "Genex está dibujando {title}",
+  "Genex is drawing": "Genex está dibujando",
   "{title} · next": "{title} · después",
   "{count, plural, one {# new pick} other {# new picks}}":
     "{count, plural, one {# elección nueva} other {# elecciones nuevas}}",
@@ -6573,4 +6573,26 @@ export default {
   "Version {version} is in your game": "La versión {version} ya está en tu juego",
   "Show all {count}": "Ver los {count}",
   "{at} of {count}": "{at} de {count}",
+  "Add {cap} more": "Añadir {cap} más",
+  Allow: "Permitir",
+  "Genex's real models are switched off right now. Practice answers go on.":
+    "Los modelos reales de Genex están apagados ahora mismo. Las respuestas de práctica siguen.",
+  "Most credits this play session may spend": "Créditos máximos para esta sesión de juego",
+  "Practice answers (free, made up)": "Respuestas de práctica (gratis, inventadas)",
+  "Practice answers could not start: {error}": "Las respuestas de práctica no pudieron empezar: {error}",
+  "Real AI is billed to this game's draft on Genex, and it has none yet. Ask the chat to publish a draft, then try again. Practice answers go on.":
+    "La IA real se cobra al borrador de este juego en Genex, y aún no tiene uno. Pide al chat que publique un borrador y vuelve a intentarlo. Las respuestas de práctica siguen.",
+  "Real AI is not available in this test profile. Practice answers go on.":
+    "La IA real no está disponible en este perfil de prueba. Las respuestas de práctica siguen.",
+  "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
+    "La IA real necesita que inicies sesión en Genex. Inicia sesión en Ajustes y vuelve a intentarlo. Las respuestas de práctica siguen.",
+  "Real AI stopped. Practice answers go on.": "La IA real se detuvo. Las respuestas de práctica siguen.",
+  "Real AI · {spent} of {cap} credits": "IA real · {spent} de {cap} créditos",
+  "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
+    "En esta vista previa responden modelos reales, pagados con tus créditos de Genex: como mucho {cap} créditos ({dollars}) en esta sesión de juego.",
+  Start: "Empezar",
+  "Starting real AI…": "Iniciando la IA real…",
+  "The cap is used up": "Se acabó el límite",
+  "This game wants to hear you through your microphone.": "Este juego quiere oírte por el micrófono.",
+  "Use real AI": "Usar IA real",
 } satisfies LocaleCatalog;

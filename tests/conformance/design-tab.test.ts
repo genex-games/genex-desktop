@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { LiveView } from "../../src/renderer/live-views.ts";
 import { boardIsNew } from "../../src/renderer/panels/design/design-asks.ts";
+import { sharedBoard } from "../../src/renderer/panels/design/design-boards.ts";
 import {
   boardLayout,
   boardStack,
@@ -28,6 +29,8 @@ import { stageTabs, tabChoice, tabGlyph } from "../../src/renderer/panels/stage/
 import { isStageView, StageView } from "../../src/renderer/stage.ts";
 import {
   DESIGN_MESSAGE_SOURCE,
+  type DesignItem,
+  DesignItemKind,
   designPageFile,
   DesignSignal,
   displayName,
@@ -313,5 +316,30 @@ describe("what a design page's frame may tell the tab", () => {
     ])
       assert.equal(readDesignSignal(data), null);
     assert.equal(from({ type: "run", code: "alert(1)" }), null);
+  });
+});
+
+describe("a board read again", () => {
+  const item = (file: string, url: string): DesignItem => ({
+    file,
+    name: file,
+    title: "",
+    kind: DesignItemKind.Picture,
+    section: "",
+    url,
+    modifiedAt: 1,
+  });
+
+  it("keeps the artboards that did not change, and the whole list when none did", () => {
+    const before = { items: [item("a.png", "a?v=1"), item("b.png", "b?v=1")], stamp: "s1" };
+    const marksOnly = sharedBoard(before, { items: [item("a.png", "a?v=1"), item("b.png", "b?v=1")], stamp: "s2" });
+    assert.equal(marksOnly.items, before.items, "only the stamp moved: the same list");
+    assert.equal(marksOnly.stamp, "s2");
+    const oneChanged = sharedBoard(before, { items: [item("a.png", "a?v=1"), item("b.png", "b?v=2")], stamp: "s3" });
+    assert.notEqual(oneChanged.items, before.items);
+    assert.equal(oneChanged.items[0], before.items[0], "the unchanged artboard is the same object");
+    assert.equal(oneChanged.items[1]?.url, "b?v=2");
+    const first = { items: [item("a.png", "a?v=1")], stamp: "s" };
+    assert.equal(sharedBoard(undefined, first), first);
   });
 });

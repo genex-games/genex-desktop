@@ -1,11 +1,11 @@
 {
-  "cliVersion": "1.43.6",
-  "skillMdVersion": "1.43.6",
+  "cliVersion": "1.44.0",
+  "skillMdVersion": "1.44.0",
   "url": "https://genex.games/SKILL.md",
   "files": {
     "genex/SKILL.md": {
       "source": "https://genex.games/SKILL.md",
-      "sha256": "c36e41d33553e96a600ba576841da911e1e4fb0dee5ccc8f760ab99660e7dc45",
+      "sha256": "da34b26b4282babaf6a5ee24f4550e589e25ba23be6ddd5881c06ebd3b9f9bdc",
       "bytes": 5698
     },
     "genex-threejs-multiplayer/SKILL.md": {
@@ -20,7 +20,7 @@
     },
     "genex-authoritative-multiplayer/SKILL.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/SKILL.md",
-      "sha256": "eb1a5e376f1bc1eec23ca59e0d9fa5c9c3f8d5640fa4a21ac56df1e272adbfc3",
+      "sha256": "ca53f3436ec174484e27577218825df23e10814945a8ea965586f6c8b2d5e8da",
       "bytes": 21807
     },
     "genex-authoritative-multiplayer/references/levels.md": {
@@ -74,25 +74,19 @@
       "bytes": 25911
     },
     "genex-llm-in-games/SKILL.md": {
-      "source": "genex-demo@6c79d69ed/apps/cli/templates/skills/genex-llm-in-games/SKILL.md",
-      "sha256": "38fddf6a4244f70d0b879ca532c5da9b7b5a1dbc6d655224e65bd118b212ebb7",
-      "bytes": 29761,
-      "version": "1.44.0",
-      "pending": "CLI 1.44.0 is not on npm yet: vendored from genex-demo@6c79d69ed/apps/cli. Re-vendor from the published CLI (npm run genex:skills) once the package.json pin moves to 1.44.0."
+      "source": "@genex-ai/cli-demo/templates/skills/genex-llm-in-games/SKILL.md",
+      "sha256": "f89b7cd7b56dc77c4500dce71a4a021e403df07b24ee05714ac51e79aa184e41",
+      "bytes": 29755
     },
     "genex-llm-in-games/references/pricing.md": {
-      "source": "genex-demo@6c79d69ed/apps/cli/templates/skills/genex-llm-in-games/references/pricing.md",
+      "source": "@genex-ai/cli-demo/templates/skills/genex-llm-in-games/references/pricing.md",
       "sha256": "77b2fe6da82f69b372e943041b7c421f67a85c5fc02084ca2de446fefbe0c941",
-      "bytes": 11022,
-      "version": "1.44.0",
-      "pending": "CLI 1.44.0 is not on npm yet: vendored from genex-demo@6c79d69ed/apps/cli. Re-vendor from the published CLI (npm run genex:skills) once the package.json pin moves to 1.44.0."
+      "bytes": 11022
     },
     "genex-tool-llm/SKILL.md": {
-      "source": "genex-demo@6c79d69ed/apps/cli/templates/skills/genex-tool-llm/SKILL.md",
+      "source": "@genex-ai/cli-demo/templates/skills/genex-tool-llm/SKILL.md",
       "sha256": "fc87c7a9e032b15e6c7eecd1e279344d92d21efa961128aa1e23b55d322249d2",
-      "bytes": 4134,
-      "version": "1.44.0",
-      "pending": "CLI 1.44.0 is not on npm yet: vendored from genex-demo@6c79d69ed/apps/cli. Re-vendor from the published CLI (npm run genex:skills) once the package.json pin moves to 1.44.0."
+      "bytes": 4134
     },
     "genex-monetization/SKILL.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-monetization/SKILL.md",
@@ -136,8 +130,8 @@
     },
     "genex-tool-image/SKILL.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-tool-image/SKILL.md",
-      "sha256": "164974cb1243b5de9bf22b09d2b1603c64ab1701030f33556d69530fbb30a080",
-      "bytes": 4357
+      "sha256": "1dc42905c9a511a6cbec47d60d0f6de5519a1b7142c9ab400b74df41ef321756",
+      "bytes": 4432
     }
   },
   "license": {

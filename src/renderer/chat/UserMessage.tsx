@@ -117,7 +117,7 @@ export const UserMessage = memo(function UserMessage({
         icon="rewind"
         label={t("Rewind to before this message")}
         size={14}
-        className={`chat-user-action absolute right-full ${bottom} me-1`}
+        className={`chat-user-action chat-rewind absolute right-full ${bottom} me-1`}
         onClick={() => onRewind(rewind)}
       />
     ) : null;

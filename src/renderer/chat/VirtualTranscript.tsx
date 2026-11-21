@@ -32,11 +32,24 @@ const OPEN_SLACK_MS = 200;
 const ROW_OPENING = "chat-row-open";
 
 /**
+ * How a row that mounts arrives: how far into its opening it starts (ms: 0 for a new row, more for
+ * one taking over a placeholder mid-opening), and whether it fades in as it opens. A row taking
+ * over what was already on screen elsewhere (the busy line's work) is seen at once: only the room
+ * it takes opens, so what is below it slides rather than jumps.
+ */
+export interface RowEntrance {
+  from: number;
+  fade: boolean;
+}
+
+/** A row that arrives after the rows before it: it opens from the start and fades in. */
+export const NEW_ROW: RowEntrance = { from: 0, fade: true };
+
+/**
  * Variable-height window. Rich replies mount a few screens around the viewport and stay a little
  * longer as the reader scrolls away (`mountedRange`); `sizeOf` lets rows not yet measured be
  * guessed from those that were. Rows re-render only when their item or `renderItem` changes.
- * `entrance` says how a row that mounts arrives: how far into its opening it starts (0 for a new
- * row, more for one taking over a placeholder mid-opening), or null when it is simply there.
+ * `entrance` says how a row that mounts arrives (`RowEntrance`), or null when it is simply there.
  * `appended` says it arrived after the rows before it (history and earlier pages never are).
  * While `still` (the chat is loading) nothing has been seen, so what is there once it loads is
  * history too. While `hold` (the chat's width is changing) the scroller keeps the reader's line
@@ -59,7 +72,7 @@ export function VirtualTranscript<T extends { id: string }>({
   renderItem: (item: T) => ReactNode;
   /** What an unmeasured row's height is guessed from (stable: a module-level function). */
   sizeOf?: (item: T) => RowSize;
-  entrance?: (item: T, appended: boolean) => number | null;
+  entrance?: (item: T, appended: boolean) => RowEntrance | null;
   still?: boolean;
 }) {
   const host = useRef<HTMLDivElement>(null);
@@ -125,10 +138,10 @@ export function VirtualTranscript<T extends { id: string }>({
     oldPositions.current = layout;
   }, [offsets]);
   useHostAnchor(host, scroller, follow, hold);
-  const enterFrom = (item: T): number | null => {
+  const enterFrom = (item: T): RowEntrance | null => {
     const appended = entering.has(item.id);
     if (entrance) return entrance(item, appended);
-    return appended ? 0 : null;
+    return appended ? NEW_ROW : null;
   };
   const range = mountedRange(offsets, viewport, mounted.current);
   useLayoutEffect(() => {
@@ -212,8 +225,8 @@ function useHostAnchor(
 /** Props of one measured row. */
 interface MeasuredRowProps {
   id: string;
-  /** How far into its opening the row starts (ms), or null when it is simply there. Read once, at mount. */
-  enterFrom: number | null;
+  /** How the row arrives, or null when it is simply there. Read once, at mount. */
+  enterFrom: RowEntrance | null;
   onMeasure: (id: string, height: number) => void;
   children: ReactNode;
 }
@@ -264,8 +277,9 @@ function MeasuredRowContent({ id, onMeasure, children, enterFrom }: MeasuredRowP
       onAnimationEnd={(event: AnimationEvent<HTMLDivElement>) => {
         if (event.target === event.currentTarget && event.animationName === ROW_OPENING) setArriving(false);
       }}
+      data-shown={arriving && entered && !entered.fade ? "" : undefined}
       className={`flow-root min-w-0 pb-4 ${arriving ? "chat-entry-arriving" : ""}`}
-      style={arriving && entered ? ({ "--entered": `${entered}ms` } as CSSProperties) : undefined}
+      style={arriving && entered?.from ? ({ "--entered": `${entered.from}ms` } as CSSProperties) : undefined}
     >
       {children}
     </div>

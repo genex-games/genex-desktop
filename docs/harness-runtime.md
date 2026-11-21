@@ -164,9 +164,11 @@ starter into a game with no kind yet and refuses one that has a kind, or a link 
 where the starter would write (never written through). A game with no facts lists
 what its folder holds (`holds`: `nothing`, `notes`, `own-files` or `unreadable`); only an empty
 folder or one of notes has no kind yet (`kindPending`); what Genex's asset tools deliver into
-`assets/` (or `public/assets/`) is not the folder's own. A folder of somebody's own files of a kind
-no rule knows (a Pygame project, say) is never handed a starter: `game.start` and `start_web_game`
-refuse it, and a Loop on it stops and says it needs a kind. A Loop's launch scaffolds a
+`assets/` (or `public/assets/`) is not the folder's own, and `docs/` (the design board and anything
+beside it) and loose `*.md`/`*.txt` files at the root are notes. A folder of somebody's own files of
+a kind no rule knows (a Pygame project, say) is never handed a starter: `game.start` and
+`start_web_game` refuse it, and a Loop on it starts as it is, its lead looking through the folder's
+own files. A Loop's launch scaffolds a
 new game as web, and a Loop on a game with no kind starts it as web before its runner is chosen
 (`startWebIfPending`, `loop/folder-facts.ts`); the web runners scaffold with `kind: "web"`. A local
 model's `new_game` takes `kind`, and its `start_web_game` calls `game.start` with its chat

@@ -994,7 +994,9 @@ A benchmark of an in-game model call (`llm bench`) spends the person's own credi
 to the `max-credits` its card shows for one attempt, and may name the game's answer-shape file
 (`schema`: one `.json` file inside the game, at most 16 KB), which Studio checks by real path and
 copies in. `llm price` is refused: it rereads a file from the CLI's folder, which Studio removes
-after every command, so the benchmark's answer is the record.
+after every command, so the benchmark's answer is the record. A benchmark is not a gate: until one
+runs, a game declares provisional ceilings and ships with its model calls on (the play-time model
+card's preface, [plugins](plugins.md)).
 `genex__package` adds `@genex-ai/multiplayer` or `@genex-ai/embed-sdk` at Studio's pin to a
 build game after consent, opening the npm registry for that one install. A Studio-template game
 gets player identity by mapping Studio's copy in its import map instead, and Studio then calls

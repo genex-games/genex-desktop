@@ -1,4 +1,5 @@
 /** The stage: the live preview's bounds and state, a run's builds, and the game's own build. */
+import { isPreviewAiCap } from "../../shared/preview-ai.ts";
 import { kindPending } from "../../shared/project-facts.ts";
 import type { GamePreview } from "../preview.ts";
 import { codedLoadRefusal } from "../preview-load-failure.ts";
@@ -10,7 +11,14 @@ import type { IpcHandle } from "./registrar.ts";
 const MESSAGE = {
   noGameView: "the studio window has no game view",
   noProject: "a game name is required",
+  noCap: "the cap is one Live offers",
 } as const;
+
+/** The game a payload names, or a refusal. */
+function projectOf(payload: { project?: unknown } | undefined): string {
+  if (typeof payload?.project !== "string" || !payload.project) throw new Error(MESSAGE.noProject);
+  return payload.project;
+}
 
 /** Whether a game has no kind yet (`kindPending`); a game whose folder can't be read is loaded as before, to say why. */
 async function kindPendingGame(core: StudioCore, project: string): Promise<boolean> {
@@ -113,6 +121,18 @@ export function registerPreviewIpc(
     if (typeof payload?.project !== "string" || !payload.project) throw new Error(MESSAGE.noProject);
     return core.liveState(payload.project);
   });
+  // Live's play-time models and microphone ask: the bar reads them on mount and answers with the
+  // person's own clicks; nothing an agent calls reaches these.
+  handle("studio:preview-ai.state", async (payload) => core.previewAi.state(projectOf(payload)));
+  handle("studio:preview-ai.real", async (payload) => {
+    const cap = Number(payload?.capCredits);
+    if (!isPreviewAiCap(cap)) throw new Error(MESSAGE.noCap);
+    return core.previewAi.startRealModels(projectOf(payload), cap);
+  });
+  handle("studio:preview-ai.practice", async (payload) => core.previewAi.backToPractice(projectOf(payload)));
+  handle("studio:preview-ai.mic", async (payload) =>
+    core.answerPreviewMic(projectOf(payload), payload?.allow === true),
+  );
   handle("studio:preview.state", async () => livePreview().studioState());
   handle("studio:preview.live", async () => livePreview().liveStatus());
   // Why the stage is not showing the game's own build, and the one button that opens the network.

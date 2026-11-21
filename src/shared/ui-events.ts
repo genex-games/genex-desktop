@@ -16,6 +16,7 @@ import type { DesignChoices, DesignMaking, DesignShown } from "./design-board.ts
 import type { DesignTold } from "./design-marks.ts";
 import type { AssetDeliveredPayload } from "./game-assets.ts";
 import type { LiveBehindEvent } from "./live-behind.ts";
+import type { PreviewAiState } from "./preview-ai.ts";
 import type { McpChange } from "./mcp.ts";
 import type { CliInstallJob } from "./cli-install.ts";
 import type { ModelInstallJob, ModelInstallProblem, ModelPullProblem } from "./model-install.ts";
@@ -168,6 +169,8 @@ export interface UiEventMap {
   "live.behind": LiveBehindEvent;
   /** ⌥⌘M pressed while the Live game had the keyboard: the renderer owns the switch and flips it. */
   "preview.sound.toggle": { at: number };
+  /** A game's play-time models in Live (practice, real models, the cap) and its microphone ask changed. */
+  "preview.ai": PreviewAiState;
 
   // — play —
   /** Play's game viewer loaded, played, failed or closed (`main/play/viewer.ts`). */
@@ -310,6 +313,7 @@ export const UiEvent = {
   PreviewFrame: "preview.frame",
   LiveBehind: "live.behind",
   PreviewSoundToggle: "preview.sound.toggle",
+  PreviewAi: "preview.ai",
   PlayViewer: "play.viewer",
   PlayRemix: "play.remix",
   PlayInstalls: "play.installs",
@@ -384,6 +388,7 @@ export function uiEvent<K extends UiEventType>(type: K, payload: UiEventMap[K]):
  */
 const HOST_ONLY: ReadonlySet<string> = new Set<UiEventType>([
   UiEvent.LiveBehind,
+  UiEvent.PreviewAi,
   UiEvent.ItemDrafted,
   UiEvent.ItemsLocal,
   UiEvent.GenexReviewChanged,

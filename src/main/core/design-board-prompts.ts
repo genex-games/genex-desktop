@@ -32,7 +32,7 @@ const JUDGMENT = [
 const CALLS = [
   "The canvas is live: it shows a new or changed file within seconds, so put the first artboards up early and add the rest in front of the person.",
   "Call it with no page first: it answers how to design on the board and what the board holds now. After adding or changing artboards the person should look at now, call it with one of them and a note of a few words (what to look at, or what changed): the Design tab opens on it. With a spot it points at one place of that artboard and says the note there.",
-  "Before you make artboards that take a while (pictures, models), call it with making: the person watches them being drawn. When the person is to choose among artboards, call it with choose: only those wear Use this and Not this.",
+  "Before you make artboards that take a while (pictures, models), new ones or ones already there that you make again, call it with making: the person watches them being drawn. When the person is to choose among artboards, call it with choose: only those wear Use this and Not this.",
 ];
 
 /** `show_design`: the design board's judgment in its description; it writes no file itself. */
@@ -53,7 +53,7 @@ export const SHOW_DESIGN_TOOL: LiveToolSpec = {
       },
       making: {
         type: "string",
-        description: `The artboards you are about to make, in order, by the paths they will have below ${DESIGN_FOLDER}/, one to a line. The canvas shows each as being drawn until its file is there. At most ${MAKING_MAX}.`,
+        description: `The artboards you are about to make, in order, by the paths they will have below ${DESIGN_FOLDER}/, one to a line: new ones, and ones already there that you make again under the same path. The canvas shows each as being drawn until its file is written. At most ${MAKING_MAX}.`,
       },
       choose: {
         type: "string",
@@ -90,7 +90,7 @@ WHAT TO MAKE, by what is open now, never all of it at once:
 
 NO BUTTONS. A page is read, not pressed: put no button, form or "press here" on it, since nothing on a page can act. The person answers on the canvas (their notes, and Use this and Not this on the artboards you offer with choose) and in the chat. A link to another page (href="../world/map.html") brings it into view; an https link opens in the browser.
 
-LIVE. Say what you are about to make (${ProjectTool.ShowDesign} with making) before you make it, put the first artboards up early, show them, and add the rest as they are made: the person watches the canvas fill. When they answer, change what is there (mark their pick, remove what lost) instead of adding more, and keep the board true as the game changes.
+LIVE. Say what you are about to make (${ProjectTool.ShowDesign} with making) before you make it, and before you make an artboard again (a new take of a picture keeps its path), put the first artboards up early, show them, and add the rest as they are made: the person watches the canvas fill. When they answer, change what is there (mark their pick, remove what lost) instead of adding more, and keep the board true as the game changes.
 
 SHOW. After adding or changing artboards the person should look at now, call ${ProjectTool.ShowDesign} with one of them and a note; when you changed one thing on a picture or a page, add a spot so the note is said where the change is. When the person is to pick among artboards (directions, two takes of a character), call it with choose and those artboards: they pick on the canvas with Use this and Not this, and no other artboard offers that. Then say in one line what to look at or choose; if you wait for their choice, end your reply.`;
 
@@ -114,7 +114,7 @@ export const SHOW_DESIGN_ANSWER = {
     `The Design tab is open on ${file}, and its block is in the chat. Tell the person in one line what to look at or choose there; if you wait for their choice, end your reply.`,
   badName: `Give an artboard's path below ${DESIGN_FOLDER}/, e.g. 01-pitch.html or world/town.png: a page, a picture or a model, at the board's top or in one section. Call ${ProjectTool.ShowDesign} with no page to read how to design on the board.`,
   making: (files: readonly string[]) =>
-    `The canvas shows these as being drawn until their files are there: ${files.join(", ")}. Make them now, in that order.`,
+    `The canvas shows these as being drawn until their files are written: ${files.join(", ")}. Make them now, in that order.`,
   offered: (files: readonly string[]) =>
     files.length > 0
       ? `The person now sees Use this and Not this on: ${files.join(", ")}. Their picks reach you as a message of theirs: say in one line what to pick among, end your reply and wait for it.`

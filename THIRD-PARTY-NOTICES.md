@@ -29,7 +29,7 @@ licenses and terms of included third-party software.
   self-edit type gate runs keep their license and notice files under `dist/resources/tsc`.
 - The Genex asset CLI (`@genex-ai/cli-demo`, MIT) and its dependencies keep their license files
   in the Genex plugin payload under `dist/resources/plugins/genex/node_modules`.
-- Genex's room-module toolchain (`@genex-ai/authority-dev` 0.1.10, MIT), which a publish copy and a
+- Genex's room-module toolchain (`@genex-ai/authority-dev` 0.1.11, MIT), which a publish copy and a
   local room use, ships in the same payload with its dependencies and the peers they import
   (Colyseus, express, esbuild-wasm, QuickJS and `@genex-ai/physics`: MIT, ISC, BSD-3-Clause and
   0BSD), each keeping its license files there. The two that ship none have sections below.
@@ -87,9 +87,9 @@ text behind a Studio-written preface; `vendor.json` records each source, version
 `npm run genex:skills` refreshes them.
 
 - Fourteen platform cards and their references, copied with Studio's cuts (`cuts.json`) taken out
-  from `@genex-ai/cli-demo` 1.43.6 `templates/skills` (MIT, Copyright (c) 2026 me-ai-org). The
+  from `@genex-ai/cli-demo` 1.44.0 `templates/skills` (MIT, Copyright (c) 2026 me-ai-org). The
   license text ships beside them as `skills/LICENSE-cards`, copied from the CLI's `LICENSE`.
-- `genex/SKILL.md` wraps https://genex.games/SKILL.md (v1.43.6), which is not part of the npm
+- `genex/SKILL.md` wraps https://genex.games/SKILL.md (v1.44.0), which is not part of the npm
   package. It is attributed to Genex here; its license is not yet confirmed (see "Status not yet
   recorded" below).
 
@@ -405,7 +405,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-### @genex-ai/authority-dev 0.1.10
+### @genex-ai/authority-dev 0.1.11
 
 Shipped in the Genex plugin payload (`plugins/genex/node_modules`), the toolchain that bundles,
 validates and runs a server-authoritative game's room module on this machine. Its package and
@@ -458,7 +458,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-### @genex-ai/multiplayer 0.17.19
+### @genex-ai/multiplayer 0.17.20
 
 Bundled into `vendor/genex/`, the multiplayer SDK a game made from Studio's template maps in its import
 map, and shipped as `genex-multiplayer-bridge.js` (its `dist/bridge.global.js`) beside a multiplayer

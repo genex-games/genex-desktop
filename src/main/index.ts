@@ -220,7 +220,7 @@ import { gitRemixReadiness, type RemixReadiness, readyFor, withReadyRemix } from
 import { type MentionSources, vendorAssetModule } from "./core/mention-tags.ts";
 import type { PlayViewer } from "./play/viewer.ts";
 import { playMicStore } from "./play/mic-store.ts";
-import { playViewsOf, wirePlayViewer } from "./play/viewer-view.ts";
+import { microphoneAccess, playViewsOf, wirePlayViewer } from "./play/viewer-view.ts";
 import { purchaseConfirmOrigin } from "./play/purchase-window.ts";
 import { type PlayComments, playComments } from "./play/comments.ts";
 import { type PlayCoin, playCoin } from "./play/coin.ts";
@@ -1051,6 +1051,12 @@ async function createCore(userData: string): Promise<StudioCore> {
             refused: (token) => genexAccountFor(studio).refused(token),
           },
         }),
+    // Real models in Live spend the person's own credits: a fixture launch never does, and its
+    // Use real AI answers that real models are not available here.
+    previewAiLive: !fixtureNativePolicy,
+    // The system's microphone switch, as Play asks it; a fixture launch asks the system nothing and
+    // gives Live's game no microphone.
+    ...(fixtureNativePolicy ? {} : { microphoneAccess }),
     // A game's local item drafts after its publish: Put on sale as the app's account; a fixture
     // launch uploads them to its own store in place of the CLI.
     localItems: {
@@ -1257,6 +1263,11 @@ function attachPreviews(studio: StudioCore, win: BrowserWindow): void {
     gamesRoot: studio.layout.gamesRoot,
     vendorDir: path.join(resources, "vendor"),
     resolveRoot: (name) => studio.games.dirFor(name),
+    // Live alone asks the person for a game's microphone; agents' windows never do.
+    microphone: {
+      ask: (project) => studio.previewMic.ask(project),
+      allowed: (project) => studio.previewMic.allowed(project),
+    },
   });
   preview = view;
   studio.options.preview = view;

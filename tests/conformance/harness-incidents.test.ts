@@ -6083,3 +6083,14 @@ describe("a build's plan as the chat names it", () => {
     assert.deepEqual(launch.details?.run?.steps, ["Three places", "People and sounds", "Game code"]);
   });
 });
+
+describe("a Loop on a folder Genex can't name", () => {
+  it("LJ-1. a designed game whose research sat in docs/ read as files of a kind Genex doesn't know, and its Loop refused to start: such a folder starts its Loop as it is, with no web starter", async () => {
+    const { startWebIfPending } = await import("../../src/harness-seed/loop/folder-facts.ts");
+    const calls: string[] = [];
+    const host = { call: async (method: string) => void calls.push(method) };
+    const game = { name: "life", dir: "/AI Games/life", facts: [], holds: "own-files" };
+    await startWebIfPending(host as never, "life", [game] as never);
+    assert.deepEqual(calls, [], "no starter written, and nothing refused");
+  });
+});

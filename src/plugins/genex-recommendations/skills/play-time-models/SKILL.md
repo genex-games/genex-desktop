@@ -157,7 +157,7 @@ real question.
 | code | what tends to work |
 | --- | --- |
 | `grant_limit_reached` | authored behaviour returns; a button offers to re-request |
-| `grant_stopped` | accept it silently and keep playing |
+| `grant_stopped` | accept it with no error, label the written lines and keep playing |
 | `grant_expired` | as stopped; re-request on the next deliberate click |
 | `waiting_for_plan` | wait out the stated time |
 | `grant_insufficient_funds` | pause the thinking NPCs, say so once, stay playable |

@@ -328,6 +328,38 @@
   background-size: 300% 100%;
   animation: shimmer-sweep 2.1s cubic-bezier(0.45, 0, 0.25, 1) infinite;
 }
+/* An artboard of the design canvas being made again: what is there now stays, under a soft veil swept
+   by the same light, moved in the compositor so a large picture is never repainted per frame. */
+.design-redrawing {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  pointer-events: none;
+  background: color-mix(in oklab, var(--background) 38%, transparent);
+}
+.design-redrawing::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 30%,
+    color-mix(in oklab, var(--ink) 14%, transparent) 50%,
+    transparent 70%
+  );
+  transform: translateX(-100%);
+  animation: design-redraw-sweep 2.1s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+}
+@keyframes design-redraw-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  78%,
+  100% {
+    transform: translateX(100%);
+  }
+}
 
 /* The share window's pictures and name fields. */
 .asset-share-picture {
@@ -383,7 +415,8 @@
   }
   .asset-line,
   .asset-selection-bar,
-  .asset-skeleton {
+  .asset-skeleton,
+  .design-redrawing::after {
     animation: none;
   }
   .asset-line-live {

@@ -1414,7 +1414,7 @@ export default {
   "Fit every asset": "すべてのアセットを表示",
   "Fit everything": "全体を表示",
   "Tidy up": "整える",
-  "Genex is drawing {title}": "Genex が {title} を描いています",
+  "Genex is drawing": "Genex が描いています",
   "{title} · next": "{title} · 次",
   "{count, plural, one {# new pick} other {# new picks}}": "{count, plural, other {新しい選択 #件}}",
   "Use this": "これにする",
@@ -6490,4 +6490,26 @@ export default {
   "Version {version} is in your game": "バージョン {version} がゲームに入りました",
   "Show all {count}": "すべて表示（{count}）",
   "{at} of {count}": "{at} / {count}",
+  "Add {cap} more": "{cap} 追加",
+  Allow: "許可",
+  "Genex's real models are switched off right now. Practice answers go on.":
+    "Genex の本物のモデルは今オフです。練習用の回答は続きます。",
+  "Most credits this play session may spend": "このプレイで使えるクレジットの上限",
+  "Practice answers (free, made up)": "練習用の回答（無料・作り物）",
+  "Practice answers could not start: {error}": "練習用の回答を開始できませんでした: {error}",
+  "Real AI is billed to this game's draft on Genex, and it has none yet. Ask the chat to publish a draft, then try again. Practice answers go on.":
+    "本物の AI はこのゲームの Genex の下書きに請求されますが、まだ下書きがありません。チャットに下書きの公開を頼んでから、もう一度試してね。練習用の回答は続きます。",
+  "Real AI is not available in this test profile. Practice answers go on.":
+    "このテスト用プロフィールでは本物の AI は使えません。練習用の回答は続きます。",
+  "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
+    "本物の AI を使うには Genex にサインインしてね。設定からサインインして、もう一度試してね。練習用の回答は続きます。",
+  "Real AI stopped. Practice answers go on.": "本物の AI が止まりました。練習用の回答は続きます。",
+  "Real AI · {spent} of {cap} credits": "本物の AI · {cap} 中 {spent} クレジット",
+  "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
+    "このプレビューでは本物のモデルが答え、Genex のクレジットから支払われます: このプレイで最大 {cap} クレジット ({dollars})。",
+  Start: "開始",
+  "Starting real AI…": "本物の AI を起動中…",
+  "The cap is used up": "上限に達しました",
+  "This game wants to hear you through your microphone.": "このゲームはマイクであなたの声を聞きたがっています。",
+  "Use real AI": "本物の AI を使う",
 } satisfies LocaleCatalog;

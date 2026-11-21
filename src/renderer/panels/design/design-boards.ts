@@ -5,7 +5,7 @@
  * two readers of one game share one read and one answer.
  */
 import { useCallback, useEffect, useSyncExternalStore } from "react";
-import type { DesignBoard } from "../../../shared/design-board.ts";
+import type { DesignBoard, DesignItem } from "../../../shared/design-board.ts";
 import { SECOND_MS } from "../../../shared/duration.ts";
 import { UiEvent } from "../../../shared/ui-events.ts";
 import { usePolling } from "../../use-polling.ts";
@@ -35,11 +35,31 @@ function sameBoard(a: DesignBoard, b: DesignBoard): boolean {
   return a.items.every((item, index) => item.url === b.items[index]?.url && item.title === b.items[index]?.title);
 }
 
+/** Whether an artboard read again is the one already kept: same file, address, title and time. */
+const sameItem = (a: DesignItem, b: DesignItem): boolean =>
+  a.file === b.file && a.url === b.url && a.title === b.title && a.modifiedAt === b.modifiedAt;
+
+/**
+ * A board read again, sharing what did not change with the one kept: an artboard that is the same
+ * is the same object, and a list of the same artboards the same list, so what draws them redraws
+ * only what changed. A stamp moves with any file of the board (the person's own marks among them).
+ */
+export function sharedBoard(before: DesignBoard | undefined, board: DesignBoard): DesignBoard {
+  if (!before) return board;
+  const kept = new Map(before.items.map((item) => [item.file, item]));
+  const items = board.items.map((item) => {
+    const old = kept.get(item.file);
+    return old && sameItem(old, item) ? old : item;
+  });
+  const same = items.length === before.items.length && items.every((item, index) => item === before.items[index]);
+  return { items: same ? before.items : items, stamp: board.stamp };
+}
+
 /** Keep a game's board as it was just read, telling whoever draws it only when it changed. */
 function keepBoard(project: string, board: DesignBoard): void {
   const before = boards.get(project);
   if (before && sameBoard(before, board)) return;
-  boards.set(project, board);
+  boards.set(project, sharedBoard(before, board));
   for (const listener of listeners) listener();
 }
 

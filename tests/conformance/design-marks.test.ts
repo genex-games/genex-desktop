@@ -6,7 +6,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { canvasPoint, dropPlace, hasPlaces, placed, tidied } from "../../src/renderer/panels/design/board-marks.ts";
-import { placedLayout } from "../../src/renderer/panels/design/design-model.ts";
+import {
+  CAPTION_HEIGHT,
+  pictureSize,
+  placedLayout,
+  type WallFrame,
+} from "../../src/renderer/panels/design/design-model.ts";
 import {
   DesignPick,
   EMPTY_MARKS,
@@ -125,11 +130,14 @@ describe("what the person does on the canvas, as changes to the marks", () => {
     assert.deepEqual(canvasPoint({ k: 2, tx: 0, ty: 0 }, corner, { x: 310, y: 70 }), { x: 5, y: 10 });
   });
 
-  it("hangs a dropped picture with its middle under the pointer, each further one a step away", () => {
+  it("hangs a dropped picture with its middle under the pointer, each further one beside it, not over it", () => {
     const first = dropPlace({ x: 2000, y: 1000 }, 0);
     const second = dropPlace({ x: 2000, y: 1000 }, 1);
+    // The widest a picture can hang, whatever shape it turns out to have once it loads.
+    const widest = pictureSize({ width: 100, height: 1 }).width;
     assert.ok(first.x < 2000 && first.y < 1000, "its corner is up and left of the pointer");
-    assert.ok(second.x > first.x && second.y > first.y, "the next does not cover it");
+    assert.ok(second.x > first.x + widest, "the next stands clear of it, however wide it is");
+    assert.equal(second.y, first.y, "on the same line");
   });
 
   it("puts an artboard at a place, and Tidy up forgets every place and nothing else", () => {
@@ -148,6 +156,10 @@ describe("what the person does on the canvas, as changes to the marks", () => {
     assert.deepEqual(tidied(moved), start, "notes and picks stay");
   });
 });
+
+/** Whether two rectangles of the canvas share any of it. */
+const overlaps = (a: WallFrame, b: WallFrame): boolean =>
+  a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 
 describe("the canvas with artboards the person moved", () => {
   const item = (file: string, section = "", width = 400, height = 300) => ({ file, section, width, height });
@@ -189,6 +201,37 @@ describe("the canvas with artboards the person moved", () => {
         ["characters", "hero"],
       ],
     );
+  });
+
+  it("lays the others out around a moved artboard, so none lands on it, its caption included", () => {
+    const items = [item("a"), item("b"), item("c"), item("d", "world"), item("e", "world")];
+    const auto = placedLayout(items, {});
+    const at = (layout: typeof auto, file: string) => layout.frames.find((frame) => frame.file === file);
+    const autoC = at(auto, "c");
+    const autoE = at(auto, "e");
+    assert.ok(autoC && autoE);
+    // Put a over where c and e would hang: the layout must go on past it.
+    for (const spot of [
+      { x: autoC.x, y: autoC.y },
+      { x: autoE.x + 30, y: autoE.y - 100 },
+    ]) {
+      const moved = placedLayout(items, { a: spot });
+      const placedA = at(moved, "a");
+      assert.ok(placedA);
+      const roomOf = (frame: WallFrame) => ({
+        ...frame,
+        y: frame.y - CAPTION_HEIGHT,
+        height: frame.height + CAPTION_HEIGHT,
+      });
+      for (const frame of moved.frames.filter((one) => one.file !== "a")) {
+        assert.equal(overlaps(roomOf(frame), roomOf(placedA)), false, `${frame.file} lands on the moved artboard`);
+      }
+      assert.deepEqual(
+        moved.frames.map((frame) => frame.file),
+        ["a", "b", "c", "d", "e"],
+        "in the board's order still",
+      );
+    }
   });
 
   it("forgets a place whose artboard is gone, and an empty board has no bounds", () => {

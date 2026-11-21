@@ -32,6 +32,7 @@ import {
   designSection,
   DesignSignal,
   type DesignSpot,
+  DESIGN_PAGE_BACKGROUND,
   DesignTheme,
   displayName,
   themedPageUrl,
@@ -41,7 +42,6 @@ import { t } from "../../../shared/i18n.ts";
 import {
   CANVAS_ZOOM_PROPERTY,
   type CanvasBounds,
-  gridTransform,
   keepView,
   keptView,
   PINCH_ZOOM_RATE,
@@ -62,7 +62,8 @@ import { refreshBoard } from "./design-boards.ts";
 import { type FrameMap, PageFrames, useFrameSignals } from "./design-frames.tsx";
 import type { DesignMarks, DesignPick, DesignPlace } from "../../../shared/design-marks.ts";
 import { canvasPoint, dropPlace, hasPlaces, placed, tidied, withPick } from "./board-marks.ts";
-import { AgentPointer, MakingSheet, useMaking } from "./BoardAgent.tsx";
+import { AgentPointer, DrawingTag, MakingSheet, useMaking } from "./BoardAgent.tsx";
+import { BOARD_WORDS } from "./board-words.ts";
 import { BoardNotes, type NoteDraft } from "./BoardNotes.tsx";
 import { BoardPick } from "./BoardPick.tsx";
 import { BoardChrome, BoardTool } from "./BoardTools.tsx";
@@ -76,6 +77,9 @@ import {
   type PageSize,
   pictureSize,
   placedLayout,
+  Redraw,
+  redrawOf,
+  screenPx,
   withGhosts,
   sizeAfter,
   turnedModels,
@@ -87,12 +91,11 @@ import { ASK_FOR_DESIGN_PROMPT } from "./design-prompts.ts";
 import { type ArtboardDrag, type ArtboardDragger, useArtboardDrag } from "./use-artboard-drag.ts";
 import { type MarksChange, useBoardMarks } from "./use-board-marks.ts";
 
-/** The canvas's dotted grid, as Builds' and Assets' canvases draw theirs. */
-const GRID_PX = 22;
 /** One press of a zoom button. */
 const ZOOM_STEP = 1.2;
-/** How long an artboard that was just added or changed carries Genex's mark. */
+/** How long an artboard that was just added or changed carries Genex's mark, and its ring's width on screen. */
 const FRESH_MS = 4 * SECOND_MS;
+const FRESH_RING_PX = 3;
 /** What a dragged thing must hold to be dropped on the canvas, and the kind of file kept. */
 const DRAGGED_FILES = "Files";
 const PICTURE_TYPE = "image/";
@@ -189,9 +192,11 @@ export default function DesignStage({ project, board }: { project: string; board
   const dropOnWall = useRef<DropOnWall | null>(null);
   const drop = useDrop(project, dropOnWall);
   const making = useMaking(project, board.items);
+  const theme = useAppTheme();
   return (
     <div
       data-design-stage=""
+      style={{ "--design-page-bg": DESIGN_PAGE_BACKGROUND[theme] } as CSSProperties}
       data-design-dragging={drop.dragging ? "" : undefined}
       className="absolute inset-0 [&[data-design-dragging]_iframe]:pointer-events-none"
       {...drop.handlers}
@@ -401,28 +406,36 @@ function useAppTheme(): DesignTheme {
   return theme;
 }
 
+/** Whether an artboard keeps what it shows up while its changed file loads behind it: a page and a picture do, a model starts again. */
+const holdsWhileLoading = (item: DesignItem): boolean => item.kind !== DesignItemKind.Model;
+
 /**
  * The canvas's artboards: for each the address on show, and what each page's address told the tab.
- * A page that changed keeps its sheet up until the changed one has loaded behind it (`settle`); a
- * picture or a model shows its address at once. What an address no frame loads any more told is
- * forgotten.
+ * A page or a picture that changed keeps what it showed up until the changed one has loaded behind
+ * it (`settle`), so a file being written never shows half done or blank; a model shows its address
+ * at once. What an address no frame loads any more told is forgotten.
  */
 function useHungItems(items: readonly DesignItem[]) {
-  const pages = useMemo(() => items.filter((item) => item.kind === DesignItemKind.Page), [items]);
+  const pages = useMemo(() => items.filter(holdsWhileLoading), [items]);
   const [held, setHeld] = useState(() => heldAfter({}, pages));
   const [told, setTold] = useState<Told>({});
   useEffect(() => {
     setHeld((now) => heldAfter(now, pages));
   }, [pages]);
-  const hung = useMemo<HungItem[]>(
-    () =>
-      items.map((item) =>
-        item.kind === DesignItemKind.Page
-          ? { item, ...heldFrames(held[item.file], item.url) }
-          : { item, shown: item.url, next: null },
-      ),
-    [items, held],
-  );
+  // An artboard whose sheet did not change keeps its object, so it alone of the canvas is not drawn again.
+  const kept = useRef(new Map<string, HungItem>());
+  const hung = useMemo<HungItem[]>(() => {
+    const before = kept.current;
+    const now = items.map((item) => {
+      const sheet = holdsWhileLoading(item)
+        ? { item, ...heldFrames(held[item.file], item.url) }
+        : { item, shown: item.url, next: null };
+      const old = before.get(item.file);
+      return old && old.item === item && old.shown === sheet.shown && old.next === sheet.next ? old : sheet;
+    });
+    kept.current = new Map(now.map((sheet) => [sheet.item.file, sheet]));
+    return now;
+  }, [items, held]);
   useEffect(() => {
     const framed = new Set(hung.flatMap((sheet) => (sheet.next ? [sheet.shown, sheet.next] : [sheet.shown])));
     setTold((now) => {
@@ -546,14 +559,25 @@ function useDropOnWall(
  * the artboards the agent said it is making (`making`) each at the end of its section.
  */
 function useWallSheets(board: DesignBoard, places: DesignMarks["places"], making: readonly string[]) {
+  const ghosts = useMemo(() => {
+    const held = new Set(board.items.map((item) => item.file));
+    return making.filter((file) => !held.has(file));
+  }, [board.items, making]);
   const theme = useAppTheme();
-  const items = useMemo(
-    () =>
-      board.items.map((item) =>
-        item.kind === DesignItemKind.Page ? { ...item, url: themedPageUrl(item.url, theme) } : item,
-      ),
-    [board.items, theme],
-  );
+  // A page in the app's look is made once for each artboard the board read again kept (`sharedBoard`).
+  const themed = useRef({ theme, pages: new WeakMap<DesignItem, DesignItem>() });
+  const items = useMemo(() => {
+    const cache = new WeakMap<DesignItem, DesignItem>();
+    const before = themed.current.theme === theme ? themed.current.pages : cache;
+    const now = board.items.map((item) => {
+      if (item.kind !== DesignItemKind.Page) return item;
+      const page = before.get(item) ?? { ...item, url: themedPageUrl(item.url, theme) };
+      cache.set(item, page);
+      return page;
+    });
+    themed.current = { theme, pages: cache };
+    return now;
+  }, [board.items, theme]);
   const { hung, told, setTold, settle } = useHungItems(items);
   const [natural, setNatural] = useState<Readonly<Record<string, PageSize>>>({});
   const pageSize = useCallback((url: string): PageSize => sizeAfter(told[url]?.size, null), [told]);
@@ -563,14 +587,14 @@ function useWallSheets(board: DesignBoard, places: DesignMarks["places"], making
         withGhosts(
           hung.map(({ item, shown }) => {
             const laid = { ...item, section: layoutSection(item) };
-            if (item.kind === DesignItemKind.Picture) return { ...laid, ...pictureSize(natural[item.url]) };
+            if (item.kind === DesignItemKind.Picture) return { ...laid, ...pictureSize(natural[item.file]) };
             return { ...laid, ...(item.kind === DesignItemKind.Model ? MODEL_SIZE : pageSize(shown)) };
           }),
-          making.map(ghostSheet),
+          ghosts.map(ghostSheet),
         ),
         places,
       ),
-    [hung, natural, pageSize, places, making],
+    [hung, natural, pageSize, places, ghosts],
   );
   /** An artboard's caption as the person reads it. */
   const captionOf = useCallback(
@@ -580,8 +604,16 @@ function useWallSheets(board: DesignBoard, places: DesignMarks["places"], making
     },
     [hung, told],
   );
-  /** A picture has loaded, at its own size. */
-  const onNatural = useCallback((url: string, size: PageSize) => setNatural((now) => ({ ...now, [url]: size })), []);
+  /**
+   * A picture has loaded, at its own size: kept by its file, so a picture made again keeps its
+   * shape on the canvas while the new one loads, and takes the new one's as it is swapped in.
+   */
+  const onNatural = useCallback((file: string, size: PageSize) => {
+    setNatural((now) => {
+      const before = now[file];
+      return before?.width === size.width && before.height === size.height ? now : { ...now, [file]: size };
+    });
+  }, []);
   // One object while nothing in it changed: a camera move renders the canvas, not its artboards.
   return useMemo(
     () => ({ hung, told, setTold, settle, onNatural, pageSize, layout, captionOf, making }),
@@ -643,7 +675,7 @@ const WallItems = memo(function WallItems({
   /** Bring one artboard into view. */
   onShow: (frame: WallFrame) => void;
 }): JSX.Element {
-  const { hung, told, layout, pageSize, settle, onNatural } = sheets;
+  const { hung, told, layout, pageSize, settle, onNatural, making } = sheets;
   const fresh = useFresh(board.items);
   const turned = useMemo(() => turnedModels(board.items), [board.items]);
   const byFile = useMemo(() => new Map(hung.map((sheet) => [sheet.item.file, sheet])), [hung]);
@@ -665,7 +697,7 @@ const WallItems = memo(function WallItems({
               frame={frame}
               caption={sheets.captionOf(frame.file)}
               section={section}
-              drawing={sheets.making[0] === frame.file}
+              drawing={making[0] === frame.file}
             />
           );
         return (
@@ -683,6 +715,7 @@ const WallItems = memo(function WallItems({
             offered={marks.choices.includes(frame.file)}
             onPick={onPick}
             fresh={fresh.has(frame.file) && sheet.item.section !== DESIGN_DROPS}
+            redraw={redrawOf(making, frame.file)}
             turnsItself={turned.has(frame.file)}
             frames={frames}
             pageSize={pageSize}
@@ -785,7 +818,7 @@ function Wall({
 /** The layer's style: where the camera has it, and its zoom as the marks drawn against it read it. */
 type LayerStyle = CSSProperties & Record<typeof CANVAS_ZOOM_PROPERTY, number>;
 
-/** The canvas under its camera: the dotted grid and the layer the artboards hang on. A drag of the bare canvas pans it. */
+/** The canvas under its camera: the layer the artboards hang on, over a plain ground. A drag of the bare canvas pans it. */
 function WallCanvas({
   camera,
   bounds,
@@ -795,7 +828,7 @@ function WallCanvas({
   bounds: CanvasBounds | null;
   children: ReactNode;
 }): JSX.Element {
-  const { view, viewport, layer, grid, onBackgroundDown } = camera;
+  const { view, viewport, layer, onBackgroundDown } = camera;
   // A frame keeps the pointer for itself: while the bare canvas is dragged, the pages let it pass.
   const onDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
     onBackgroundDown(event);
@@ -819,20 +852,6 @@ function WallCanvas({
   };
   return (
     <div ref={viewport} className="absolute inset-0 cursor-grab" onPointerDown={onDown}>
-      <div
-        ref={grid}
-        data-grid-scale={view.k}
-        aria-hidden="true"
-        className="pointer-events-none absolute top-0 left-0"
-        style={{
-          width: `calc(150% + ${GRID_PX * 2}px)`,
-          height: `calc(150% + ${GRID_PX * 2}px)`,
-          backgroundImage: "radial-gradient(var(--line-strong) 1px, transparent 1.25px)",
-          backgroundSize: `${GRID_PX * view.k}px ${GRID_PX * view.k}px`,
-          transform: gridTransform(view, view.k),
-          transformOrigin: "0 0",
-        }}
-      />
       <div ref={layer} className="absolute top-0 left-0" style={layerStyle}>
         {children}
       </div>
@@ -953,6 +972,103 @@ function ModelTile({
 }
 
 /**
+ * What the canvas draws over an artboard: the veil and the agent's cursor while it is being made
+ * again, Use this and Not this when it is offered or picked, and Genex's mark once it just changed.
+ */
+function SheetMarks({
+  width,
+  redraw,
+  fresh,
+  offered,
+  pick,
+  onPick,
+}: {
+  /** The artboard's width on the canvas: the agent's words stay within it. */
+  width: number;
+  redraw: Redraw | null;
+  fresh: boolean;
+  offered: boolean;
+  pick: DesignPick | null;
+  onPick: (pick: DesignPick) => void;
+}): JSX.Element {
+  const drawing = redraw === Redraw.Drawing;
+  return (
+    <>
+      {drawing ? <div data-design-redrawing="" aria-hidden="true" className="design-redrawing" /> : null}
+      {offered || pick ? <BoardPick pick={pick} onPick={onPick} /> : null}
+      {drawing ? <DrawingTag width={width} /> : null}
+      {fresh && !drawing ? <FreshMark /> : null}
+    </>
+  );
+}
+
+/** What a picture's natural size reads as, from its element once it has loaded. */
+const naturalOf = (image: HTMLImageElement): PageSize => ({ width: image.naturalWidth, height: image.naturalHeight });
+
+/**
+ * A picture on the canvas: the one on show and, once its file changed, the new one loading unseen
+ * behind it, swapped in only when it has loaded whole (a file still being written fails to load and
+ * leaves the one on show up). A picture that cannot be shown at all is a quiet tile, never a broken
+ * image. A drag of it moves the artboard.
+ */
+function PictureSheet({
+  sheet,
+  caption,
+  size,
+  dragging,
+  onGrab,
+  onLoaded,
+  onNatural,
+}: {
+  sheet: HungItem;
+  caption: string;
+  size: PageSize;
+  dragging: boolean;
+  onGrab: (event: ReactPointerEvent<HTMLElement>) => void;
+  onLoaded: (file: string, url: string) => void;
+  onNatural: (file: string, size: PageSize) => void;
+}): JSX.Element {
+  const { item, shown, next } = sheet;
+  const [failed, setFailed] = useState<string | null>(null);
+  const broken = failed === shown;
+  return (
+    <>
+      {broken ? <div aria-hidden="true" className="absolute inset-0 rounded-[12px] bg-inset" /> : null}
+      <img
+        src={shown}
+        alt={caption}
+        draggable={false}
+        decoding="async"
+        data-design-picture-failed={broken ? "" : undefined}
+        className={`relative block rounded-[12px] bg-inset object-cover ${broken ? "opacity-0" : ""} ${dragging ? "cursor-grabbing" : "cursor-grab"}`}
+        style={size}
+        onPointerDown={onGrab}
+        onLoad={(event) => onNatural(item.file, naturalOf(event.currentTarget))}
+        onError={() => setFailed(shown)}
+      />
+      {next ? (
+        <img
+          key={next}
+          src={next}
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          decoding="async"
+          className="pointer-events-none absolute top-0 left-0 opacity-0"
+          style={size}
+          onLoad={(event) => {
+            onNatural(item.file, naturalOf(event.currentTarget));
+            onLoaded(item.file, next);
+          }}
+          // A new file that can never be read is what the board holds now: shown, it is the empty tile.
+          onError={() => onLoaded(item.file, next)}
+        />
+      ) : null}
+    </>
+  );
+}
+
+/**
  * One artboard on the canvas: its caption (a press brings it into view) above it, then the page in
  * its closed frame, the picture, or the model. The caption keeps its size on screen whatever the
  * canvas's zoom, so a far canvas still reads; an artboard that just changed carries Genex's mark.
@@ -972,6 +1088,7 @@ const WallItem = memo(function WallItem({
   offered,
   onPick,
   fresh,
+  redraw,
   turnsItself,
   frames,
   pageSize,
@@ -996,6 +1113,8 @@ const WallItem = memo(function WallItem({
   offered: boolean;
   onPick: (file: string, pick: DesignPick) => void;
   fresh: boolean;
+  /** Where it stands in what the agent is making again: being drawn now, next, or neither. */
+  redraw: Redraw | null;
   /** A model that loads without a press (`turnedModels`). */
   turnsItself: boolean;
   frames: FrameMap;
@@ -1003,8 +1122,8 @@ const WallItem = memo(function WallItem({
   pageSize: (url: string) => PageSize;
   /** A changed page has loaded behind its sheet. */
   onLoaded: (file: string, url: string) => void;
-  /** A picture has loaded: its own size, by its address. */
-  onNatural: (url: string, size: PageSize) => void;
+  /** A picture has loaded: its own size, by its file. */
+  onNatural: (file: string, size: PageSize) => void;
   onShow: (frame: WallFrame) => void;
 }): JSX.Element {
   const { item } = sheet;
@@ -1016,6 +1135,7 @@ const WallItem = memo(function WallItem({
       data-design-page={item.file}
       data-design-kind={item.kind}
       data-design-loading={sheet.next ? "" : undefined}
+      data-design-redraw={redraw ?? undefined}
       data-design-dragged={drag ? "" : undefined}
       data-analytics-mask=""
       className={`group/board absolute ${drag ? "z-10" : ""}`}
@@ -1043,13 +1163,13 @@ const WallItem = memo(function WallItem({
               if (!takeMoved()) onShow(frame);
             }}
           >
-            {caption}
+            {redraw === Redraw.Next ? BOARD_WORDS.next(caption) : caption}
           </button>
         </div>
       </div>
       <div
-        className={`group/sheet relative rounded-[12px] ${fresh ? "shadow-[0_0_0_3px_var(--accent)]" : ""} ${drag ? "shadow-pop" : ""}`}
-        style={size}
+        className={`group/sheet relative rounded-[12px] ${drag ? "shadow-pop" : ""}`}
+        style={fresh ? { ...size, boxShadow: `0 0 0 ${screenPx(FRESH_RING_PX)} var(--accent)` } : size}
       >
         {item.kind === DesignItemKind.Page ? (
           <PageFrames
@@ -1063,27 +1183,27 @@ const WallItem = memo(function WallItem({
           />
         ) : null}
         {item.kind === DesignItemKind.Picture ? (
-          <img
-            src={item.url}
-            alt={caption}
-            draggable={false}
-            decoding="async"
-            className={`block rounded-[12px] bg-inset object-cover ${drag ? "cursor-grabbing" : "cursor-grab"}`}
-            style={size}
-            onPointerDown={grab}
-            onLoad={(event) =>
-              onNatural(item.url, {
-                width: event.currentTarget.naturalWidth,
-                height: event.currentTarget.naturalHeight,
-              })
-            }
+          <PictureSheet
+            sheet={sheet}
+            caption={caption}
+            size={size}
+            dragging={drag !== null}
+            onGrab={grab}
+            onLoaded={onLoaded}
+            onNatural={onNatural}
           />
         ) : null}
         {item.kind === DesignItemKind.Model ? (
           <ModelTile key={item.url} project={project} item={item} size={size} turnsItself={turnsItself} />
         ) : null}
-        {offered || pick ? <BoardPick pick={pick} onPick={(chosen) => onPick(item.file, chosen)} /> : null}
-        {fresh ? <FreshMark /> : null}
+        <SheetMarks
+          width={frame.width}
+          redraw={redraw}
+          fresh={fresh}
+          offered={offered}
+          pick={pick}
+          onPick={(chosen) => onPick(item.file, chosen)}
+        />
       </div>
     </div>
   );

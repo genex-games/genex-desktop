@@ -1426,7 +1426,7 @@ export default {
   "Fit every asset": "Показать все ассеты",
   "Fit everything": "Вписать всё",
   "Tidy up": "Навести порядок",
-  "Genex is drawing {title}": "Genex рисует: {title}",
+  "Genex is drawing": "Genex рисует",
   "{title} · next": "{title} · дальше",
   "{count, plural, one {# new pick} other {# new picks}}":
     "{count, plural, one {# новый выбор} few {# новых выбора} many {# новых выборов} other {# нового выбора}}",
@@ -6525,4 +6525,26 @@ export default {
   "Version {version} is in your game": "Версия {version} уже в игре",
   "Show all {count}": "Показать все {count}",
   "{at} of {count}": "{at} из {count}",
+  "Add {cap} more": "Добавить ещё {cap}",
+  Allow: "Разрешить",
+  "Genex's real models are switched off right now. Practice answers go on.":
+    "Настоящие модели Genex сейчас выключены. Пробные ответы продолжаются.",
+  "Most credits this play session may spend": "Сколько кредитов можно потратить за эту игровую сессию",
+  "Practice answers (free, made up)": "Пробные ответы (бесплатно, выдуманные)",
+  "Practice answers could not start: {error}": "Пробные ответы не запустились: {error}",
+  "Real AI is billed to this game's draft on Genex, and it has none yet. Ask the chat to publish a draft, then try again. Practice answers go on.":
+    "Настоящий ИИ оплачивается с черновика этой игры на Genex, а его пока нет. Попроси чат опубликовать черновик и попробуй снова. Пробные ответы продолжаются.",
+  "Real AI is not available in this test profile. Practice answers go on.":
+    "Настоящий ИИ недоступен в этом тестовом профиле. Пробные ответы продолжаются.",
+  "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
+    "Для настоящего ИИ нужно войти в Genex. Войди в настройках и попробуй снова. Пробные ответы продолжаются.",
+  "Real AI stopped. Practice answers go on.": "Настоящий ИИ остановился. Пробные ответы продолжаются.",
+  "Real AI · {spent} of {cap} credits": "Настоящий ИИ · {spent} из {cap} кредитов",
+  "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
+    "В этом превью отвечают настоящие модели, за твои кредиты Genex: не больше {cap} кредитов ({dollars}) за эту игровую сессию.",
+  Start: "Начать",
+  "Starting real AI…": "Запускаем настоящий ИИ…",
+  "The cap is used up": "Лимит исчерпан",
+  "This game wants to hear you through your microphone.": "Эта игра хочет слышать тебя через микрофон.",
+  "Use real AI": "Включить настоящий ИИ",
 } satisfies LocaleCatalog;
