@@ -80,7 +80,7 @@ export interface HardwareInfo {
 /** One catalog model. `about` is the user's one line; `notes` is evidence that is never displayed. */
 export interface CatalogModel {
   name: string;
-  /** Packing or build shown beside the name when the tag alone would not say it (Bonsai). */
+  /** A plain word after the name that tells two builds of one model apart ("Bonsai 2 27B Lite"). */
   variant?: string;
   engine?: string;
   sizeGb: number;

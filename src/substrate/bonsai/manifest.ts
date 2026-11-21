@@ -19,7 +19,7 @@ const weight = (name: string, bytes: number, sha256: string): DownloadFile => ({
 export const BONSAI_MODELS = [
   {
     id: "bonsai-2:27b-pq2_0",
-    label: "Bonsai 2 27B · PQ2_0",
+    label: "Bonsai 2 27B",
     file: weight(
       "Ternary-Bonsai-2-27B-PQ2_0.gguf",
       7206168928,
@@ -28,7 +28,7 @@ export const BONSAI_MODELS = [
   },
   {
     id: "bonsai-2:27b-ptq1_0",
-    label: "Bonsai 2 27B · PTQ1_0",
+    label: "Bonsai 2 27B Lite",
     file: weight(
       "Ternary-Bonsai-2-27B-PTQ1_0.gguf",
       5946648928,

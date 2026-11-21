@@ -752,7 +752,7 @@ async function checkModelRoles(buildSmoke: BuildSmoke): Promise<void> {
     models: async () => [
       {
         id: "bonsai-2:27b-pq2_0",
-        label: "Bonsai 2 27B · PQ2_0",
+        label: "Bonsai 2 27B",
         contextWindow: 102400,
         maxTokens: 4096,
         supportsTools: true,
@@ -781,22 +781,22 @@ async function checkModelRoles(buildSmoke: BuildSmoke): Promise<void> {
   await wc.executeJavaScript(`document.querySelector('nav [aria-label="Settings"]')?.click()`);
   await waitFor(`!!document.querySelector('#settings-tab-local')`);
   await wc.executeJavaScript(`document.querySelector('#settings-tab-local')?.click()`);
-  // Each row names the model and its variant apart ("Bonsai 2 27B", "PQ2_0").
+  // Each row names the model by its name alone ("Bonsai 2 27B", "Bonsai 2 27B Lite"), never its tag.
   check(
-    "Bonsai setup offers installed PQ2_0 and downloadable PTQ1_0",
+    "Bonsai setup offers installed Bonsai 2 27B and downloadable Bonsai 2 27B Lite",
     await waitFor(
-      `(()=>{const d=document.querySelector('[data-testid="settings-dialog"]');const row=v=>Array.from(d?.querySelectorAll('span')??[]).find(e=>e.textContent===v)?.closest('.border-b');return !!row('PQ2_0')?.textContent.includes('Installed')&&!!document.querySelector('button[aria-label="Download Bonsai 2 27B PTQ1_0"]');})()`,
+      `(()=>{const d=document.querySelector('[data-testid="settings-dialog"]');const row=v=>Array.from(d?.querySelectorAll('span')??[]).find(e=>e.textContent===v)?.closest('.border-b');return !!row('Bonsai 2 27B')?.textContent.includes('Installed')&&!!document.querySelector('button[aria-label="Download Bonsai 2 27B Lite"]');})()`,
     ),
   );
   const setupShot = flagValue(StudioFlag.BuildShot);
   if (setupShot) {
     await wc.executeJavaScript(
-      `Array.from(document.querySelectorAll('[data-testid="settings-dialog"] span')).find(e=>e.textContent==='PQ2_0')?.scrollIntoView({block:'center'})`,
+      `Array.from(document.querySelectorAll('[data-testid="settings-dialog"] span')).find(e=>e.textContent==='Bonsai 2 27B')?.scrollIntoView({block:'center'})`,
     );
     await sleep(300);
     await fs.writeFile(setupShot.replace(/\.png$/, "-downloads.png"), (await wc.capturePage()).toPNG());
   }
-  await wc.executeJavaScript(`document.querySelector('button[aria-label="Download Bonsai 2 27B PTQ1_0"]')?.click()`);
+  await wc.executeJavaScript(`document.querySelector('button[aria-label="Download Bonsai 2 27B Lite"]')?.click()`);
   check(
     "model download rejection clears progress and displays its error",
     await waitFor(

@@ -5,7 +5,6 @@
     "bonsai-2:27b-pq2_0": {
       "engine": "bonsai",
       "name": "Bonsai 2 27B",
-      "variant": "PQ2_0",
       "sizeGb": 7.84,
       "tools": true,
       "vision": true,
@@ -17,7 +16,7 @@
     "bonsai-2:27b-ptq1_0": {
       "engine": "bonsai",
       "name": "Bonsai 2 27B",
-      "variant": "PTQ1_0",
+      "variant": "Lite",
       "sizeGb": 6.58,
       "tools": true,
       "vision": true,

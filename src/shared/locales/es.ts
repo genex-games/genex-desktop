@@ -743,8 +743,8 @@ export default {
   Checkpoint: "Punto de control",
   Choose: "Elegir",
   "Choose Blender…": "Elegir Blender…",
-  "Choose PQ2_0 (recommended) or PTQ1_0 in Model setup.":
-    "Elige PQ2_0 (recomendado) o PTQ1_0 en la configuración del modelo.",
+  "Download Bonsai 2 27B or Bonsai 2 27B Lite in Settings › Local Models.":
+    "Descarga Bonsai 2 27B o Bonsai 2 27B Lite en Ajustes › Modelos locales.",
   "Choose a PNG, JPEG or WebP image, or a valid cover recipe.":
     "Elige una imagen PNG, JPEG o WebP, o una receta de portada válida.",
   "Choose a coding model": "Elige un modelo para programar",

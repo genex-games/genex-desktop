@@ -32,7 +32,7 @@ import {
   type PiStreamFn,
   streamHttpStatus,
 } from "./pi-completions.ts";
-import { supersededBy } from "../hardware.ts";
+import { catalogModels, supersededBy } from "../hardware.ts";
 import { childEnv } from "../child-env.ts";
 import { HOUR_MS, SECOND_MS } from "../../shared/duration.ts";
 import { StudioPlatform } from "../../shared/boot.ts";
@@ -449,7 +449,8 @@ export class OllamaEngine implements Engine {
       const replacement = supersededBy(tag.name);
       out.push({
         id: tag.name,
-        label: tag.name,
+        // A catalog model goes by its name ("Inkling 2 Mini"); a model added by name keeps its tag.
+        label: catalogModels()[tag.name]?.name ?? tag.name,
         contextWindow: contextLength,
         contextSource,
         maxTokens: maxReplyTokens(contextLength),

@@ -658,7 +658,8 @@ export default {
   Checkpoint: "检查点",
   Choose: "选择",
   "Choose Blender…": "选择 Blender…",
-  "Choose PQ2_0 (recommended) or PTQ1_0 in Model setup.": "请在模型设置中选择 PQ2_0（推荐）或 PTQ1_0。",
+  "Download Bonsai 2 27B or Bonsai 2 27B Lite in Settings › Local Models.":
+    "请在“设置 › 本地模型”中下载 Bonsai 2 27B 或 Bonsai 2 27B Lite。",
   "Choose a PNG, JPEG or WebP image, or a valid cover recipe.": "请选择 PNG、JPEG 或 WebP 图片，或有效的封面配方。",
   "Choose a coding model": "选择编程模型",
   "Choose a connector to review and connect. Existing configurations stay unchanged.":

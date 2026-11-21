@@ -77,6 +77,24 @@ describe("ollama management API", () => {
     }
   });
 
+  it("names a catalog model by its name and any other model by its tag", async () => {
+    // A person picks "Inkling 2 Mini", not "inkling-2-mini:26b-a5b".
+    const server = await fake({
+      models: [
+        { name: "inkling-2-mini:26b-a5b", size: 100, capabilities: ["completion", "tools"], contextLength: 4096 },
+        { name: "my-finetune:7b", size: 100, capabilities: ["completion"], contextLength: 4096 },
+      ],
+    });
+    const models = await new OllamaEngine({ host: server.host }).models();
+    assert.deepEqual(
+      models.map((model) => [model.id, model.label]),
+      [
+        ["inkling-2-mini:26b-a5b", "Inkling 2 Mini"],
+        ["my-finetune:7b", "my-finetune:7b"],
+      ],
+    );
+  });
+
   it("reports no server rather than throwing when nothing is listening", async () => {
     const client = new OllamaClient("http://127.0.0.1:1");
     assert.equal(await client.version(), null);

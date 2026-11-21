@@ -374,8 +374,7 @@ function ModelRow(props: {
     <div className="flex items-center gap-4 border-b border-border py-3.5">
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-          <span className="text-[15px] leading-[22px] font-medium text-ink">{pick.name}</span>
-          <span className="break-all font-mono text-xs text-muted-foreground">{pick.variant ?? pick.model}</span>
+          <span className="text-[15px] leading-[22px] font-medium text-ink">{title}</span>
           {best && (
             <span className="inline-flex h-5 items-center self-center rounded-[6px] bg-accent-tint px-1.5 font-mono text-micro text-accent-ink">
               {t("Best fit")}

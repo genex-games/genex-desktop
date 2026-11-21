@@ -29,7 +29,10 @@ the portable entry with `mlx` naming `inkling-2-mini:26b-a5b`, which then stays 
 build, and measure it on a PC before ranking it.
 
 `substrate/models-catalog.json` holds one entry per model: name, size, tools, vision and a
-one-line `about` of at most 60 characters. Measurement evidence lives in `notes`, which is never
+one-line `about` of at most 60 characters. People see the name, never the tag: Settings, the
+welcome screen and the model pickers say "Inkling 2 Mini" for `inkling-2-mini:26b-a5b`, and a
+`variant` word tells two builds apart ("Bonsai 2 27B Lite" is PTQ1_0, "Bonsai 2 27B" PQ2_0). A
+model added from Ollama by name has no catalog name and keeps its tag. Measurement evidence lives in `notes`, which is never
 displayed. Each RAM tier ranks model ids; `recommendModels` shows the ranked models that fit, and
 the first is Best fit. From 128 GB, Qwen 3.5 122B (vision and tools) follows Inkling 2 Mini; 192 GB
 adds Qwen 3.8 Flash Next. Every other model the architecture can run is under More models, smallest

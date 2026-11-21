@@ -123,7 +123,7 @@ const MESSAGE = {
   AppleSiliconOnly: () => t("Bonsai requires Apple Silicon"),
   Ready: () => t("Bonsai installed · starts on demand"),
   NotDownloaded: () => t("Download Bonsai 2 to build locally"),
-  DownloadRemedy: () => t("Choose PQ2_0 (recommended) or PTQ1_0 in Model setup."),
+  DownloadRemedy: () => t("Download Bonsai 2 27B or Bonsai 2 27B Lite in Settings › Local Models."),
   DownloadFirst: "Download Bonsai first",
   NoTokens: "Runtime tokenizer returned no tokens",
   EmptyResponse: "Empty inference response",
