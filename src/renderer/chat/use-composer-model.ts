@@ -34,6 +34,7 @@ import { ThreadKind } from "../../shared/event-log.ts";
 import { ModelCatalogState } from "../../shared/model-catalog.ts";
 import { EngineKind, EngineStatusCode, splitsRoles } from "../../shared/engine-descriptor.ts";
 import { isLocalEngine, isMetered } from "../../shared/providers.ts";
+import { MINUTE_MS } from "../../shared/duration.ts";
 import { InstallPhase, ModelPullStatus } from "../../shared/model-install.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { canonicalModel } from "../onboarding/state.ts";
@@ -48,6 +49,12 @@ import { AnalyticsEvent } from "../analytics/events.ts";
 
 /** The jobs beside the chat itself: its workers and its reviewers. */
 const HELPER_ROLES = ["builder", "judge"] as const;
+
+/** How long a finished download may wait to be listed and still count as one (`useKeptShownModel`). */
+const DOWNLOAD_WEIGHED_MS = 10 * MINUTE_MS;
+
+/** The install phases a managed model is on disk at: its receipt is written at `installed`, before it starts. */
+const DOWNLOADED_PHASES: ReadonlySet<InstallPhase> = new Set([InstallPhase.Installed, InstallPhase.Ready]);
 
 /**
  * What a chat opens with: its own remembered model (a fresh game chat inherits the last pick, and
@@ -337,7 +344,7 @@ function finishedDownload(event: UiEvent): string | null {
   if (event.type === UiEvent.ModelPull)
     return event.payload.progress.status === ModelPullStatus.Success ? event.payload.model : null;
   if (event.type === UiEvent.ModelInstall)
-    return event.payload.phase === InstallPhase.Ready ? event.payload.model : null;
+    return DOWNLOADED_PHASES.has(event.payload.phase) ? event.payload.model : null;
   return null;
 }
 
@@ -514,6 +521,15 @@ export function sendBlockOf(model: Pick<ComposerModelView, "choices">, key: stri
 }
 
 /**
+ * The downloads that finished within `DOWNLOAD_WEIGHED_MS`, forgetting older ones: a model listed
+ * much later (Ollama stopped before it could list it) came back rather than arrived.
+ */
+function recentDownloads(finished: Map<string, number>, now: number): Set<string> {
+  for (const [model, at] of finished) if (now - at > DOWNLOAD_WEIGHED_MS) finished.delete(model);
+  return new Set(finished.keys());
+}
+
+/**
  * A chat with no pick of its own keeps the model it shows when a model that just finished
  * downloading would lead (`keptShownModel`): it becomes the chat's pick, remembered as if it had
  * been picked. Weighed after every render, against what the chat showed at the last one.
@@ -530,12 +546,13 @@ function useKeptShownModel(
   setModelKey: (key: string) => void,
 ): void {
   const last = useRef<{ thread: string | undefined; selected: string | null } | null>(null);
-  const downloaded = useRef(new Set<string>());
+  /** Each finished download by name (`canonicalModel`), with when it finished. */
+  const finished = useRef(new Map<string, number>());
   useEffect(
     () =>
       window.studio.onEvent((event) => {
         const model = finishedDownload(event);
-        if (model) downloaded.current.add(canonicalModel(model));
+        if (model) finished.current.set(canonicalModel(model), Date.now());
       }),
     [],
   );
@@ -543,12 +560,12 @@ function useKeptShownModel(
     const threadId = now.thread?.id;
     const previous = last.current;
     const shown = previous && previous.thread === threadId ? previous.selected : null;
-    const kept = keptShownModel({ ...now, shown, downloaded: downloaded.current });
+    const kept = keptShownModel({ ...now, shown, downloaded: recentDownloads(finished.current, Date.now()) });
     last.current = { thread: threadId, selected: kept ?? now.selected };
     // A download is weighed once, when its model is first listed: a later return moves nothing.
     for (const choice of now.choices) {
       const listed = parseModelKey(choice.key);
-      if (isLocalEngine(listed.engine)) downloaded.current.delete(canonicalModel(listed.model));
+      if (isLocalEngine(listed.engine)) finished.current.delete(canonicalModel(listed.model));
     }
     if (!kept) return;
     setModelKey(kept);
