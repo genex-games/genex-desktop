@@ -19,14 +19,18 @@ pick, which a game chat or Home also hands to new games (`keptShownModel`), and 
 the picker. Only the download counts; Ollama starting or a list growing as the app opens moves
 nothing. Explicit picks always remain selected.
 
-Inkling on a PC today goes through a model server rather than Ollama: Unsloth's GGUF builds
-(`unsloth/Inkling-2-Mini-GGUF`, 8 to 23 GB) run on Unsloth's llama.cpp prebuilts, and on
-mainline llama.cpp once ggml-org/llama.cpp #32704 lands (the looped layers). `llama-server --jinja`
-answers on port 8080, which Local server finds by itself ([your own model
+Inkling on a PC today goes through a model server rather than Ollama: mainline llama.cpp runs
+Unsloth's GGUF builds (`unsloth/Inkling-2-Mini-GGUF`, the `Mainline_Support` files) since
+ggml-org/llama.cpp #32704 (the looped layers, merged 21 Nov 2026). `llama-server --jinja` answers
+on port 8080, which Local server finds by itself ([your own model
 server](connections-and-context.md#your-own-model-server)), so game chats and builds run on it
-with no Genex change. When Ollama can pull a build for Windows and Linux, add it to the catalog as
-the portable entry with `mlx` naming `inkling-2-mini:26b-a5b`, which then stays the Apple Silicon
-build, and measure it on a PC before ranking it.
+with no Genex change. Every Unsloth quant keeps 11 to 40 expert tensors in NVFP4, the format the
+model was trained in, and llama.cpp's Metal backend cannot run NVFP4: on a 32 GB M2 Max, 11.4 GB of
+the 17.6 GB Q4_K_XL ran on the CPU, so Genex's 18K-token first prompt fit but took ~27 minutes
+(~11 tokens/s) and replies came at ~2.7 tokens/s. That route is no answer for small Macs. When
+Ollama can pull a build for Windows and Linux, add it to the catalog as the portable entry with
+`mlx` naming `inkling-2-mini:26b-a5b`, which then stays the Apple Silicon build, and measure it on
+a PC before ranking it.
 
 `substrate/models-catalog.json` holds one entry per model: name, size, tools, vision and a
 one-line `about` of at most 60 characters. People see the name, never the tag: Settings, the
