@@ -1852,7 +1852,7 @@ async function checkFollowRounds(buildSmoke: BuildSmoke): Promise<FollowRun> {
     await waitFor(`${working("step:fish:2")}&&${working("step:water:2")}`),
   );
   await wc.executeJavaScript(`document.querySelector('[data-graph-node="step:water:1"]')?.click()`);
-  const waterCard = `!!document.querySelector('[data-builds-list] [data-graph-node="step:water:1"][aria-expanded="true"] + [data-graph-panel="step:water:1"]')`;
+  const waterCard = `!!document.querySelector('[data-builds-list] [data-graph-node="step:water:1"]:has(> button[aria-expanded="true"]) + [data-graph-panel="step:water:1"]')`;
   check("selecting a row opens its card in place, under the row's own header", await waitFor(waterCard));
   await followEvent(CustomEvent.FacetBuildStarted, { facetId: "water", facetTitle: "water", iteration: 3 });
   pushUiEvent({ type: UiEvent.AutopilotFacet, payload: { runId: followRun } });
@@ -1868,7 +1868,7 @@ async function checkFollowRounds(buildSmoke: BuildSmoke): Promise<FollowRun> {
   check(
     "Escape closes the open card back into its row",
     await waitFor(
-      `!document.querySelector('[data-graph-panel]')&&!!document.querySelector('[data-graph-node="step:water:1"][aria-expanded="false"]')`,
+      `!document.querySelector('[data-graph-panel]')&&!!document.querySelector('[data-graph-node="step:water:1"] > button[aria-expanded="false"]')`,
     ),
   );
   return { followRun, followEvent };
@@ -2242,10 +2242,10 @@ async function checkPartRows(buildSmoke: BuildSmoke): Promise<void> {
     ),
   );
   wc.focus();
-  await wc.executeJavaScript(`document.querySelector('[data-graph-node="step:task-1:1"]')?.focus()`);
+  await wc.executeJavaScript(`document.querySelector('[data-graph-node="step:task-1:1"] > button')?.focus()`);
   check(
     "a step's row accepts keyboard focus",
-    await waitFor(`document.activeElement===document.querySelector('[data-graph-node="step:task-1:1"]')`),
+    await waitFor(`document.activeElement===document.querySelector('[data-graph-node="step:task-1:1"] > button')`),
   );
   wc.sendInputEvent({ type: "keyDown", keyCode: "Return" });
   wc.sendInputEvent({ type: "char", keyCode: "\r" });

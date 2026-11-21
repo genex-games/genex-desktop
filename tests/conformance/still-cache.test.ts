@@ -56,7 +56,7 @@ test("a still already read is there at once for a card that mounts again; a retr
   }
 });
 
-test("a long list's thumbnails are read a few at a time, and an opened picture never waits behind them", async () => {
+test("a long list's thumbnails are read a few at a time, and an opened picture or card never waits behind them", async () => {
   let running = 0;
   let most = 0;
   const gates: Array<() => void> = [];
@@ -75,6 +75,12 @@ test("a long list's thumbnails are read a few at a time, and an opened picture n
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(running, 4, "four thumbnails at once, the rest wait their turn");
     assert.equal(await loadStill({ run: "opened" }), "data:image/jpeg;base64,opened", "a full picture is read at once");
+    let cardRead = false;
+    void loadStill({ run: "card", maxPx: 640 }).then(() => {
+      cardRead = true;
+    });
+    for (let i = 0; i < 3; i++) await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(cardRead, "an open card's picture is read at once too, never behind the rows'");
     while (gates.length) {
       gates.shift()?.();
       await new Promise((resolve) => setImmediate(resolve));

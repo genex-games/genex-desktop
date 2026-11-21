@@ -127,11 +127,21 @@ const row = (made: Step): ListRow => ({
   build: null,
 });
 
+/** A model it made, drawn as the Assets stage draws it: nothing the viewer can open. */
+const model = (name: string): AssetCard => ({
+  id: `asset:${FACET}:${name}`,
+  facetId: FACET,
+  name,
+  versions: [delivery(name, `assets/models/${name}.glb`, "model")],
+  picture: { source: PictureSource.Asset, asset: record(`assets/models/${name}.glb`, "model") },
+});
+
 const SOUNDS = Array.from({ length: 23 }, (_, i) => sound(`wind-${i + 1}`));
 const PICTURES = Array.from({ length: 11 }, (_, i) => picture(`extra-${i + 1}`));
 const VALLEY = row(step("Sounds of the valley", SOUNDS));
 const CROWD = row(step("Crowd: women and a tax collector", PICTURES));
-const LIST: BuildsList = { working: [], changes: [VALLEY, CROWD], leftOut: [] };
+const PROPS = row(step("Props", [model("cart"), model("well"), model("gate"), model("cart-2"), picture("sign")]));
+const LIST: BuildsList = { working: [], changes: [VALLEY, CROWD, PROPS], leftOut: [] };
 
 async function renderList(selected: string | null): Promise<string> {
   const { BuildsList: List, createElement, renderToStaticMarkup } = await compiled();
@@ -215,4 +225,38 @@ test("the card lists the first six sounds as rows that play, then Show all", asy
   assert.match(markup, />Show all 23</);
   const pictures: string = renderToStaticMarkup(createElement(MadeSounds, { project: PROJECT, cards: PICTURES }));
   assert.equal(pictures, "", "a step that made only pictures shows none in its card: they are on its row");
+});
+
+test("open, a row's +N opens the next picture past its tiles, and is only a count when there is none", async () => {
+  const props = rowMarkup(await renderList(PROPS.id), PROPS.id);
+  const tiles = props.slice(0, props.indexOf("data-card-body"));
+  assert.match(
+    tiles,
+    /<button[^>]*aria-label="Show all 5"[^>]*>\+2</,
+    "the sign past the three models opens in the viewer",
+  );
+  const onlyModels = row(step("Carts", [model("a"), model("b"), model("c"), model("d")]));
+  const { BuildsList: List, createElement, renderToStaticMarkup } = await compiled();
+  const restore = installFakeStudio(fakeStudioApi());
+  try {
+    const markup: string = renderToStaticMarkup(
+      createElement(List, {
+        list: { working: [], changes: [onlyModels], leftOut: [] },
+        project: PROJECT,
+        assetJobs: [],
+        runId: "run-1",
+        active: false,
+        result: null,
+        selected: onlyModels.id,
+        onSelect: () => {},
+        onClose: () => {},
+        onLight: () => {},
+        card: null,
+      }),
+    );
+    assert.doesNotMatch(markup, /aria-label="Show all 4"/, "nothing to open: no button that does nothing");
+    assert.match(markup, />\+1</, "the rest are still counted");
+  } finally {
+    restore();
+  }
 });

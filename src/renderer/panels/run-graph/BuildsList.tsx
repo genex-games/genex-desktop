@@ -175,8 +175,8 @@ interface TileActions {
   /** the row's name, the lightbox's caption */
   title: string;
   onLight: Props["onLight"];
-  /** open the row's card, for the +N of a row whose rest are not all pictures */
-  onMore: () => void;
+  /** open the row's card, for the +N of a row whose rest are not all pictures; none once it is open */
+  onMore?: () => void;
 }
 
 /** The lightbox items of a row's tiles: each that has a whole picture, in order. */
@@ -227,17 +227,27 @@ function Tiles({ tiles, actions }: { tiles: readonly Tile[]; actions: TileAction
   const hidden = tiles.length - PICTURES_SHOWN;
   const items = lightItems(tiles, actions.title);
   const allPictures = items.length === tiles.length;
+  // An open row has no card to open: its +N opens the next picture past the tiles, if it has one.
+  const next = tiles.slice(PICTURES_SHOWN).find((tile) => tile.full);
+  const nextAt = next ? items.findIndex((item) => item.still === next.full) : -1;
+  const opens = allPictures || actions.onMore !== undefined || nextAt >= 0;
   const more = (event: MouseEvent): void => {
     event.stopPropagation();
     if (allPictures) actions.onLight(items, PICTURES_SHOWN);
-    else actions.onMore();
+    else if (actions.onMore) actions.onMore();
+    else actions.onLight(items, nextAt);
   };
   return (
     <>
       {tiles.slice(0, PICTURES_SHOWN).map((tile) => (
         <TileView key={tile.key} tile={tile} tiles={tiles} actions={actions} />
       ))}
-      {hidden > 0 ? (
+      {hidden > 0 && !opens ? (
+        <span className={`${PICTURE_CLASS} text-chat-sub text-ink-3`} style={{ boxShadow: IMAGE_OUTLINE }}>
+          {`+${hidden}`}
+        </span>
+      ) : null}
+      {hidden > 0 && opens ? (
         <button
           type="button"
           aria-label={MESSAGE.showAll(tiles.length)}
@@ -294,10 +304,14 @@ function StepPictures({
 /** Where a delivered job's whole picture is read from: the copy Genex kept, the picture in the game, the modeller's render. */
 function jobFull(job: AssetInfo, project: string | null): StillSource | null {
   if (job.picture) return { run: job.picture };
-  const image = firstImage(job);
+  // The picture its tile draws: a delivery the game has a record of is that file, else its first image.
+  const image = job.preview ? deliveredImage(job.preview) : firstImage(job);
   if (image && project) return { project, asset: image, maxPx: LIGHTBOX_PX };
   return blenderRender(job);
 }
+
+/** The file of a delivery the game has a record of, when that file is a picture. */
+const deliveredImage = (preview: ProjectAsset): string | null => (preview.kind === "image" ? preview.file : null);
 
 /** The Assets row's pictures: what the run's asset jobs delivered, newest first. */
 function AssetsPictures({ jobs, actions }: { jobs: AssetInfo[]; actions: TileActions }): JSX.Element | null {
@@ -380,7 +394,8 @@ function useNearScreen(element: RefObject<HTMLElement | null>): boolean {
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) setNear(true);
       },
-      { rootMargin: NEAR_SCREEN_MARGIN },
+      // The rows scroll inside the list, so the margin is measured from its edges, not the window's.
+      { root: target.closest("[data-builds-list]"), rootMargin: NEAR_SCREEN_MARGIN },
     );
     observer.observe(target);
     return () => observer.disconnect();
@@ -397,7 +412,8 @@ function RowPictures({ row, open, ...props }: RowProps & { row: ListRow; open: b
   const actions: TileActions = { project, title: row.title, onLight, onMore: () => onSelect(row.id) };
   if (open) {
     const pictures = (row.step?.assets ?? []).filter((card) => madeKind(card) !== "audio");
-    return pictures.length ? <Tiles tiles={madeTiles(project, pictures)} actions={actions} /> : null;
+    const shown: TileActions = { project, title: row.title, onLight };
+    return pictures.length ? <Tiles tiles={madeTiles(project, pictures)} actions={shown} /> : null;
   }
   return (
     <>

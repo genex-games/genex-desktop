@@ -23,7 +23,7 @@ export type StillSource =
 /** How many pictures stay in memory: a long Builds list's thumbnails and its open card's stills. */
 const STILL_CACHE_MAX = 160;
 /** A read of at most this many pixels on its largest side is a thumbnail, and waits its turn in the lane. */
-const THUMBNAIL_MAX_PX = 640;
+const THUMBNAIL_MAX_PX = 256;
 /** How many thumbnails main is asked for at once. */
 const THUMBNAIL_LANE_WIDTH = 4;
 /** The lane small pictures are read in; a full-size or unsized read skips it. */

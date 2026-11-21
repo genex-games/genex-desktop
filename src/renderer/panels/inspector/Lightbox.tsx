@@ -15,6 +15,7 @@ import type { LightItem } from "./types.ts";
 
 const MESSAGE = {
   loading: t("Loading…"),
+  missing: t("Image preview is unavailable."),
   previous: t("Previous (←)"),
   next: t("Next (→)"),
   position: (at: number, count: number) => t("{at} of {count}", { at, count }),
@@ -62,11 +63,14 @@ export function Lightbox({
           draggable={false}
           className="lightbox-media block max-h-[calc(100vh-176px)] max-w-[calc(100vw-160px)] object-contain"
         />
-      ) : (
+      ) : null}
+      {!src && loaded.loading ? (
         <Pending label={MESSAGE.loading}>
           <Skeleton {...PENDING_SIZE} />
         </Pending>
-      )}
+      ) : null}
+      {/* A read that answered nothing (a render since removed) says so instead of loading for ever. */}
+      {!src && !loaded.loading ? <p className="lightbox-bar text-chat-sub text-ink-2">{MESSAGE.missing}</p> : null}
       <div className="lightbox-bar">
         {several ? (
           <button

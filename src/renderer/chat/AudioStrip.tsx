@@ -329,8 +329,9 @@ function thinPeaks(peaks: readonly number[], count: number): number[] {
 }
 
 /**
- * A sound as a Builds row's picture: its shape at rest; under the pointer, or while it plays, its
- * play button and clock. Pressing it plays in place (the row does not open); pressing again stops.
+ * A sound as a Builds row's picture: its shape at rest; under the pointer, its play button and
+ * length; while it plays, its shape filling as it goes, over its clock. Pressing it plays in place
+ * (the row does not open); pressing again pauses.
  */
 export function AudioThumb({ project, asset, className }: { project: string; asset: ProjectAsset; className: string }) {
   const host = useRef<HTMLDivElement>(null);

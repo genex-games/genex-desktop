@@ -243,21 +243,17 @@ export interface WorkerStill {
   loading: boolean;
 }
 
-/**
- * Where a worker's picture is read from, when it is a still, at most `maxPx` on its largest side
- * (none: the whole picture, as the lightbox shows it).
- */
+/** Where a worker's picture is read from, when it is a still, at most `maxPx` on its largest side. */
 export function workerStillSource(
   project: string | null,
   picture: WorkerPicture | undefined,
   reviewed: Shot | null,
-  maxPx: number | undefined = NODE_PICTURE_PX,
+  maxPx: number = NODE_PICTURE_PX,
 ): StillSource | null {
-  const size = maxPx === undefined ? {} : { maxPx };
-  if (picture?.source === PictureSource.File) return project ? { project, asset: picture.file, ...size } : null;
+  if (picture?.source === PictureSource.File) return project ? { project, asset: picture.file, maxPx } : null;
   // A render, a kept copy and the merged build are files under the run's folder.
-  if (picture && "path" in picture) return { run: picture.path, ...size };
-  return reviewed ? { run: reviewed.path, ...size } : null;
+  if (picture && "path" in picture) return { run: picture.path, maxPx };
+  return reviewed ? { run: reviewed.path, maxPx } : null;
 }
 
 /**
