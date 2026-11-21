@@ -131,8 +131,9 @@ export function LoadingState({
   const chevronClass = `chat-chevron ${open ? "rotate-90" : ""} ${disclosure.leaving ? "chat-chevron-leaving" : ""}`;
   // Waiting on the user has no clock and no loader: they close when the wait begins and open again
   // when work resumes, so the words beside them slide. The words and the clock shimmer together.
-  // The line is one element whether or not it opens details: the press that opens them lies over
-  // it, so the loader, the words and their shimmer are never drawn anew when details come or go.
+  // The line is one element whether or not it opens details: the press that opens them lies under
+  // its parts (theme.css `.chat-status-press`), so the loader, the words and their shimmer are never
+  // drawn anew when details come or go.
   return (
     <div ref={root} data-chat-status data-loader-variant={variant} className="min-w-0 text-status">
       <div className="flex min-w-0 items-center">
@@ -143,7 +144,7 @@ export function LoadingState({
               aria-expanded={open}
               aria-labelledby={statusId}
               onClick={() => setOpen((value) => !value)}
-              className="absolute inset-0 rounded-[inherit]"
+              className="chat-status-press"
             />
           )}
           <span aria-hidden className="chat-status-orb-slot" data-gone={held.waiting || undefined}>

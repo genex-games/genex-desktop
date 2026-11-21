@@ -4577,6 +4577,22 @@ button.chat-header-title:hover {
   line-height: 18px;
   letter-spacing: -0.1px;
 }
+/* The status line's press fills the line under its parts (ui/LoadingState.tsx): they stay in front
+   of its focus fill, even while they fade, and let every click through to it. */
+.chat-status-press {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+}
+[data-chat-status] .chat-disclosure > :not(.chat-status-press) {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+}
+[data-chat-status] .chat-disclosure:has(> .chat-status-press:focus-visible) {
+  color: var(--ink);
+}
 .chat-status-words {
   display: flex;
   align-items: center;
