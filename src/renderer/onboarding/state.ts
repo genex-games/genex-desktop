@@ -295,16 +295,25 @@ interface LocalRecommendation<Pick extends { model: string; engine?: string }> {
 }
 
 /**
- * The model the local screen offers: the recommendation's Best fit, or, while Ollama does not
- * answer, the first pick that installs without it (Bonsai). The screen has no Install Ollama
- * step, so an Ollama Best fit's Download could only fail there; Settings still ranks it first.
+ * The model the local screen offers: one whose download runs, else an installed pick (the
+ * recommendation's Best fit first), else the Best fit, or, while Ollama does not answer, the first
+ * pick that installs without it (Bonsai). The screen has no Install Ollama step, so an Ollama Best
+ * fit's Download could only fail there; Settings still ranks it first. Holding a downloading or
+ * installed pick keeps the row on its model when Ollama starts or stops answering.
  */
 export function onboardingPick<Pick extends { model: string; engine?: string }>(
   recommendation: LocalRecommendation<Pick>,
   ollamaMissing: boolean,
+  held: { pulling: string | null; installed: (model: string) => boolean } = NOTHING_HELD,
 ): Pick | null {
-  const best =
-    recommendation.picks.find((pick) => pick.model === recommendation.defaultModel) ?? recommendation.picks[0] ?? null;
+  const { picks } = recommendation;
+  const best = picks.find((pick) => pick.model === recommendation.defaultModel) ?? picks[0] ?? null;
+  const kept =
+    picks.find((pick) => pick.model === held.pulling) ??
+    [best, ...picks].find((pick) => pick !== null && held.installed(pick.model));
+  if (kept) return kept;
   if (!best || best.engine || !ollamaMissing) return best;
-  return recommendation.picks.find((pick) => pick.engine) ?? best;
+  return picks.find((pick) => pick.engine) ?? best;
 }
+
+const NOTHING_HELD = { pulling: null, installed: () => false } as const;

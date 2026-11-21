@@ -632,10 +632,14 @@ function useCodexLogin(): CodexLoginState | null {
 type ModelPick = NonNullable<Hardware["recommendation"]>["picks"][number];
 
 /** The Best fit this screen can install: an Ollama one only while Ollama answers (`onboardingPick`). */
-function bestFit(hardware: Hardware | null, ollamaMissing: boolean): ModelPick | null {
+function bestFit(
+  hardware: Hardware | null,
+  ollamaMissing: boolean,
+  held: Parameters<typeof onboardingPick>[2],
+): ModelPick | null {
   const recommendation = hardware?.recommendation;
   if (!recommendation) return null;
-  return onboardingPick(recommendation, ollamaMissing);
+  return onboardingPick(recommendation, ollamaMissing, held);
 }
 
 /** A pick's name as the row shows it, with its variant when it has one. */
@@ -727,11 +731,10 @@ function useLocalModel(engines: EngineDescriptor[], onEnginesRefresh: () => void
       });
   }, []);
   const ollama = () => engines.find((engine) => engine.id === EngineId.Ollama);
-  const pick = bestFit(hardware, needsOllama(ollama()));
-  const installed = Boolean(
-    pick &&
-      engines.some((engine) => engine.models.some((model) => canonicalModel(model.id) === canonicalModel(pick.model))),
-  );
+  const isInstalled = (id: string) =>
+    engines.some((engine) => engine.models.some((model) => canonicalModel(model.id) === canonicalModel(id)));
+  const pick = bestFit(hardware, needsOllama(ollama()), { pulling, installed: isInstalled });
+  const installed = Boolean(pick && isInstalled(pick.model));
   const download = async () => {
     if (!pick) return;
     setPulling(pick.model);
@@ -741,7 +744,7 @@ function useLocalModel(engines: EngineDescriptor[], onEnginesRefresh: () => void
       model: pick.model,
       surface: ProviderSurface.Onboarding,
       engine: pick.engine,
-      source: DownloadSource.BestFit,
+      source: pick.model === hardware?.recommendation?.defaultModel ? DownloadSource.BestFit : DownloadSource.Pick,
       resumed: false,
       sizeGb: pick.sizeGb,
       ollama: ollama(),

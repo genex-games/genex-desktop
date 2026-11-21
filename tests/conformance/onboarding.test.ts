@@ -647,6 +647,27 @@ describe("the local screen's Best fit", () => {
     assert.equal(onboardingPick(big, true)?.model, "bonsai-2:27b-pq2_0");
   });
 
+  it("keeps the model whose download runs, or that is installed, when Ollama starts or stops answering", () => {
+    // Bonsai downloading while Ollama comes up must not turn the row into Inkling's Download.
+    const none = (_model: string) => false;
+    assert.equal(
+      onboardingPick(big, false, { pulling: "bonsai-2:27b-pq2_0", installed: none })?.model,
+      "bonsai-2:27b-pq2_0",
+    );
+    const bonsaiInstalled = (model: string) => model === "bonsai-2:27b-pq2_0";
+    assert.equal(
+      onboardingPick(big, false, { pulling: null, installed: bonsaiInstalled })?.model,
+      "bonsai-2:27b-pq2_0",
+    );
+    // An Inkling pull keeps its row when an Ollama probe times out mid-download.
+    assert.equal(
+      onboardingPick(big, true, { pulling: "inkling-2-mini:26b-a5b", installed: none })?.model,
+      "inkling-2-mini:26b-a5b",
+    );
+    const both = () => true;
+    assert.equal(onboardingPick(big, true, { pulling: null, installed: both })?.model, "inkling-2-mini:26b-a5b");
+  });
+
   it("keeps the Ollama Best fit when no pick installs without Ollama", () => {
     const ollamaOnly = recommendation([{ model: "qwen3.5:122b" }, { model: "devstral-2:123b" }]);
     assert.equal(onboardingPick(ollamaOnly, true)?.model, "qwen3.5:122b");
