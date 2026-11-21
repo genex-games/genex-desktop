@@ -4096,6 +4096,8 @@ export default {
   "This model is unavailable. Check the connection or choose another model.":
     "Эта модель недоступна. Проверь подключение или выбери другую модель.",
   "This model isn’t available right now": "Эта модель сейчас недоступна",
+  "This model needs more memory than this computer has free, so resending won't help. Pick a smaller model, or close other apps and try again.":
+    "Этой модели нужно больше памяти, чем свободно на компьютере, поэтому повторная отправка не поможет. Выбери модель поменьше или закрой другие приложения и попробуй снова.",
   "This page isn't from the sign-in Genex started.": "Эта страница не от того входа, который начал Genex.",
   "This paste has {count, plural, other {# servers}}. Pick one:":
     "Во вставленном тексте {count, plural, one {# сервер} few {# сервера} many {# серверов} other {# сервера}}. Выбери один:",
@@ -5097,6 +5099,8 @@ export default {
   'the lead put a worker on "{task}"': "главный агент поручил помощнику «{task}»",
   'the lead put a worker on "{task}" for {minutes}': "главный агент поручил помощнику «{task}» на {minutes}",
   "the model could not be reached": "не удалось связаться с моделью",
+  "the model needs more memory than this computer has free — close other apps or pick a smaller model, then press Resume":
+    "модели нужно больше памяти, чем свободно на компьютере — закрой другие приложения или выбери модель поменьше, потом нажми «Продолжить»",
   "the model provider hit your plan's session limit": "у провайдера моделей исчерпан лимит сессии твоего тарифа",
   "the model provider hit your plan's usage cap": "у провайдера моделей исчерпан лимит твоего тарифа",
   "the model provider is down": "провайдер моделей недоступен",

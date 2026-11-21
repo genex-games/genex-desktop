@@ -2420,6 +2420,25 @@ describe("a provider lost mid-run", () => {
     }
   });
 
+  // Live, 2026-11-21: a lead on Ollama's Inkling 2 Mini ran out of the Mac's GPU memory; the run
+  // took it for an outage and would have waited half an hour on a model that can never fit.
+  it("D8b. a lead whose local model ran out of this computer's memory pauses the run at once, never waiting it out", async () => {
+    const w = clockNight();
+    workerEndsSoon(w);
+    const { talk, calls } = w.lead((turn) => {
+      if (turn === 1) return { ok: true, sessionId: "lead-1" };
+      throw new EngineError(
+        "out_of_memory",
+        "ollama",
+        "inkling-2-mini needs more memory than this computer has free (engine error 500: mlx runner failed: Insufficient Memory)",
+      );
+    });
+    const outcome = await w.run(talk);
+    assert.equal(calls.length, 2, "asked once, never again on the outage ladder");
+    assert.equal(outcome.wrapCause, null, "no wrap-up started");
+    assert.equal(w.state.limit?.kind, "out_of_memory");
+  });
+
   it("D9. a lead turn the provider's outage ended is not a failed turn: the run pauses, it does not wrap up", async () => {
     const w = clockNight();
     workerEndsSoon(w);
@@ -4347,6 +4366,39 @@ describe("how a chat message's turn ended", () => {
     const log = await waitForLog(rig.core, (l) => l.some((e) => e.data.type === "turn_ended"), 30_000, "turn_ended");
     const ended = log.find((e) => e.data.type === "turn_ended")!.data as { metadata?: { outcome?: string } };
     assert.equal(ended.metadata?.outcome, "engine_limited", "the turn's own record says it was cut short");
+  });
+
+  // Live, 2026-11-21: Inkling 2 Mini on a Mac's Ollama ran out of Metal's memory, and the chat said
+  // "ollama is unreachable … wait a bit and resend", which can never help.
+  it("a chat turn whose local model ran out of memory says so in Genex's words, not that the engine is unreachable", async () => {
+    const rig = await startRig();
+    rigs.push(rig);
+    rig.core.engines.register({
+      id: "fake-direct",
+      label: "Fake direct",
+      kind: "direct",
+      status: async () => ({ code: "ready", detail: "" }),
+      models: async () => [],
+      complete: async () => {
+        throw new EngineError(
+          "out_of_memory",
+          "fake-direct",
+          "inkling-2-mini needs more memory than this computer has free (mlx runner failed: Insufficient Memory)",
+        );
+      },
+    });
+    await rig.core.sendUserMessage("make a pond", { engine: "fake-direct" });
+    const log = await waitForLog(rig.core, (l) => l.some((e) => e.data.type === "turn_ended"), 30_000, "turn_ended");
+    const said = log.flatMap((e) => (e.data.type === "messages" ? [e.data] : [])).filter((d) => d.genex_line);
+    assert.deepEqual(
+      said.map((d) => d.genex_line),
+      ["model_out_of_memory"],
+      "the app shows its own words for it, in the person's language",
+    );
+    const replies = log.flatMap((e) => (e.data.type === "messages" ? e.data.messages : [])).map((m) => m.content);
+    assert.ok(!replies.some((text) => /unreachable|wait a bit/i.test(String(text))), replies.join(" | "));
+    const ended = log.find((e) => e.data.type === "turn_ended")!.data as { metadata?: { outcome?: string } };
+    assert.equal(ended.metadata?.outcome, "engine_limited");
   });
 });
 

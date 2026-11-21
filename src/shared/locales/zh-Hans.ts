@@ -3876,6 +3876,8 @@ export default {
   "This model is unavailable. Check the connection or choose another model.":
     "此模型不可用。请检查连接或选择其他模型。",
   "This model isn’t available right now": "此模型暂时不可用",
+  "This model needs more memory than this computer has free, so resending won't help. Pick a smaller model, or close other apps and try again.":
+    "这个模型需要的内存比这台电脑剩余的内存多，所以重新发送也没用。请换一个更小的模型，或者关掉其他应用后再试。",
   "This page isn't from the sign-in Genex started.": "此页面不属于 Genex 发起的登录。",
   "This paste has {count, plural, other {# servers}}. Pick one:":
     "粘贴内容中有 {count, plural, other {# 个服务器}}。选一个：",
@@ -4839,6 +4841,8 @@ export default {
   'the lead put a worker on "{task}"': "主智能体安排了一个助手做“{task}”",
   'the lead put a worker on "{task}" for {minutes}': "主智能体安排了一个助手做“{task}”，时长 {minutes}",
   "the model could not be reached": "无法连接到模型",
+  "the model needs more memory than this computer has free — close other apps or pick a smaller model, then press Resume":
+    "模型需要的内存比这台电脑剩余的内存多——请关掉其他应用或换一个更小的模型，然后点“继续”",
   "the model provider hit your plan's session limit": "模型提供方提示你套餐的会话额度已用完",
   "the model provider hit your plan's usage cap": "模型提供方提示你套餐的使用额度已用完",
   "the model provider is down": "模型提供方服务中断",

@@ -1,18 +1,22 @@
 # Managed local models
 
-Studio offers Bonsai 2 27B on Apple Silicon Macs with at least 16 GiB RAM. PQ2_0 is the
-Best fit on Macs up to 47 GB and the first ready choice in chat; PTQ1_0 is the smaller
-alternative. From 48 GB, Best fit on Apple Silicon is Inkling 2 Mini (`inkling-2-mini:26b-a5b`,
-through Ollama 0.40.17 or later, vision and tools), with Bonsai PQ2_0 next up to 96 GB. While
-Ollama does not answer, the welcome's local screen offers the first pick that installs without it
-(Bonsai), since that screen cannot install Ollama; Settings keeps the ranking. A model the running
-Ollama is too old to pull (the catalog's `requiresOllama`, such as Inkling before 0.40.17) is never
-a pick there or in Settings; it stays under More models. The welcome screen keeps a model that is
-downloading or already installed from the picks. Below 48 GB Inkling
-is not offered: on a 32 GB Mac it ran out of GPU memory before answering Genex's first prompt,
-although the fit rule below estimates that it fits. Ollama ships Inkling only as an MLX build, so
-Windows and Linux keep their own picks until Ollama runs it there. Existing explicit model
-selections remain selected.
+Studio offers Bonsai 2 27B on Apple Silicon Macs with at least 16 GiB RAM. PQ2_0 is the Best fit on
+Macs up to 47 GB; PTQ1_0 is the smaller alternative. From 48 GB, Best fit on Apple Silicon is
+Inkling 2 Mini (`inkling-2-mini:26b-a5b`, through Ollama 0.40.17 or later, vision and tools), with
+Bonsai PQ2_0 next up to 96 GB. While Ollama does not answer, the welcome's local screen offers the
+first pick that installs without it (Bonsai), since that screen cannot install Ollama; Settings
+keeps the ranking. A model the running Ollama is too old to pull (the catalog's `requiresOllama`,
+such as Inkling before 0.40.17) is never a pick there or in Settings; it stays under More models.
+The welcome screen keeps a model that is downloading or already installed from the picks. Below 48
+GB Inkling is not offered: on a 32 GB Mac it ran out of GPU memory before answering Genex's first
+prompt, although the fit rule below estimates that it fits. Ollama ships Inkling only as an MLX
+build, so Windows and Linux keep their own picks until Ollama runs it there.
+
+A local model leads the automatic choice, so a chat with nothing else to run opens on it. A model
+that finishes downloading never replaces the model a chat already shows: the chat keeps it as its
+pick, which a game chat or Home also hands to new games (`keptShownModel`), and the new model joins
+the picker. Only the download counts; Ollama starting or a list growing as the app opens moves
+nothing. Explicit picks always remain selected.
 
 Inkling on a PC today goes through a model server rather than Ollama: Unsloth's GGUF builds
 (`unsloth/Inkling-2-Mini-GGUF`, 8 to 23 GB) run on Unsloth's llama.cpp prebuilts, and on

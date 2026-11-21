@@ -174,6 +174,8 @@ export const EngineFailureKind = {
   Aborted: "aborted",
   /** A completion outlived its ceiling. Distinct from "aborted": nobody asked for this stop. */
   Timeout: "timeout",
+  /** A model on the person's own computer needs more memory than it has free: sending again never fits it. */
+  OutOfMemory: "out_of_memory",
   Other: "other",
 } as const;
 export type EngineFailureKind = (typeof EngineFailureKind)[keyof typeof EngineFailureKind];

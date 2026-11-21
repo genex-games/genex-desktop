@@ -1084,6 +1084,11 @@ async function handleDelegateFailure(
     await sayInTurn(ctx, turnId, MESSAGE.outOfUsage(engine, err?.message));
     return { stopped: TurnStop.EngineLimited, round: 0, engine };
   }
+  // A local session's model too big for this computer's free memory: a resend meets the same wall.
+  if (kind === EngineFailure.OutOfMemory) {
+    await sayGenexLine(ctx, turnId, GenexLine.ModelOutOfMemory);
+    return { stopped: TurnStop.EngineLimited, round: 0, engine };
+  }
   if (!canFallBack(kind, fallbacks)) throw err;
   return fallBackOrStop(ctx, options, project, fallbacks[0], kind, err?.message);
 }

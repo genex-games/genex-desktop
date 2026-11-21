@@ -4219,6 +4219,8 @@ export default {
   "This model is unavailable. Check the connection or choose another model.":
     "Dieses Modell ist nicht verfügbar. Prüf die Verbindung oder wähl ein anderes Modell.",
   "This model isn’t available right now": "Dieses Modell ist gerade nicht verfügbar",
+  "This model needs more memory than this computer has free, so resending won't help. Pick a smaller model, or close other apps and try again.":
+    "Dieses Modell braucht mehr Speicher, als auf diesem Computer frei ist, deshalb hilft erneutes Senden nicht. Wähl ein kleineres Modell oder schließ andere Apps und versuch es noch mal.",
   "This page isn't from the sign-in Genex started.":
     "Diese Seite gehört nicht zu der Anmeldung, die Genex gestartet hat.",
   "This paste has {count, plural, other {# servers}}. Pick one:":
@@ -5240,6 +5242,8 @@ export default {
   'the lead put a worker on "{task}" for {minutes}':
     "der Hauptagent hat einen Helfer für {minutes} auf „{task}“ angesetzt",
   "the model could not be reached": "das Modell war nicht erreichbar",
+  "the model needs more memory than this computer has free — close other apps or pick a smaller model, then press Resume":
+    "das Modell braucht mehr Speicher, als auf diesem Computer frei ist – schließ andere Apps oder wähl ein kleineres Modell, dann drück „Fortsetzen“",
   "the model provider hit your plan's session limit": "beim Modellanbieter ist das Sitzungslimit deines Abos erreicht",
   "the model provider hit your plan's usage cap": "beim Modellanbieter ist das Nutzungslimit deines Abos erreicht",
   "the model provider is down": "der Modellanbieter ist ausgefallen",

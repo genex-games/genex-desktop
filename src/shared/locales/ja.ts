@@ -4127,6 +4127,8 @@ export default {
   "This model is unavailable. Check the connection or choose another model.":
     "このモデルは使えません。接続を確認するか、別のモデルを選んでください。",
   "This model isn’t available right now": "このモデルは今使えません",
+  "This model needs more memory than this computer has free, so resending won't help. Pick a smaller model, or close other apps and try again.":
+    "このモデルには、このコンピューターの空きメモリより多くのメモリが必要なので、送り直しても解決しません。小さいモデルを選ぶか、ほかのアプリを閉じてからもう一度試してください。",
   "This page isn't from the sign-in Genex started.": "このページは、Genexが開始したサインインのものではありません。",
   "This paste has {count, plural, other {# servers}}. Pick one:":
     "貼り付けた内容に{count, plural, other {#個のサーバー}}があります。1つ選んでください：",
@@ -5131,6 +5133,8 @@ export default {
   'the lead put a worker on "{task}"': "メインエージェントがワーカーに「{task}」を任せました",
   'the lead put a worker on "{task}" for {minutes}': "メインエージェントがワーカーに「{task}」を{minutes}任せました",
   "the model could not be reached": "モデルに接続できませんでした",
+  "the model needs more memory than this computer has free — close other apps or pick a smaller model, then press Resume":
+    "モデルに必要なメモリがこのコンピューターの空きメモリより多いです。ほかのアプリを閉じるか小さいモデルを選んでから「再開」を押してください",
   "the model provider hit your plan's session limit": "モデルプロバイダーでプランのセッション上限に達しました",
   "the model provider hit your plan's usage cap": "モデルプロバイダーでプランの使用上限に達しました",
   "the model provider is down": "モデルプロバイダーが停止しています",

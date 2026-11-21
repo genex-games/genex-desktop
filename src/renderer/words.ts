@@ -886,6 +886,9 @@ const PAUSED_ON_WORDS = {
     "the model provider stopped accepting this account — sign in again (or ask your admin to turn access back on), then press Resume",
   ),
   [EngineFailureKind.Unavailable]: t("the model provider stayed down — Resume picks the build up where it stopped"),
+  [EngineFailureKind.OutOfMemory]: t(
+    "the model needs more memory than this computer has free — close other apps or pick a smaller model, then press Resume",
+  ),
 } as const satisfies Partial<Record<EngineFailureKind, string>>;
 
 /** The paused run's reason: the typed provider failure's words when there are some, else the close's. */
@@ -2176,6 +2179,10 @@ export const GENEX_LINE_WORDS = {
   [GenexLine.StoppedWaiting]: () => t("Stopped waiting. Send a message to go on once it's ready."),
   [GenexLine.StoppedBeforeTurn]: () => t("Stopped before it started — nothing was done. Send a message to go on."),
   [GenexLine.StoppedBeforeBuild]: () => t("Stopped before the build started — nothing was built."),
+  [GenexLine.ModelOutOfMemory]: () =>
+    t(
+      "This model needs more memory than this computer has free, so resending won't help. Pick a smaller model, or close other apps and try again.",
+    ),
 } as const satisfies Record<GenexLine, () => string>;
 
 /** The fixed lines, labels and prefills `chat-entries.ts` writes into the transcript. */

@@ -34,6 +34,8 @@ export const EngineFailure = {
   Aborted: "aborted",
   /** A completion outlived its ceiling. Distinct from "aborted": nobody asked for this stop. */
   Timeout: "timeout",
+  /** A model on the person's own computer needs more memory than it has free: sending again never fits it. */
+  OutOfMemory: "out_of_memory",
   Other: "other",
 } as const;
 export type EngineFailure = (typeof EngineFailure)[keyof typeof EngineFailure];
@@ -98,8 +100,13 @@ const TRANSIENT =
 const NEVER_TRANSIENT =
   /weekly limit|usage limit|hit your limit|out of usage|resets? (at|on)\b|unauthori[sz]ed|forbidden|\b401\b|\b403\b|invalid api key|not logged in|sign in|session expired/i;
 
-/** Failures no wait fixes: a usage cap, a sign-in, a stop somebody asked for. */
-const NEVER_TRANSIENT_KINDS = new Set<unknown>([EngineFailure.UsageLimit, EngineFailure.Auth, EngineFailure.Aborted]);
+/** Failures no wait fixes: a usage cap, a sign-in, a stop somebody asked for, a model too big for this computer. */
+const NEVER_TRANSIENT_KINDS = new Set<unknown>([
+  EngineFailure.UsageLimit,
+  EngineFailure.Auth,
+  EngineFailure.Aborted,
+  EngineFailure.OutOfMemory,
+]);
 
 /** True for an error (or its message) that names a provider hiccup, not a fault of the build. */
 export function isTransientProviderError(errorOrText: unknown): boolean {
