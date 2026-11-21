@@ -115,6 +115,7 @@ describe("a local model out of the computer's memory", () => {
       [503, '{"error":"loading model"}', "unavailable"],
       [500, "error parsing tool call", "unavailable"],
       [400, '{"error":"memory is a feature of this model"}', "other"],
+      [500, '{"error":"failed to allocate a port for the runner"}', "unavailable"],
     ];
     for (const [status, body, kind] of otherwise)
       assert.equal(classifyLocalFailure("ollama", status, body).kind, kind, body);

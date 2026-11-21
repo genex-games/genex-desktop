@@ -551,7 +551,7 @@ const HTTP_BODY_EXCERPT_CHARS = 200;
  * allocations that failed, and llama.cpp's own ("failed to allocate").
  */
 const OUT_OF_MEMORY =
-  /insufficient memory|out of (?:device |GPU |video )?memory|OutOfMemory|OutOfDeviceMemory|requires more (?:system |video |GPU )?memory|more (?:system |video |GPU )?memory than (?:is )?available|(?:unable|failed) to allocate|(?:cuda|hip)Malloc failed/i;
+  /insufficient memory|out of (?:device |GPU |video )?memory|OutOfMemory|OutOfDeviceMemory|requires more (?:system |video |GPU )?memory|more (?:system |video |GPU )?memory than (?:is )?available|(?:unable|failed) to allocate (?:[\w-]+ ){0,2}(?:buffers?|memory)|(?:cuda|hip)Malloc failed/i;
 
 /**
  * A local model that ran out of the computer's memory, or null when `said` names another failure.

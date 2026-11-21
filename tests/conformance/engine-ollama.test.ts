@@ -542,6 +542,25 @@ describe("ollama engine completions (real pi-ai over real HTTP)", () => {
     );
   });
 
+  it("reads a malformed tool call that quotes memory words as the tool call, not as memory", async () => {
+    const quoting = toolCallParseFailure("throw new Error('Insufficient memory: failed to allocate buffer')");
+    const server = await fake({ replies: [quoting, quoting, quoting] });
+    await assert.rejects(
+      () =>
+        new OllamaEngine({ host: server.host }).complete({
+          model: "gpt-oss:20b",
+          messages: [{ role: "user", content: "make a platformer" }],
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof EngineError);
+        assert.equal(err.kind, EngineFailureKind.Other, "the model's own words are no memory failure");
+        assert.match(err.message, /tool call/i);
+        return true;
+      },
+    );
+    assert.equal(server.requests.filter((r) => r.path.startsWith("/v1/chat/completions")).length, 3, "sent again");
+  });
+
   it("says Ollama is not running when nothing answers, as a failure a fallback can take over", async () => {
     const server = await fake();
     const host = server.host;
@@ -728,13 +747,15 @@ describe("live check against the user's Ollama", () => {
 });
 
 /** Ollama's 500 for a model that wrote plain reasoning where its template expected a tool call. */
-function toolCallParseFailure(): { httpStatus: number; body: string } {
+function toolCallParseFailure(raw = "The user wants a modern 3-D platformer. We need to interpret the request"): {
+  httpStatus: number;
+  body: string;
+} {
   return {
     httpStatus: 500,
     body: JSON.stringify({
       error: {
-        message:
-          "error parsing tool call: raw='The user wants a modern 3-D platformer. We need to interpret the request', err=invalid character 'T' looking for beginning of value",
+        message: `error parsing tool call: raw='${raw}', err=invalid character 'T' looking for beginning of value`,
       },
     }),
   };

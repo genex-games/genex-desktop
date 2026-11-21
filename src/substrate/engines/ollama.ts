@@ -365,11 +365,10 @@ const MALFORMED_TOOL_CALLS = new WeakSet<EngineError>();
 /**
  * An HTTP failure; a 404 is Ollama saying it does not have the model, a tool call it could not
  * parse is the model's output, and a model that does not fit this computer's memory is the model's
- * size, not the server failing, whatever status they came back with.
+ * size, not the server failing, whatever status they came back with. The tool call is asked first:
+ * its error quotes what the model wrote, which may say anything, memory included.
  */
 function httpFailure(engineId: string, status: number, body: string, model: string): EngineError {
-  const outOfMemory = outOfMemoryFailure(engineId, body, model);
-  if (outOfMemory) return outOfMemory;
   if (status === HTTP_NOT_FOUND && model)
     return new EngineError(EngineFailureKind.Unavailable, engineId, MESSAGE.ModelMissing(model));
   if (TOOL_CALL_PARSE_FAILURE.test(body)) {
@@ -377,7 +376,7 @@ function httpFailure(engineId: string, status: number, body: string, model: stri
     MALFORMED_TOOL_CALLS.add(failure);
     return failure;
   }
-  return classifyHttpFailure(engineId, status, body);
+  return outOfMemoryFailure(engineId, body, model) ?? classifyHttpFailure(engineId, status, body);
 }
 
 // ── the engine ──────────────────────────────────────────────────────────────────────────────
