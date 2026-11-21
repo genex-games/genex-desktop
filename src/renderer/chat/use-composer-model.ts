@@ -562,10 +562,11 @@ function useKeptShownModel(
     const shown = previous && previous.thread === threadId ? previous.selected : null;
     const kept = keptShownModel({ ...now, shown, downloaded: recentDownloads(finished.current, Date.now()) });
     last.current = { thread: threadId, selected: kept ?? now.selected };
-    // A download is weighed once, when its model is first listed: a later return moves nothing.
+    // A download is weighed once, when its model is first listed usable (a model whose tools
+    // Ollama could not read yet is listed disabled): a later return moves nothing.
     for (const choice of now.choices) {
       const listed = parseModelKey(choice.key);
-      if (isLocalEngine(listed.engine)) finished.current.delete(canonicalModel(listed.model));
+      if (isLocalEngine(listed.engine) && !choice.disabled) finished.current.delete(canonicalModel(listed.model));
     }
     if (!kept) return;
     setModelKey(kept);
