@@ -437,16 +437,16 @@ describe("a model that finishes downloading while a chat shows another", () => {
   const downloaded: EngineDescriptor = { ...local, models: [model("inkling")] };
   const view = (engines: EngineDescriptor[], modelKey: string | null = null) =>
     resolveComposerModel({ studio: false, engines, modelKey, effort: null });
-  /** The chat showed `before`'s choice, having listed every model in `before` and `earlier`. */
+  /** The chat showed `before`'s choice; `downloads` finished while it was open; the list is now `after`. */
   const kept = (
     before: EngineDescriptor[],
     after: EngineDescriptor[],
     modelKey: string | null = null,
-    earlier: EngineDescriptor[] = [],
+    downloads: string[] = ["inkling"],
   ) => {
     const { selected, choices } = view(after, modelKey);
-    const seen = new Set([...toChoices(earlier), ...view(before).choices].map((choice) => choice.key));
-    return keptShownModel({ modelKey, shown: view(before).selected, seen, selected, choices });
+    const downloaded = new Set(downloads.map((name) => (name.includes(":") ? name : `${name}:latest`)));
+    return keptShownModel({ modelKey, shown: view(before).selected, downloaded, selected, choices });
   };
 
   it("keeps the model the chat shows, so the new one only joins the picker", () => {
@@ -480,19 +480,25 @@ describe("a model that finishes downloading while a chat shows another", () => {
     assert.equal(kept([noModels, claude], [downloaded, gone]), null, "a model that no longer runs is not kept");
   });
 
-  it("holds nothing when no new local model arrived", () => {
+  it("moves nothing for a list that grows without a download", () => {
     const both = { ...local, models: [model("qwen")] };
     assert.equal(kept([both, claude], [both, claude]), null);
     assert.equal(kept([claude], [codex]), null, "a provider that left takes its model along");
     const stopped = { ...both, status: { code: "not_running", detail: "" } } as EngineDescriptor;
     assert.equal(view([stopped, claude]).selected, "claude-code::default", "while Ollama is down, Claude stands in");
-    assert.equal(
-      kept([stopped, claude], [both, claude], null, [both, claude]),
-      null,
-      "a model listed before Ollama stopped is no newcomer when it comes back",
-    );
+    assert.equal(kept([stopped, claude], [both, claude], null, []), null, "Ollama coming back is not a download");
+    assert.equal(kept([noModels, claude], [both, claude]), null, "a model listed late as the app starts is not one");
     assert.equal(view([codex, claude]).selected?.split("::")[0], "codex", "a provider listed first leads");
-    assert.equal(kept([claude], [codex, claude]), null, "a subscription signing in is not a download");
+    assert.equal(
+      kept([claude], [codex, claude], null, ["default"]),
+      null,
+      "a subscription signing in is not a download",
+    );
+  });
+
+  it("knows a download by its name, with or without Ollama's latest tag", () => {
+    const tagged: EngineDescriptor = { ...local, models: [model("qwen3:latest")] };
+    assert.equal(kept([noModels, claude], [tagged, claude], null, ["qwen3"]), "claude-code::default");
   });
 });
 

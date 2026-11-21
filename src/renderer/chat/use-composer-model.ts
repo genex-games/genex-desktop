@@ -34,6 +34,9 @@ import { ThreadKind } from "../../shared/event-log.ts";
 import { ModelCatalogState } from "../../shared/model-catalog.ts";
 import { EngineKind, EngineStatusCode, splitsRoles } from "../../shared/engine-descriptor.ts";
 import { isLocalEngine, isMetered } from "../../shared/providers.ts";
+import { InstallPhase, ModelPullStatus } from "../../shared/model-install.ts";
+import { UiEvent } from "../../shared/ui-events.ts";
+import { canonicalModel } from "../onboarding/state.ts";
 import { modelKey as keyOf, parseModelKey } from "../model-key.ts";
 import type { ComposerSendOptions } from "../../shared/composer.ts";
 import type { ComposerExtras, ComposerModelProps, ModelChoice, RoleRecord } from "../ui/PromptBar.tsx";
@@ -300,31 +303,42 @@ export function pickReplaced(input: {
 }
 
 /**
- * The model a chat with no pick of its own keeps when a local model new to this session (a finished
- * download, a local server that started) would lead the automatic order instead: the one it
- * showed at its last render (`shown`), while that one still runs on a provider the studio may
- * choose by itself. The new model joins the picker; it takes the chat only when nothing else could run. A
- * model listed earlier in the session (Ollama coming back after a restart) is no newcomer, and a
- * subscription's own list changing is not a download. Null when nothing needs keeping.
+ * The model a chat with no pick of its own keeps when a local model that just finished
+ * downloading would lead the automatic order instead: the one it showed at its last render
+ * (`shown`), while that one still runs on a provider the studio may choose by itself. The new
+ * model joins the picker; it takes the chat only when nothing else could run. Only a download
+ * counts: a list that grows as the app starts, or Ollama coming back, moves nothing. Null when
+ * nothing needs keeping.
  */
 export function keptShownModel(input: {
   modelKey: string | null;
   /** The model the chat showed at its last render, in the same chat. */
   shown: string | null;
-  /** Every model key listed while this composer was open, before this render. */
-  seen: ReadonlySet<string>;
+  /** The models whose download finished while the composer was open (`canonicalModel`: an untagged name is its `latest` tag). */
+  downloaded: ReadonlySet<string>;
   selected: string | null;
   choices: readonly ModelChoice[];
 }): string | null {
-  const { modelKey, shown, seen, selected, choices } = input;
+  const { modelKey, shown, downloaded, selected, choices } = input;
   const moved = modelKey === null && shown !== null && selected !== null && shown !== selected;
   if (!moved) return null;
-  const arrived = !seen.has(selected) && isLocalEngine(parseModelKey(selected).engine);
+  const lead = parseModelKey(selected);
+  const justDownloaded = isLocalEngine(lead.engine) && downloaded.has(canonicalModel(lead.model));
   const row = choices.find((choice) => choice.key === shown);
   const stillRuns = row !== undefined && !row.disabled && !row.hidden;
   // A free model of a paid provider stood in only because nothing else could run (`autoChoice`).
   const ownChoice = !isMetered(parseModelKey(shown).engine);
-  return arrived && stillRuns && ownChoice ? shown : null;
+  const keep = justDownloaded && stillRuns && ownChoice;
+  return keep ? shown : null;
+}
+
+/** The model a finished download event names, or null for any other event. */
+function finishedDownload(event: UiEvent): string | null {
+  if (event.type === UiEvent.ModelPull)
+    return event.payload.progress.status === ModelPullStatus.Success ? event.payload.model : null;
+  if (event.type === UiEvent.ModelInstall)
+    return event.payload.phase === InstallPhase.Ready ? event.payload.model : null;
+  return null;
 }
 
 /** A model picked in the composer, with the one before it. */
@@ -500,9 +514,9 @@ export function sendBlockOf(model: Pick<ComposerModelView, "choices">, key: stri
 }
 
 /**
- * A chat with no pick of its own keeps the model it shows when a newly arrived local one would lead
- * (`keptShownModel`): it becomes the chat's pick, remembered as if it had been picked. Weighed after
- * every render, against what the chat showed at the last one and every model listed since it opened.
+ * A chat with no pick of its own keeps the model it shows when a model that just finished
+ * downloading would lead (`keptShownModel`): it becomes the chat's pick, remembered as if it had
+ * been picked. Weighed after every render, against what the chat showed at the last one.
  */
 function useKeptShownModel(
   now: {
@@ -516,14 +530,26 @@ function useKeptShownModel(
   setModelKey: (key: string) => void,
 ): void {
   const last = useRef<{ thread: string | undefined; selected: string | null } | null>(null);
-  const seen = useRef(new Set<string>());
+  const downloaded = useRef(new Set<string>());
+  useEffect(
+    () =>
+      window.studio.onEvent((event) => {
+        const model = finishedDownload(event);
+        if (model) downloaded.current.add(canonicalModel(model));
+      }),
+    [],
+  );
   useEffect(() => {
     const threadId = now.thread?.id;
     const previous = last.current;
     const shown = previous && previous.thread === threadId ? previous.selected : null;
-    const kept = keptShownModel({ ...now, shown, seen: seen.current });
+    const kept = keptShownModel({ ...now, shown, downloaded: downloaded.current });
     last.current = { thread: threadId, selected: kept ?? now.selected };
-    for (const choice of now.choices) seen.current.add(choice.key);
+    // A download is weighed once, when its model is first listed: a later return moves nothing.
+    for (const choice of now.choices) {
+      const listed = parseModelKey(choice.key);
+      if (isLocalEngine(listed.engine)) downloaded.current.delete(canonicalModel(listed.model));
+    }
     if (!kept) return;
     setModelKey(kept);
     if (now.thread) rememberChatModel(now.storage, now.thread.id, kept, now.studio);
