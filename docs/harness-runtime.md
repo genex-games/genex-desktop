@@ -1021,7 +1021,12 @@ failure (`auth`): Claude Code from the CLI's own error code on the reply (`authe
 an outage the patience ladder could not outlast, a 529 or an unreachable network (`ENOTFOUND`) the session returned included — pauses the
 run (`afterTurn`'s `providerLost`, `state.limit`): no wrap-up, the workers stopped, nothing landed
 or judged (`NotLandedReason.Paused`), `run_finished.limit` naming its kind, and no learning pass
-until the run ends. A sign-in, cap or reset-naming limit opens that engine's circuit for the run
+until the run ends. A local model that does not fit the computer's free memory (`out_of_memory`:
+Ollama, a local server and Bonsai read it from the runtime's own words, such as Metal's
+"Insufficient Memory", CUDA's "out of memory" or Ollama's "requires more system memory",
+`engines/types.ts` `outOfMemoryFailure`) is no outage: it pauses the run at once, with no patience
+ladder and no automatic resume, and a chat turn it ended says so in Genex's line
+`model_out_of_memory` instead of calling the engine unreachable. A sign-in, cap or reset-naming limit opens that engine's circuit for the run
 (`loop/provider-loss.ts`): judge, critic and ship-review calls to it fail at once with its kind
 until the run starts again or the limit resets (ten minutes at most for a loss that names no end),
 and a sign-in any engine of the run lost pauses the run at the lead's next turn or wake. A worker

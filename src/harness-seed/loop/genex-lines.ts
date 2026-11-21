@@ -23,6 +23,8 @@ export const GenexLine = {
   StoppedBeforeTurn: "stopped_before_turn",
   /** A build the chat asked for, stopped before it started. */
   StoppedBeforeBuild: "stopped_before_build",
+  /** A chat turn whose model, on this computer, needs more memory than it has free. */
+  ModelOutOfMemory: "model_out_of_memory",
 } as const;
 export type GenexLine = (typeof GenexLine)[keyof typeof GenexLine];
 
@@ -32,6 +34,8 @@ export const GENEX_LINE_TEXT = {
   [GenexLine.StoppedWaiting]: READY_WORDS.stopped,
   [GenexLine.StoppedBeforeTurn]: "Stopped before it started — nothing was done. Send a message to go on.",
   [GenexLine.StoppedBeforeBuild]: "Stopped before the build started — nothing was built.",
+  [GenexLine.ModelOutOfMemory]:
+    "This model needs more memory than this computer has free, so resending won't help. Pick a smaller model, or close other apps and try again.",
 } as const satisfies Record<GenexLine, string>;
 
 /** The `messages` record of one of Genex's lines, said by the assistant. */

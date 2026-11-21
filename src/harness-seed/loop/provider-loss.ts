@@ -34,6 +34,7 @@ export function isProviderLoss(kind: unknown): boolean {
 export function lossWords(kind: unknown): string {
   if (kind === EngineFailure.Auth) return "lost sign-in";
   if (kind === EngineFailure.Unavailable) return "outage";
+  if (kind === EngineFailure.OutOfMemory) return "model out of memory";
   return limitWords(kind);
 }
 
@@ -53,6 +54,12 @@ export function pauseDecision(kind: unknown, said: string): { line: string; plai
       line: `the lead's provider stayed down: ${said}`,
       plain: "the model provider stayed down, so the build paused — Resume picks it up where it stopped",
     };
+  if (kind === EngineFailure.OutOfMemory)
+    return {
+      line: `the lead's model ran out of this computer's memory: ${said}`,
+      plain:
+        "the model needs more memory than this computer has free, so the build paused — close other apps (or pick a smaller model), then press Resume",
+    };
   return {
     line: `the engine hit its ${limitWords(kind)}: ${said}`,
     plain: `your plan's ${limitWords(kind)} paused the build`,
@@ -65,6 +72,8 @@ export function pauseEnding(kind: unknown, said: string): string {
     return `the engine lost its sign-in before the director called finish (${said}); the run is paused — sign in again (or have the admin turn access back on), then Resume`;
   if (kind === EngineFailure.Unavailable)
     return `the engine's provider stayed down before the director called finish (${said}); the run is paused — Resume it once the provider is back`;
+  if (kind === EngineFailure.OutOfMemory)
+    return `the lead's model needed more memory than this computer has free before the director called finish (${said}); the run is paused — close other apps or pick a smaller model, then Resume`;
   return `the engine hit its ${limitWords(kind)} before the director called finish (${said}); the run is paused — Resume it when the limit resets`;
 }
 

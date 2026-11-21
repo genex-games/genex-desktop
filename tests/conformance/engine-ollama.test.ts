@@ -521,6 +521,27 @@ describe("ollama engine completions (real pi-ai over real HTTP)", () => {
     assert.equal(server.requests.filter((r) => r.path.startsWith("/v1/chat/completions")).length, 3);
   });
 
+  // Live, 2026-11-21: Inkling 2 Mini on a Mac ran out of Metal's memory, and the chat said Ollama was
+  // unreachable and to wait and resend.
+  it("names a model that does not fit this computer's memory, not an unreachable Ollama", async () => {
+    const server = await fake({ replies: [metalOutOfMemory()] });
+    await assert.rejects(
+      () =>
+        new OllamaEngine({ host: server.host }).complete({
+          model: "inkling-2-mini",
+          messages: [{ role: "user", content: "make a platformer" }],
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof EngineError);
+        assert.equal(err.kind, EngineFailureKind.OutOfMemory);
+        assert.match(err.message, /inkling-2-mini needs more memory than this computer has free/);
+        assert.match(err.message, /Insufficient Memory/, "Ollama's own words stay for the log");
+        assert.equal(isTransientProviderError(err), false, "the run's outage patience never waits on it");
+        return true;
+      },
+    );
+  });
+
   it("says Ollama is not running when nothing answers, as a failure a fallback can take over", async () => {
     const server = await fake();
     const host = server.host;
@@ -715,6 +736,16 @@ function toolCallParseFailure(): { httpStatus: number; body: string } {
         message:
           "error parsing tool call: raw='The user wants a modern 3-D platformer. We need to interpret the request', err=invalid character 'T' looking for beginning of value",
       },
+    }),
+  };
+}
+
+/** Ollama's 500 for a model whose generation ran out of the Mac's GPU memory (MLX on Metal). */
+function metalOutOfMemory(): { httpStatus: number; body: string } {
+  return {
+    httpStatus: 500,
+    body: JSON.stringify({
+      error: { message: "mlx runner failed: panic: mlx: [METAL] Command buffer execution failed: Insufficient Memory" },
     }),
   };
 }

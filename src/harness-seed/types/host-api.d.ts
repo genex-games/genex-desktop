@@ -491,7 +491,7 @@ export interface Usage {
 export type MessageUsageSource = 'delegation';
 // ↑ src/shared/event-log.ts
 
-export type GenexLine = 'stopped' | 'stopped_waiting' | 'stopped_before_turn' | 'stopped_before_build';
+export type GenexLine = 'stopped' | 'stopped_waiting' | 'stopped_before_turn' | 'stopped_before_build' | 'model_out_of_memory';
 // ↑ src/shared/event-log.ts
 
 export type SnapshotScope = 'game' | 'harness' | 'both';

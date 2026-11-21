@@ -4020,6 +4020,8 @@ export default {
   "This model is unavailable. Check the connection or choose another model.":
     "이 모델은 사용할 수 없어요. 연결을 확인하거나 다른 모델을 고르세요.",
   "This model isn’t available right now": "이 모델은 지금 사용할 수 없어요",
+  "This model needs more memory than this computer has free, so resending won't help. Pick a smaller model, or close other apps and try again.":
+    "이 모델은 이 컴퓨터에 남은 메모리보다 더 많은 메모리가 필요해서 다시 보내도 해결되지 않아요. 더 작은 모델을 고르거나 다른 앱을 닫고 다시 시도해 주세요.",
   "This page isn't from the sign-in Genex started.": "이 페이지는 Genex가 시작한 로그인에서 온 것이 아니에요.",
   "This paste has {count, plural, other {# servers}}. Pick one:":
     "붙여 넣은 내용에 서버가 {count, plural, other {#개}} 있어요. 하나 골라 주세요:",
@@ -5008,6 +5010,8 @@ export default {
   'the lead put a worker on "{task}" for {minutes}':
     "메인 에이전트가 작업자에게 “{task}” 작업을 {minutes} 동안 맡겼어요",
   "the model could not be reached": "모델에 연결할 수 없었어요",
+  "the model needs more memory than this computer has free — close other apps or pick a smaller model, then press Resume":
+    "모델에 필요한 메모리가 이 컴퓨터에 남은 메모리보다 많아요 — 다른 앱을 닫거나 더 작은 모델을 고른 뒤 ‘재개’를 눌러 주세요",
   "the model provider hit your plan's session limit": "모델 제공자에서 요금제 세션 한도에 도달했어요",
   "the model provider hit your plan's usage cap": "모델 제공자에서 요금제 사용 한도에 도달했어요",
   "the model provider is down": "모델 제공자가 다운됐어요",

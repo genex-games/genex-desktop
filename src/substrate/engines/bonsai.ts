@@ -8,6 +8,8 @@ import type { Message, ToolCall } from "../types.ts";
 import {
   EngineError,
   classifyHttpFailure,
+  classifyLocalFailure,
+  outOfMemoryFailure,
   type Engine,
   type CompleteRequest,
   type CompleteResponse,
@@ -320,7 +322,7 @@ export class BonsaiEngine implements Engine {
       const text = await response.text();
       if (response.status === 400 && /context|too many tokens/i.test(text))
         throw new EngineError(EngineFailureKind.ContextOverflow, this.id, text.slice(0, ERROR_BODY_CHARS));
-      throw classifyHttpFailure(this.id, response.status, text);
+      throw classifyLocalFailure(this.id, response.status, text, model);
     }
     if (!response.body) throw new EngineError(EngineFailureKind.Unavailable, this.id, MESSAGE.EmptyResponse);
     const stream = newStreamState(model);
@@ -355,8 +357,13 @@ export class BonsaiEngine implements Engine {
     const raw = line.slice("data:".length).trim();
     if (raw === "[DONE]" || !raw) return;
     const item = JSON.parse(raw);
-    if (item.error)
-      throw new EngineError(EngineFailureKind.Other, this.id, item.error.message ?? JSON.stringify(item.error));
+    if (item.error) {
+      const said = item.error.message ?? JSON.stringify(item.error);
+      throw (
+        outOfMemoryFailure(this.id, said, stream.reportedModel) ??
+        new EngineError(EngineFailureKind.Other, this.id, said)
+      );
+    }
     if (item.model) stream.reportedModel = item.model;
     if (item.usage) {
       stream.input = item.usage.prompt_tokens ?? stream.input;
@@ -379,7 +386,8 @@ export class BonsaiEngine implements Engine {
     if (err instanceof EngineError) return err;
     if (err instanceof SyntaxError)
       return new EngineError(EngineFailureKind.Other, this.id, `Invalid model response: ${err.message}`);
-    return new EngineError(EngineFailureKind.Unavailable, this.id, errorMessage(err));
+    const said = errorMessage(err);
+    return outOfMemoryFailure(this.id, said) ?? new EngineError(EngineFailureKind.Unavailable, this.id, said);
   }
 
   async dispose() {

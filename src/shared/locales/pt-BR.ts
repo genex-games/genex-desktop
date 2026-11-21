@@ -4167,6 +4167,8 @@ export default {
   "This model is unavailable. Check the connection or choose another model.":
     "Este modelo está indisponível. Verifique a conexão ou escolha outro modelo.",
   "This model isn’t available right now": "Este modelo não está disponível agora",
+  "This model needs more memory than this computer has free, so resending won't help. Pick a smaller model, or close other apps and try again.":
+    "Este modelo precisa de mais memória do que este computador tem livre, então reenviar não vai ajudar. Escolha um modelo menor ou feche outros apps e tente de novo.",
   "This page isn't from the sign-in Genex started.": "Esta página não é do login que o Genex iniciou.",
   "This paste has {count, plural, other {# servers}}. Pick one:":
     "O que você colou tem {count, plural, one {# servidor} other {# servidores}}. Escolha um:",
@@ -5175,6 +5177,8 @@ export default {
   'the lead put a worker on "{task}"': "o agente principal colocou um ajudante em “{task}”",
   'the lead put a worker on "{task}" for {minutes}': "o agente principal colocou um ajudante em “{task}” por {minutes}",
   "the model could not be reached": "não foi possível acessar o modelo",
+  "the model needs more memory than this computer has free — close other apps or pick a smaller model, then press Resume":
+    "o modelo precisa de mais memória do que este computador tem livre — feche outros apps ou escolha um modelo menor e depois toque em “Retomar”",
   "the model provider hit your plan's session limit": "o provedor de modelos atingiu o limite de sessão do seu plano",
   "the model provider hit your plan's usage cap": "o provedor de modelos atingiu o limite de uso do seu plano",
   "the model provider is down": "o provedor de modelos está fora do ar",

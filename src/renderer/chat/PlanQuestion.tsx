@@ -26,6 +26,7 @@ const FAILURE_RECOVERY: Partial<Record<EngineFailureKind, Recovery>> = {
   [EngineFailureKind.RateLimit]: Recovery.Limited,
   [EngineFailureKind.UsageLimit]: Recovery.Limited,
   [EngineFailureKind.Unavailable]: Recovery.Limited,
+  [EngineFailureKind.OutOfMemory]: Recovery.Limited,
 };
 
 const RECOVERY_WORDS: Record<Recovery, { title: string; next: string }> = {
