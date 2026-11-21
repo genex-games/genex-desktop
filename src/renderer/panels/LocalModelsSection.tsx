@@ -22,7 +22,13 @@ import {
   settled,
 } from "../analytics/welcome-report.ts";
 import { ProviderSurface } from "../analytics/welcome-vocabulary.ts";
-import { needsOllama, ollamaDownloadPage, stoppedDownload, type StoppedDownload } from "../model-download.ts";
+import {
+  needsOllama,
+  ollamaDownloadPage,
+  stoppedDownload,
+  type StoppedDownload,
+  useHardwareOnOllamaStart,
+} from "../model-download.ts";
 import { hostPlatform } from "../platform.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
@@ -425,7 +431,7 @@ function reportHardwareOnce(reported: { current: boolean }, value: Hardware | nu
 }
 
 /** This Mac's hardware and the model download in progress: read once, then followed by the host's events. */
-function useModelInstalls(onEnginesRefresh: () => void) {
+function useModelInstalls(onEnginesRefresh: () => void, ollamaRunning: boolean) {
   const [hardware, setHardware] = useState<Hardware | null>(null);
   const [hardwareError, setHardwareError] = useState<string | null>(null);
   const [pulling, setPulling] = useState<string | null>(null);
@@ -433,6 +439,7 @@ function useModelInstalls(onEnginesRefresh: () => void) {
   const [job, setJob] = useState<InstallJob>(null);
   const [failure, setFailure] = useState<DownloadFailure | null>(null);
   const hardwareReported = useRef(false);
+  useHardwareOnOllamaStart(ollamaRunning, setHardware);
   useEffect(() => {
     onEnginesRefresh();
     let alive = true;
@@ -888,7 +895,8 @@ export function LocalModelsSection({
   onEnginesRefresh,
   onOpenProviders,
 }: ModelSettingsProps & { onOpenProviders?: () => void }): JSX.Element {
-  const installs = useModelInstalls(onEnginesRefresh);
+  const ollama = engines.find((engine) => engine.id === EngineId.Ollama);
+  const installs = useModelInstalls(onEnginesRefresh, !needsOllama(ollama));
   const { hardware, pulling, progress, failure } = installs;
   const engineOf = (model: string): string =>
     engines.find((engine) => engine.models.some((listed) => canonical(listed.id) === canonical(model)))?.id ??
@@ -905,7 +913,6 @@ export function LocalModelsSection({
     return removal.failure?.model === model ? removal.failure.message : null;
   };
   const [moreOpen, setMoreOpen] = useState(false);
-  const ollama = engines.find((engine) => engine.id === EngineId.Ollama);
   /** Install Ollama beside an Ollama model's Download, once its download found no Ollama running. */
   const installOllamaFor = (model: string): (() => void) | null =>
     failure?.model === model && needsOllama(ollama) ? openOllamaDownload : null;

@@ -141,7 +141,9 @@ export class OllamaClient {
         signal: signal ?? AbortSignal.timeout(VERSION_PROBE_TIMEOUT_MS),
       });
       if (!response.ok) return null;
-      return ((await response.json()) as { version: string }).version;
+      const { version } = (await response.json()) as { version?: unknown };
+      // Something else answering on Ollama's port is not an Ollama.
+      return typeof version === "string" ? version : null;
     } catch {
       return null;
     }

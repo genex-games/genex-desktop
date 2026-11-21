@@ -23,6 +23,8 @@ import { startFakeOllama, type FakeOllama } from "../helpers/fake-ollama.ts";
 import { cliName, writeCliLauncher } from "../helpers/external-cli.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import { readFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -62,6 +64,17 @@ describe("ollama management API", () => {
     const shown = await client.show("qwen3.6:27b");
     assert.ok(shown.capabilities.includes("tools"));
     assert.equal(shown.contextLength, 262144);
+  });
+
+  it("reports no Ollama when the server on its port answers without a version", async () => {
+    const other = createServer((_request, response) => response.end("{}"));
+    await new Promise<void>((resolve) => other.listen(0, "127.0.0.1", resolve));
+    try {
+      const { port } = other.address() as AddressInfo;
+      assert.equal(await new OllamaClient(`http://127.0.0.1:${port}`).version(), null);
+    } finally {
+      other.close();
+    }
   });
 
   it("reports no server rather than throwing when nothing is listening", async () => {

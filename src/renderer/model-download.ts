@@ -1,4 +1,5 @@
 /** A local model's download as its Settings row shows it after the download stopped short. */
+import { useEffect, useRef } from "react";
 import { StudioPlatform } from "../shared/boot.ts";
 import { type EngineDescriptor, EngineStatusCode } from "../shared/engine-descriptor.ts";
 import { InstallPhase, type ModelInstallJob } from "../shared/model-install.ts";
@@ -55,4 +56,29 @@ export function needsOllama(ollama: Pick<EngineDescriptor, "status"> | undefined
 export function ollamaDownloadPage(platform: string | undefined): string {
   const known = Object.values(StudioPlatform).find((value) => value === platform);
   return known ? OLLAMA_DOWNLOAD_PAGE[known] : OLLAMA_DOWNLOAD_URL;
+}
+
+type HardwareReport = Awaited<ReturnType<typeof window.studio.hardware>>;
+
+/**
+ * Read the hardware report again when Ollama starts answering: which models it can pull depends on
+ * its version, and the first read may have found it quit.
+ */
+export function useHardwareOnOllamaStart(ollamaRunning: boolean, setHardware: (report: HardwareReport) => void): void {
+  const wasRunning = useRef(ollamaRunning);
+  useEffect(() => {
+    const started = ollamaRunning && !wasRunning.current;
+    wasRunning.current = ollamaRunning;
+    if (!started) return;
+    let alive = true;
+    void window.studio
+      .hardware()
+      .then((report) => {
+        if (alive) setHardware(report);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [ollamaRunning, setHardware]);
 }

@@ -2391,7 +2391,9 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
     pushUiEvent,
     openRouterLogin,
     usage: providerUsage,
-    readHardware: isSmoke ? async () => smokeReads.hardware ?? hardwareReport() : undefined,
+    readHardware: isSmoke
+      ? async () => smokeReads.hardware ?? hardwareReport(ollamaHost)
+      : async () => hardwareReport(ollamaHost),
   });
   registerPreviewIpc(handle, {
     core: studio,

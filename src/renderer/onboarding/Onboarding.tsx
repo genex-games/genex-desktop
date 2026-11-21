@@ -61,7 +61,7 @@ import {
 } from "../analytics/welcome-vocabulary.ts";
 import { preloadHomeBackdrop } from "../home-backdrop/preload.ts";
 import { defaultModelKey } from "../model-choices.ts";
-import { needsOllama } from "../model-download.ts";
+import { needsOllama, useHardwareOnOllamaStart } from "../model-download.ts";
 import { Button } from "../ui/Button.tsx";
 import { GenexLogo } from "../ui/GenexLogo.tsx";
 import { Icon } from "../ui/icons.tsx";
@@ -736,6 +736,7 @@ function useLocalModel(engines: EngineDescriptor[], onEnginesRefresh: () => void
       });
   }, []);
   const ollama = () => engines.find((engine) => engine.id === EngineId.Ollama);
+  useHardwareOnOllamaStart(!needsOllama(ollama()), setHardware);
   const isInstalled = (id: string) =>
     engines.some((engine) => engine.models.some((model) => canonicalModel(model.id) === canonicalModel(id)));
   const held = pulling ?? (error ? null : lastPulled);

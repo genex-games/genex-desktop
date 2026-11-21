@@ -7,10 +7,11 @@ Bonsai PQ2_0 next up to 96 GB. While Ollama does not answer, the welcome's local
 first pick that installs without it (Bonsai), since that screen cannot install Ollama; Settings
 keeps the ranking. A model the running Ollama is too old to pull (the catalog's `requiresOllama`,
 such as Inkling before 0.40.17) is never a pick there or in Settings; it stays under More models.
-The welcome screen keeps a model that is downloading or already installed from the picks. Below 48
-GB Inkling is not offered: on a 32 GB Mac it ran out of GPU memory before answering Genex's first
-prompt, although the fit rule below estimates that it fits. Ollama ships Inkling only as an MLX
-build, so Windows and Linux keep their own picks until Ollama runs it there.
+Both read the version again when Ollama starts answering. The welcome screen keeps a model that is
+downloading or already installed from the picks. Below 48 GB Inkling is not offered: on a 32 GB Mac
+it ran out of GPU memory before answering Genex's first prompt, although the fit rule below
+estimates that it fits. Ollama ships Inkling only as an MLX build, so Windows and Linux keep their
+own picks until Ollama runs it there.
 
 A local model leads the automatic choice, so a chat with nothing else to run opens on it. A model
 that finishes downloading never replaces the model a chat already shows: the chat keeps it as its
