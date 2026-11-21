@@ -4,7 +4,8 @@
  * a build's lead (its card holds still) and sent pictures coming back into sight, in a short, a
  * long and a very long chat, with normal and reduced motion. It also fails on a row or the status
  * line drawn anew where it stood, a shimmer that starts its sweep over, a sent picture shown blank
- * once it was loaded, and rows drawn more often in a long chat than in a short one (React's
+ * once it was loaded, the turn's work leaving the status line with no row taking it over in place,
+ * and rows drawn more often in a long chat than in a short one (React's
  * profiling build counts them). Synthetic events in a disposable Electron profile; no engine,
  * account or network. Evidence: .studio-dev/evidence/chat-motion-<time>/report.json.
  */
@@ -90,10 +91,11 @@ app.whenReady().then(async()=>{
     const name=motion+' '+scene+' '+size;
     report.scenes.push({name,motion,size,cost,...result});
     (drawn[scene]??={})[size]=result.rowCommits;
-    console.log(name+': '+result.frames+' frames, '+result.jumps.length+' jumps, '+result.pops.length+' pops, '+result.flashes.length+' flashes, '+result.rebuilt.length+' rebuilt, '+result.skips.length+' shimmer skips, '+result.blankPictureFrames+' blank-picture frames, '+result.rowCommits+' row draws, '+result.animatedFrames+' animated, '+result.longFrames+' long frames, '+result.longTasks+' long tasks ('+result.longTaskMs+' ms), main thread '+cost.TaskDuration+' ms (script '+cost.ScriptDuration+', layout '+cost.LayoutDuration+', style '+cost.RecalcStyleDuration+')');
+    console.log(name+': '+result.frames+' frames, '+result.jumps.length+' jumps, '+result.pops.length+' pops, '+result.flashes.length+' flashes, '+result.rebuilt.length+' rebuilt, '+result.skips.length+' shimmer skips, '+result.blankPictureFrames+' blank-picture frames, '+result.lostWork.length+' lost work, '+result.rowCommits+' row draws, '+result.animatedFrames+' animated, '+result.longFrames+' long frames, '+result.longTasks+' long tasks ('+result.longTaskMs+' ms), main thread '+cost.TaskDuration+' ms (script '+cost.ScriptDuration+', layout '+cost.LayoutDuration+', style '+cost.RecalcStyleDuration+')');
     if(result.flashes.length) fail(name+': a status label flashed',result.flashes);
     if(result.rebuilt.length) fail(name+': parts were drawn anew where they stood',result.rebuilt);
     if(result.blankPictureFrames) fail(name+': a sent picture showed blank',result.blankPictureFrames);
+    if(result.lostWork.length) fail(name+': the work left the status line and came back',result.lostWork);
     // Held still: on show in every frame, never moved by as much as the recorder's jump (6px).
     if(result.held&&(result.held.missing>0||result.held.driftPx>=6)) fail(name+': the build card left or moved',result.held);
     if(motion==='reduce') {

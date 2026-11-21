@@ -84,7 +84,8 @@ counters carry the regression gates.
   streamed reply, a question, a build, a message to a build's lead and sent pictures coming back
   into sight, in a short, a long and a 400-message chat, and records every frame. Besides jumps,
   pops and flashes it fails on a row or the status line drawn anew where it stood, a shimmer that
-  starts its sweep over, a sent picture shown blank once loaded, and a long chat drawing its rows
+  starts its sweep over, a sent picture shown blank once loaded, the turn's work leaving the status
+  line without its transcript row taking it over in place, and a long chat drawing its rows
   more often than a short one. It bundles React DOM's profiling build (production React whose
   Profiler reports), so `TranscriptRow` counts every row drawn without development React's cost.
 - Fixture messages for journeys: `fixture:stream` (a short streamed reply) and `fixture:stream-long`
@@ -106,7 +107,7 @@ counters carry the regression gates.
 | three.js in the eager renderer graph | none | `scripts/renderer-build.mjs` |
 | Production React in a packaged app | required | `tests/e2e/run-packaged-smoke.mjs` |
 | Chat rows drawn again for a turn in a long chat, over a short one | 6 | `tests/e2e/run-chat-motion-ui.mjs` |
-| Chat parts drawn anew in place, shimmer restarts, blank sent pictures | none | `tests/e2e/run-chat-motion-ui.mjs` |
+| Chat parts drawn anew in place, shimmer restarts, blank sent pictures, work lost between the status line and its row | none | `tests/e2e/run-chat-motion-ui.mjs` |
 | sandbox-runtime, the Agent SDK or the MCP SDK imported at the top of main | none | `scripts/main-build.mjs` |
 | A language catalog inside `app.mjs` | none | `scripts/main-build.mjs` |
 | Chat typing commits | unchanged per key | `tests/e2e/run-chat-ui.mjs` |

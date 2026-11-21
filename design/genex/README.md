@@ -1022,8 +1022,8 @@ chat-motion-ui` plays the production ChatPanel through a send, work and its cloc
 reply, a question, a build and sent pictures, in a short, a long and a very long chat, frame by frame: it
 fails on a part that moves its whole way in one frame, comes or goes at full opacity, or a status label
 shown under 300ms; on a row or the status line drawn anew where it stood, a shimmer that starts its sweep
-over, a sent picture shown blank once loaded, and earlier rows drawn again; and on any motion left under
-reduced motion.
+over, a sent picture shown blank once loaded, the turn's work leaving the status line with no row taking it
+over in place, and earlier rows drawn again; and on any motion left under reduced motion.
 
 Use `npm run test:design-ui` for shared Genex primitive changes selected by the scope table. It builds the development-only
 gallery and tests it in credential-disabled disposable Electron: actual per-script font

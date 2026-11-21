@@ -2,7 +2,7 @@
  * The chat's scrolling conversation: Studio's intro, the transcript with its earlier pages loaded
  * ahead of the reader, messages on their way, the work below it and the follow-ups that wait for it.
  */
-import { memo, useMemo, useRef, useCallback, type JSX, type ReactNode } from "react";
+import { memo, useMemo, useRef, useCallback, useLayoutEffect, type JSX, type ReactNode } from "react";
 import { PerformanceBoundary } from "../performance.tsx";
 import { PerformanceComponent } from "../../shared/performance.ts";
 import { t } from "../../shared/i18n.ts";
@@ -18,7 +18,7 @@ import { Presence, type PresenceChild } from "../ui/Presence.tsx";
 import { PLAN_WORDS, pluginTurnedOnWords } from "../words.ts";
 import type { ChatHistory } from "./chat-panel-props.ts";
 import { ChatWork } from "./ChatWork.tsx";
-import { type ConversationEntry, entrySize } from "./conversation-entries.ts";
+import { type ConversationEntry, entrySize, WORK_KIND } from "./conversation-entries.ts";
 import { JumpToLatest } from "./JumpToLatest.tsx";
 import { SendPlacement } from "./pending-sends.ts";
 import { focusPromptEnd, restorePictures, type TakenBack, takeBack } from "./put-back.ts";
@@ -35,7 +35,7 @@ import type { GenexNoticeProps } from "../ui/GenexNotice.tsx";
 import { HeldFirstMessage } from "./HeldFirstMessage.tsx";
 import type { HeldFirstSend } from "./use-launch-handover.ts";
 import { PLAN_PROVIDERS } from "../ui/usage-words.ts";
-import { VirtualTranscript } from "./VirtualTranscript.tsx";
+import { NEW_ROW, type RowEntrance, VirtualTranscript } from "./VirtualTranscript.tsx";
 import { useRowFactSource } from "./row-facts.ts";
 
 /** The transcript's context: the chat's run, game and pictures, and what its cards and bubbles do. */
@@ -162,6 +162,7 @@ export function ChatConversation(parts: ChatParts): JSX.Element {
     studioIntro: parts.chat.isStudioThread && !parts.props.loading && !history.hasMore,
     noModel: parts.composer.noModel,
     visibleEntries: parts.work.visibleEntries,
+    liveWorkId: parts.work.liveWorkId,
     streaming: parts.stream.showing,
     loading: parts.props.loading,
     onNotice: parts.props.onNotice,
@@ -199,6 +200,8 @@ type ConversationView = {
   studioIntro: boolean;
   noModel: boolean;
   visibleEntries: ChatParts["work"]["visibleEntries"];
+  /** The work group the busy line shows under its words, until the transcript takes it over. */
+  liveWorkId: string | null;
   /** A reply is being written on screen. */
   streaming: boolean;
   /** The chat is loading: what arrives with it is simply there. */
@@ -222,19 +225,28 @@ type ConversationView = {
 /**
  * How a transcript row arrives (`VirtualTranscript`'s `entrance`). A saved message carries on the
  * opening its bubble began in the same place; a reply taking over the one written on screen is
- * already there; anything else that arrives after the rows before it opens; history is simply there.
+ * already there; work taking over from the busy line that showed it (`wasLive`, the line's group
+ * until this render) is seen at once while its room opens; anything else that arrives after the
+ * rows before it opens; history is simply there.
  */
 function rowEntrance(
   entry: ConversationEntry,
   appended: boolean,
   view: Pick<ConversationView, "sends" | "streaming">,
-): number | null {
+  wasLive: string | null,
+): RowEntrance | null {
   const placeholder = view.sends.placeholders.get(entry.id);
-  if (placeholder?.placement === SendPlacement.Transcript)
-    return continuedEntrance(placeholder.shownAt, performance.now());
+  if (placeholder?.placement === SendPlacement.Transcript) {
+    const from = continuedEntrance(placeholder.shownAt, performance.now());
+    return from === null ? null : { from, fade: true };
+  }
   if (!appended) return null;
-  return entry.kind === EntryKind.Assistant && view.streaming ? null : 0;
+  if (entry.kind === WORK_KIND && entry.id === wasLive) return TAKEN_OVER;
+  return entry.kind === EntryKind.Assistant && view.streaming ? null : NEW_ROW;
 }
+
+/** Work the busy line showed under its words: seen at once in its place, while the room it takes opens. */
+const TAKEN_OVER: RowEntrance = { from: 0, fade: false };
 
 const ConversationContent = memo(function ConversationContent({
   view,
@@ -249,6 +261,11 @@ const ConversationContent = memo(function ConversationContent({
 }): JSX.Element {
   const { history, follow, transcript, sends, threadId, studioIntro, loading, onNotice } = view;
   const studioEmpty = studioIntro && transcript.readingEntries.length === 0 && view.idle;
+  // The busy line's work group as last drawn: the row that takes it over is already in its place.
+  const shownLive = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    shownLive.current = view.liveWorkId;
+  });
   const renderItem = useCallback(
     (entry: Parameters<typeof TranscriptEntry>[0]["entry"]) => (
       <PerformanceBoundary id={PerformanceComponent.TranscriptRow}>
@@ -269,7 +286,7 @@ const ConversationContent = memo(function ConversationContent({
             scroller={follow.scroller}
             follow={follow.atBottom}
             hold={follow.holding}
-            entrance={(entry, appended) => rowEntrance(entry, appended, view)}
+            entrance={(entry, appended) => rowEntrance(entry, appended, view, shownLive.current)}
             still={loading}
             renderItem={renderItem}
             sizeOf={entrySize}

@@ -7069,6 +7069,11 @@ a:focus-visible {
     chat-fade-in 200ms ease-out 50ms backwards;
   animation-delay: calc(0ms - var(--entered, 0ms)), calc(50ms - var(--entered, 0ms));
 }
+/* A row taking over what the busy line already showed: seen at once, only its room opens. */
+.chat-entry-arriving[data-shown] {
+  animation: chat-row-open var(--duration-fast) var(--ease-smooth-out);
+  animation-delay: calc(0ms - var(--entered, 0ms));
+}
 /* min-height: a flex item may not otherwise shrink below its content, so it could not open or close. */
 .presence {
   --presence-gap: 0px;
@@ -7153,6 +7158,7 @@ a:focus-visible {
     transition: none;
   }
   .chat-entry-arriving,
+  .chat-entry-arriving[data-shown],
   .presence[data-presence],
   .chat-jump,
   .chat-waiting-card,

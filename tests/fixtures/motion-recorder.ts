@@ -2,7 +2,8 @@
  * What a person sees move in the chat, frame by frame: the live parts' boxes, opacity and the
  * status line's words, and the jumps, pops and flashes they add up to; also what is drawn anew
  * where it already stood (a row or the status line rebuilt in place), a shimmer that skips back
- * to its start and pictures shown blank. Runs in the page, on requestAnimationFrame, so a bad
+ * to its start, pictures shown blank and the turn's work leaving the status line with no row taking
+ * it over. Runs in the page, on requestAnimationFrame, so a bad
  * frame is caught where it is drawn.
  */
 
@@ -60,6 +61,10 @@ export interface MotionFrame {
   sweeps: Record<string, { at: number; length: number }>;
   /** Pictures in a sent message that can be seen but show nothing yet. */
   blankPictures: number;
+  /** The status line shows the turn's work under its words (it can open to list it). */
+  lineWork: boolean;
+  /** How far the conversation is scrolled (px). */
+  scroll: number;
 }
 
 /** A recording: its frames and the long tasks the main thread ran meanwhile (ms each). */
@@ -131,6 +136,8 @@ export interface MotionReport {
   skips: Skip[];
   /** Frames that showed a sent picture blank. */
   blankPictureFrames: number;
+  /** When the status line let go of the turn's work with no row taking it over in its place (ms). */
+  lostWork: number[];
 }
 
 /** Below this a move is no move; at or above `JUMP_PX` in one still-to-still frame it is a jump. */
@@ -146,6 +153,8 @@ const SKIP_MS = 120;
 const LONG_FRAME_MS = 34;
 /** A part that hands over to another at the same place (±px) in the same frame is one surface. */
 const SWAP_PX = 2;
+/** How near (px) the status line's top a row taking over its work arrives: the row's own top spacing. */
+const LINE_TAKEOVER_PX = 12;
 
 const opacityOf = (element: Element): number => {
   let opacity = 1;
@@ -190,7 +199,17 @@ function snapshot(): Omit<MotionFrame, "at"> {
     const takesTime = Number(timing?.activeDuration ?? 0) > 1;
     return a.playState === "running" && takesTime && timing?.iterations !== Number.POSITIVE_INFINITY;
   }).length;
-  return { parts, label, running, nodes: nodesOf(band), sweeps: sweepsOf(), blankPictures: blankPictures(band) };
+  return {
+    parts,
+    label,
+    running,
+    nodes: nodesOf(band),
+    sweeps: sweepsOf(),
+    blankPictures: blankPictures(band),
+    // The chevron stays a moment as it fades out: a leaving one no longer has work behind it.
+    lineWork: document.querySelector("[data-chat-status] .chat-chevron:not(.chat-chevron-leaving)") !== null,
+    scroll: document.querySelector("[data-chat-scroll]")?.scrollTop ?? 0,
+  };
 }
 
 const elementIds = new WeakMap<Element, number>();
@@ -334,6 +353,36 @@ function handedOver(box: PartBox, others: Record<string, PartBox>, gone: Record<
   );
 }
 
+/**
+ * A row that takes over the work the status line showed under its words, in the frame the line
+ * lets it go, where the line stood in the conversation (the conversation may scroll in that frame):
+ * the same work, moved into the transcript.
+ */
+function tookOverLine(box: PartBox, previous: MotionFrame | undefined, frame: MotionFrame | undefined): boolean {
+  const line = previous?.parts.status;
+  if (!previous || !frame || !line || !previous.lineWork || frame.lineWork) return false;
+  return Math.abs(line.top + previous.scroll - (box.top + frame.scroll)) <= LINE_TAKEOVER_PX;
+}
+
+/**
+ * Moments the status line let go of the turn's work and no row took it over where the line stood,
+ * at full opacity, in the same frame: the work went out of sight and came back.
+ */
+function lostWorkOf(frames: MotionFrame[]): number[] {
+  const lost: number[] = [];
+  for (let i = 1; i < frames.length; i++) {
+    const previous = frames[i - 1];
+    const frame = frames[i];
+    if (!previous?.lineWork || !frame || frame.lineWork) continue;
+    const takenOver = Object.entries(frame.parts).some(
+      ([part, box]) =>
+        part.startsWith("row:") && !(part in previous.parts) && box.opacity >= POP_OPACITY && tookOverLine(box, previous, frame),
+    );
+    if (!takenOver) lost.push(frame.at);
+  }
+  return lost;
+}
+
 /** Parts that came or went at full opacity, unless another took their place at once. */
 function popsOf(frames: MotionFrame[], watched: (part: string) => boolean): Pop[] {
   const pops: Pop[] = [];
@@ -343,9 +392,11 @@ function popsOf(frames: MotionFrame[], watched: (part: string) => boolean): Pop[
     const at = frames[i]?.at ?? 0;
     for (const [part, box] of Object.entries(after))
       if (!(part in before) && box.seen && watched(part) && box.opacity >= POP_OPACITY) {
-        const tookOver = Object.entries(before).some(
-          ([name, old]) => !(name in after) && Math.abs(old.top - box.top) <= SWAP_PX && box.opacity <= old.opacity + 0.15,
-        );
+        const tookOver =
+          Object.entries(before).some(
+            ([name, old]) => !(name in after) && Math.abs(old.top - box.top) <= SWAP_PX && box.opacity <= old.opacity + 0.15,
+          ) ||
+          (part.startsWith("row:") && tookOverLine(box, frames[i - 1], frames[i]));
         if (!tookOver) pops.push({ part, at, opacity: box.opacity, way: "in" });
       }
     for (const [part, box] of Object.entries(before))
@@ -447,5 +498,6 @@ export function motionReport({ frames, longTasks }: Recording, history: Readonly
     rebuilt: rebuiltOf(frames),
     skips: skipsOf(frames),
     blankPictureFrames: frames.filter((frame) => frame.blankPictures > 0).length,
+    lostWork: lostWorkOf(frames),
   };
 }
