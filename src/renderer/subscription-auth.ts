@@ -171,10 +171,11 @@ function usePolledSignIn(when: { probeOnFocus: boolean; poll: boolean }, refresh
 export async function startSignIn(
   engine: string,
   opts?: { separate?: boolean; account?: string },
+  from: SettingsOpenedFrom = SettingsOpenedFrom.ConnectCard,
 ): Promise<{ started: boolean; missingCli?: boolean; error?: string }> {
   if (!isCliProvider(engine)) return window.studio.subscriptionSignIn({ engine, ...(opts ?? {}) });
   const result = await CLI_SIGN_IN[engine].signIn();
-  if (result.started) openSettings(SettingsSection.Providers, null, SettingsOpenedFrom.ConnectCard);
+  if (result.started) openSettings(SettingsSection.Providers, null, from);
   return result;
 }
 

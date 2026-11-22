@@ -2429,7 +2429,6 @@ export const MESSAGES = [
   "Open the page again",
   "Open the sign-in page",
   "Open the sign-in page and enter the code below. Device login may need to be enabled in your ChatGPT security settings.",
-  "Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in.",
   "Open this folder",
   "Open this game",
   "Open this game first, so its chat can publish it, or publish it yourself in Studio: {clicks}.",

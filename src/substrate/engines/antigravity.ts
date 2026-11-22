@@ -186,7 +186,6 @@ const MESSAGE = {
     "Google asks you to verify your Google account before Antigravity can run. Genex opened Google's page in your browser: verify there, then send your message again.",
   Verify:
     "Google asks you to verify your Google account before Antigravity can run. Sign in to Antigravity again from Settings › Model Providers and follow Google's steps, then send your message again.",
-  Notice: (title: string) => `Antigravity stopped: ${title}. Send the message again, or pick another model.`,
 } as const;
 
 /** How many of the CLI's newest logs are read for the page Google named, and how much of each. */
@@ -551,15 +550,13 @@ export class AntigravityEngine implements Engine {
   }
 
   /**
-   * A turn whose whole reply is the CLI's notice was refused by Google, though the CLI ended it as
-   * finished: it fails with what the person can do. For a verification, Google's page (from the
+   * A turn whose whole reply is the CLI's notice of Google's account check was refused, though the
+   * CLI ended it as finished: it fails with what the person can do, and Google's page (from the
    * CLI's log of the turn) opens in the browser, once.
    */
   async #refusedByNotice(run: AntigravityRun, startedAt: number): Promise<void> {
-    const notice = antigravityNotice(run.summary);
-    if (!notice) return;
-    if (notice !== AntigravityNotice.VerificationRequired)
-      throw new EngineError(EngineFailureKind.Other, this.id, MESSAGE.Notice(notice));
+    // Only a notice Genex knows: a model's own one-line reply may start with the sign too.
+    if (antigravityNotice(run.summary) !== AntigravityNotice.VerificationRequired) return;
     const page = await this.#verificationPage(startedAt).catch(() => null);
     const opens = page !== null && this.#openPage !== undefined;
     if (opens && !this.#opened.has(page)) {

@@ -501,11 +501,12 @@ A failed turn is named by ACP's code (`-32000` a sign-in failure) or by Google's
 the error (`RESOURCE_EXHAUSTED` a usage limit; `UNAVAILABLE`, `INTERNAL`, `DEADLINE_EXCEEDED`
 unavailable); anything else ends the build with the CLI's words. When Google refuses a turn the
 CLI does not say so over ACP: it writes one notice as the whole reply ("⚠ Verification Required")
-and ends the turn as finished. A reply that is nothing but such a notice (`antigravityNotice`)
-fails the turn and a one-shot answer, so a game is never named by it. For Google's account check
-(`PERMISSION_DENIED` with `VALIDATION_REQUIRED`) the engine reads the page Google named from the
-CLI's newest logs since the turn began (`verificationPage`, only `https://accounts.google.com`),
-opens it in the browser once (`openPage`), and the turn says to verify there and send again. Stop sends `session/cancel` and
+and ends the turn as finished. A reply that is nothing but the notice of Google's account check
+(`PERMISSION_DENIED` with `VALIDATION_REQUIRED`; `antigravityNotice`, `AntigravityNotice`) fails
+the turn and a one-shot answer, so a game is never named by it; any other reply, one starting with
+the sign included, stays the model's. The engine reads the page Google named from the CLI's newest
+logs since the turn began (`verificationPage`, only `https://accounts.google.com`), opens it in the
+browser once (`openPage`), and the turn says to verify there and send again. Stop sends `session/cancel` and
 gives the CLI five seconds to answer before it is stopped; a turn that says nothing for 10 minutes
 (30 while a tool call is open) is stopped with its process group. Compact now is refused.
 A live run on a signed-in Mac (CLI 1.5.7, free plan) reads the sign-in, builds in the game and
@@ -904,7 +905,8 @@ names windows by length and scopes non-default buckets. Claude sessions at work 
 usage (see Native context telemetry). `readUsage()` answers null when the plan shares no limits and
 throws when they could not be read; a plan named with no limit is `not_shared` and keeps its name.
 Antigravity's plan is listed too: its session names the plan (`_meta.antigravity.tier`) and no
-limit, so it shows by name with the note that it shares none, and no account switch. Each engine reuses a reading under a minute old and shares an
+limit, so it shows by name with the note that it shares none, and no account switch; its Sign in
+again starts its own sign-in in Model Providers. Each engine reuses a reading under a minute old and shares an
 in-flight read; a Recheck clears it. The composer asks when its ring panel opens or the ring is
 hovered, and every minute while open; until the first answer it draws each plan this setup uses
 at full size with shimmering bars, and a plan being read with no numbers yet does the same. A

@@ -974,6 +974,27 @@ describe("Google's refusals the CLI writes as a turn's reply", () => {
     assert.equal(opened.length, 1, "the same page is not opened again");
   });
 
+  it("a model's own reply that starts with the warning sign is still the model's answer", async () => {
+    const { engine } = await engineWith({
+      prompt: async (message, agent) => {
+        agent.say({
+          method: AcpMethod.SessionUpdate,
+          params: {
+            sessionId: (message.params as Json).sessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "⚠️ Texture missing, used a fallback colour" },
+            },
+          },
+        });
+        return { stopReason: "end_turn" };
+      },
+    });
+    const result = await engine.delegate({ cwd: await game(), prompt: "go" });
+    assert.equal(result.ok, true, "only a notice Genex knows fails a turn");
+    assert.equal(result.summary, "⚠️ Texture missing, used a fallback colour");
+  });
+
   it("without the page in a log, or with no browser to open, the turn says where to sign in again", async () => {
     for (const options of [{ log: null }, { log: "nothing of Google's here\n" }, {}]) {
       const opened: string[] = [];

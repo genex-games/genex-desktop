@@ -23,6 +23,8 @@ import { COMPACT_WORDS, PROVIDER_ACCOUNT_WORDS } from "../words.ts";
 import { openSettings, SettingsOpenedFrom, SettingsSection } from "../settings-navigation.ts";
 import type { SubscriptionAccountView } from "../../shared/subscription-accounts.ts";
 import { accountLabel, activeAccount, switchAccount, useSubscriptionAccounts } from "../subscription-accounts.ts";
+import { startSignIn } from "../subscription-auth.ts";
+import { isCliProvider } from "../panels/cli-sign-in.ts";
 import { useEngines, useProviderUsage } from "../state/hooks.ts";
 import { SUBSCRIPTION_ENGINES } from "../../shared/providers.ts";
 import { studio } from "../state/studio.ts";
@@ -141,8 +143,15 @@ function PlanAccountsLine({
   return <PlanAccounts engine={report.engine} accounts={accounts} onSwitched={() => onSwitched(reload)} />;
 }
 
-/** Start an account's web sign-in and open Model Providers, where that sign-in shows. */
+/**
+ * Start an account's web sign-in and open Model Providers, where that sign-in shows; a CLI's own
+ * sign-in (Antigravity's) starts in its row there, which `startSignIn` opens.
+ */
 async function signInAgain(engine: string, account: string | null): Promise<void> {
+  if (isCliProvider(engine)) {
+    await startSignIn(engine, undefined, SettingsOpenedFrom.ComposerLimits);
+    return;
+  }
   await window.studio.subscriptionSignIn({ engine, ...(account ? { account } : {}) });
   openSettings(SettingsSection.Providers, undefined, SettingsOpenedFrom.ComposerLimits);
 }
