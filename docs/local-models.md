@@ -10,8 +10,9 @@ such as Inkling before 0.40.17) is never a pick there or in Settings; it stays u
 Both read the version again when Ollama starts answering. The welcome screen keeps a model that is
 downloading or already installed from the picks. Below 48 GB Inkling is not offered: on a 32 GB Mac
 it ran out of GPU memory before answering Genex's first prompt, although the fit rule below
-estimates that it fits. Ollama ships Inkling only as an MLX build, so Windows and Linux keep their
-own picks until Ollama runs it there.
+estimates that it fits. Ollama ships Inkling only as an MLX build, so on an x64 Windows or Linux PC
+Studio downloads and runs Inkling itself, the way it runs Bonsai on a Mac ([Inkling on a
+PC](#inkling-on-a-pc)). That entry sits under More models and in no tier until a PC has measured it.
 
 A local model leads the automatic choice, so a chat with nothing else to run opens on it. A model
 that finishes downloading never replaces the model a chat already shows: the chat keeps it as its
@@ -19,18 +20,12 @@ pick, which a game chat or Home also hands to new games (`keptShownModel`), and 
 the picker. Only the download counts; Ollama starting or a list growing as the app opens moves
 nothing. Explicit picks always remain selected.
 
-Inkling on a PC today goes through a model server rather than Ollama: mainline llama.cpp runs
-Unsloth's GGUF builds (`unsloth/Inkling-2-Mini-GGUF`, the `Mainline_Support` files) since
-ggml-org/llama.cpp #32704 (the looped layers, merged 21 Nov 2026). `llama-server --jinja` answers
-on port 8080, which Local server finds by itself ([your own model
-server](connections-and-context.md#your-own-model-server)), so game chats and builds run on it
-with no Genex change. Every Unsloth quant keeps 11 to 40 expert tensors in NVFP4, the format the
-model was trained in, and llama.cpp's Metal backend cannot run NVFP4: on a 32 GB M2 Max, 11.4 GB of
-the 17.6 GB Q4_K_XL ran on the CPU, so Genex's 18K-token first prompt fit but took ~27 minutes
-(~11 tokens/s) and replies came at ~2.7 tokens/s. That route is no answer for small Macs. When
-Ollama can pull a build for Windows and Linux, add it to the catalog as the portable entry with
-`mlx` naming `inkling-2-mini:26b-a5b`, which then stays the Apple Silicon build, and measure it on
-a PC before ranking it.
+Mainline llama.cpp runs Inkling since ggml-org/llama.cpp #32704 (the looped layers, b12600). Every
+Unsloth quant keeps 11 to 40 expert tensors in NVFP4, which llama.cpp's Metal backend cannot run: on
+a 32 GB M2 Max, 11.4 GB of the 17.6 GB Q4_K_XL ran on the CPU, so Genex's 18K-token first prompt
+took ~27 minutes. Studio's own PC download uses AtomicChat's requantization instead, which has no
+NVFP4 tensor. When Ollama can pull a build for Windows and Linux, add it to the catalog as the
+portable entry with `mlx` naming `inkling-2-mini:26b-a5b`, and measure it on a PC before ranking it.
 
 `substrate/models-catalog.json` holds one entry per model: name, size, tools, vision and a
 one-line `about` of at most 60 characters. People see the name, never the tag: Settings, the
@@ -80,7 +75,29 @@ Model location.
 Settings → Local Models downloads Bonsai weights and the Q8 vision projector directly from pinned
 Prism ML Hugging Face revisions, plus the pinned Prism llama.cpp macOS arm64 release.
 Stock Ollama cannot run these Bonsai 2 packs. Ollama remains independently available.
-`substrate/bonsai/manifest.ts` owns exact bytes, SHA-256 digests and source URLs.
+`substrate/bonsai/manifest.ts` owns exact bytes, SHA-256 digests and source URLs, and which
+llama.cpp build each model runs on per kind of machine (`runtimeFor`); a machine with none is
+refused before anything is fetched (`needs_apple_silicon` for Bonsai, `unsupported_machine`
+otherwise).
+
+### Inkling on a PC
+
+On an x64 Windows or Linux PC, Local Models offers Inkling 2 Mini (`inkling-2-mini:gguf-q4_k`,
+catalog flag `pc`; the `mlx` sibling hides it on Apple Silicon). Download fetches mainline llama.cpp
+b12631's Vulkan build for that platform (about 37 MB; one archive that runs on NVIDIA, AMD and
+Intel graphics with the driver the PC already has; Linux also needs the system's Vulkan loader,
+`libvulkan1`), then AtomicChat's `Inkling-2-Mini-AD-Q4_K.gguf` (16.5 GB, plain k-quants, 96.3% of
+next tokens the same as the BF16 original) and its Q8_0 projector, at a pinned Hugging Face
+revision. Windows unpacks the zip with its own `System32\tar.exe`; each archive's listing is
+checked first, and an entry that is absolute, names a drive or climbs with `..` refuses the
+install, unpacking nothing. The server runs with `--jinja`, a 65,536-token window and no
+`--n-gpu-layers`: llama-server's `--fit` keeps on the card what fits and the rest of the experts in
+RAM. Reasoning effort is the chat template's `reasoning_effort` (low, medium, high, max) in
+`chat_template_kwargs`, not a token budget; sampling is top_p 1, top_k 0, min_p 0. The memory
+check before download applies to Bonsai only; the catalog's fit rule (graphics memory plus RAM's
+share) decides whether the row says it fits or runs split. Deleting the last model a build serves
+removes that build too. Untested on a real PC so far; Vulkan may run some of Inkling's operations on
+the CPU, which only a PC measurement will show.
 A new upstream release is a deliberate manifest update, never a floating download of latest.
 
 Downloads retain partial files for resume, check available space and verify the full SHA-256
@@ -218,6 +235,9 @@ installed state, local worker selection under Codex and subscription roles under
 
 `bonsai.test.ts` and `engine-ollama.test.ts` also cover Delete: what goes, what another model
 keeps, and refusals that remove nothing.
+`managed-llama-runtime.test.ts` covers the PC path with a stand-in llama-server in a real
+archive: which machine gets which build, the download order, unpacking, Inkling's flags and
+reasoning control, refusals that fetch nothing, hostile archive entries and Delete.
 
 `model-catalog.test.ts` covers ranking, Best fit per tier, one build per architecture, graphics
 memory in a PC's budget, tier, split and Best fit on the card, and "Needs a N GB Mac";

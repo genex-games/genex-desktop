@@ -108,10 +108,42 @@ describe("model catalog", () => {
     }
   });
 
-  it("never offers Inkling 2 Mini off Apple Silicon: Ollama ships only its MLX build", async () => {
-    for (const hw of [machine(64, false), pc(32, [RTX_24]), pc(64, [RTX_24])]) {
+  it("offers Inkling 2 Mini to an x64 PC as Studio's own llama.cpp download, under More models", async () => {
+    // Ollama ships only its MLX build, so a PC gets the GGUF Studio runs itself. Not measured on a
+    // PC yet, so it ranks in no tier: never a Best fit, a Download where it fits.
+    for (const hw of [
+      machine(64, false),
+      pc(32, [RTX_24]),
+      pc(64, [RTX_24]),
+      pc(32, [{ name: "RTX 3060", memoryGb: 12 }]),
+    ]) {
       const { picks, more } = await recommendModels(hw);
-      assert.ok(![...picks, ...more].some((p) => p.model.startsWith("inkling-2-mini")));
+      const inkling = [...picks, ...more].filter((p) => p.model.startsWith("inkling-2-mini"));
+      assert.deepEqual(
+        inkling.map((p) => [p.model, p.engine, p.name]),
+        [["inkling-2-mini:gguf-q4_k", "bonsai", "Inkling 2 Mini"]],
+      );
+      assert.ok(!picks.includes(inkling[0]), "never ranked");
+      assert.equal(inkling[0]?.fits, true, `${hw.platform} ${hw.ramGb} GB fits it`);
+    }
+    const twelve = await recommendModels(pc(32, [{ name: "RTX 3060", memoryGb: 12 }]));
+    assert.equal(twelve.more.find((p) => p.model === "inkling-2-mini:gguf-q4_k")?.split, true);
+    const small = await recommendModels(pc(16, [{ name: "GTX 1060", memoryGb: 6 }]));
+    assert.equal(small.more.find((p) => p.model === "inkling-2-mini:gguf-q4_k")?.fits, false, "16 GB and a 6 GB card");
+  });
+
+  it("never offers the PC build of Inkling to a Mac or an Arm PC", async () => {
+    const intelMac = hardwareOf({ cpu: "Intel", ramBytes: 64 * 1024 ** 3, platform: "darwin", arch: "x64", gpus: [] });
+    const armPc = hardwareOf({
+      cpu: "Snapdragon",
+      ramBytes: 64 * 1024 ** 3,
+      platform: "win32",
+      arch: "arm64",
+      gpus: [],
+    });
+    for (const hw of [machine(64, true), machine(128, true), intelMac, armPc]) {
+      const { picks, more } = await recommendModels(hw);
+      assert.ok(![...picks, ...more].some((p) => p.model === "inkling-2-mini:gguf-q4_k"), `${hw.platform}/${hw.arch}`);
     }
   });
 
@@ -254,7 +286,7 @@ it("offers both Bonsai packings on supported Macs and neither on 8 GB or other h
   for (const hw of [machine(8, true), machine(32, false)]) {
     const { picks, more } = await recommendModels(hw);
     assert.equal(
-      [...picks, ...more].some((p) => p.engine === "bonsai"),
+      [...picks, ...more].some((p) => p.model.startsWith("bonsai-2:")),
       false,
     );
   }

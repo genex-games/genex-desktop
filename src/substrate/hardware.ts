@@ -90,6 +90,8 @@ export interface CatalogModel {
   appleSilicon?: boolean;
   /** Managed packs also have a minimum machine (Bonsai: 16 GB). */
   minRamGb?: number;
+  /** Runs only on an x64 Windows or Linux PC, on the llama.cpp build Studio downloads there. */
+  pc?: boolean;
   /** The Apple-Silicon build of the same weights; on Apple Silicon only that build is shown. */
   mlx?: string;
   about: string;
@@ -105,7 +107,7 @@ export interface CatalogTier {
 }
 
 /** A catalog model judged against one machine. */
-export interface CatalogChoice extends Omit<CatalogModel, "notes" | "mlx" | "minRamGb"> {
+export interface CatalogChoice extends Omit<CatalogModel, "notes" | "mlx" | "minRamGb" | "pc"> {
   model: string;
   fits: boolean;
   /** Weights + context + overhead, the figure compared with the machine's model budget. */
@@ -257,9 +259,14 @@ export function fitFor(
   };
 }
 
+/** An x64 Windows or Linux PC, where Studio's own llama.cpp build runs. */
+const isX64Pc = (hw: HardwareInfo): boolean =>
+  hw.arch === "x64" && (hw.platform === StudioPlatform.Windows || hw.platform === StudioPlatform.Linux);
+
 /** Whether this machine's architecture should see the model at all — one build per model. */
 function offered(id: string, model: CatalogModel, hw: HardwareInfo): boolean {
   if (model.appleSilicon && !hw.appleSilicon) return false;
+  if (model.pc && !isX64Pc(hw)) return false;
   if (model.minRamGb !== undefined && hw.ramGb < model.minRamGb) return false;
   // One build per model: on Apple Silicon the MLX sibling replaces the portable GGUF.
   const mlxSibling = model.mlx && model.mlx !== id ? catalogModels()[model.mlx] : undefined;
@@ -267,7 +274,7 @@ function offered(id: string, model: CatalogModel, hw: HardwareInfo): boolean {
 }
 
 function choice(id: string, model: CatalogModel, hw: HardwareInfo): CatalogChoice {
-  const { notes: _notes, mlx: _mlx, minRamGb: _min, ...shown } = model;
+  const { notes: _notes, mlx: _mlx, minRamGb: _min, pc: _pc, ...shown } = model;
   return { ...shown, model: id, ...fitFor(model.sizeGb, hw) };
 }
 

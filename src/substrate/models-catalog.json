@@ -57,7 +57,18 @@
       "appleSilicon": true,
       "minRamGb": 48,
       "about": "Best for building games. Fast for its size.",
-      "notes": "Thinking Machines, 20 Nov 2026, Apache 2.0. 26.4B looped mixture-of-experts, 5.4B effective active parameters, trained in NVFP4. Ollama ships one MLX build (latest, 26b-a5b and 26b-a5b-nvfp4 share a digest; 20,188,097,271 bytes), listed for Apple silicon; Ollama 0.32.14 refuses the pull (412), 0.40.17 runs it. Unsloth's GGUF needs an unmerged llama.cpp branch (looped layers), so Ollama cannot run it on Windows or Linux yet: lift appleSilicon once it can. Measured on an M2 Max/32 GB, 21 Nov 2026: tool calls correct, ~24 tokens/s out, but Ollama reached 25-26 GB and Metal failed with Insufficient Memory after ~12K prompt tokens, so Genex's first ~15K-token prompt never got an answer. Hence minRamGb 48 although the fit rule's estimate says 32 GB, and not on the 32 GB tier; 48 and 64 GB Macs are not measured yet. Leads open models under 100B on DeepSWE v1.1 (48.2%) and SWE-bench Pro v2 (77.9%), vendor-reported."
+      "notes": "Thinking Machines, 20 Nov 2026, Apache 2.0. 26.4B looped mixture-of-experts, 5.4B effective active parameters, trained in NVFP4. Ollama ships one MLX build (latest, 26b-a5b and 26b-a5b-nvfp4 share a digest; 20,188,097,271 bytes), listed for Apple silicon; Ollama 0.32.14 refuses the pull (412), 0.40.17 runs it. Ollama has no Windows or Linux build of it yet: PCs get inkling-2-mini:gguf-q4_k, which Studio runs on its own llama.cpp. Measured on an M2 Max/32 GB, 21 Nov 2026: tool calls correct, ~24 tokens/s out, but Ollama reached 25-26 GB and Metal failed with Insufficient Memory after ~12K prompt tokens, so Genex's first ~15K-token prompt never got an answer. Hence minRamGb 48 although the fit rule's estimate says 32 GB, and not on the 32 GB tier; 48 and 64 GB Macs are not measured yet. Leads open models under 100B on DeepSWE v1.1 (48.2%) and SWE-bench Pro v2 (77.9%), vendor-reported."
+    },
+    "inkling-2-mini:gguf-q4_k": {
+      "engine": "bonsai",
+      "name": "Inkling 2 Mini",
+      "sizeGb": 16.9,
+      "tools": true,
+      "vision": true,
+      "pc": true,
+      "mlx": "inkling-2-mini:26b-a5b",
+      "about": "Best for building games. Fast for its size.",
+      "notes": "Managed mainline llama.cpp b12631 (Vulkan) on x64 Windows and Linux PCs, with AtomicChat's AD-Q4_K GGUF (16,525,559,776 bytes, requantized from BF16 to k-quants, so no NVFP4 tensor) and its Q8_0 projector (345,911,008 bytes); 96.3% top-1 agreement with BF16 per its card. llama-server's --fit keeps what fits on the graphics card and the rest of the experts in RAM: a 12 GB RTX 3060 with 64 GB RAM ran Unsloth's 17.6 GB Q4 at ~22 tokens/s with a 16K context (jakejharris/jjh-inkling-2-mini-12gb, CUDA). Not measured in Studio: the team's only PC has a 6 GB GTX 1060 and 16 GB RAM, which the fit rule rightly refuses. So it is under More models on a PC, in no tier, until a PC measures it. On Apple Silicon the Ollama MLX build stands in for it."
     },
     "qwen3.8:27b-mlx": {
       "name": "Qwen 3.8 27B",

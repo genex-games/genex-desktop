@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import path from "node:path";
 import { BonsaiRuntime } from "../bonsai/runtime.ts";
-import { BONSAI_MODELS, bonsaiModel } from "../bonsai/manifest.ts";
+import { MANAGED_MODELS, ManagedFamily, managedModel } from "../bonsai/manifest.ts";
+import { StudioPlatform } from "../../shared/boot.ts";
 import { LocalSessions } from "./local-session.ts";
 import type { Message, ToolCall } from "../types.ts";
 import {
@@ -102,12 +103,20 @@ const LONG_CONTEXT_TIMEOUT_MS = 25 * MINUTE_MS;
 const SHORT_CONTEXT_TIMEOUT_MS = 10 * MINUTE_MS;
 /** How much of a context error the engine error quotes. */
 const ERROR_BODY_CHARS = 500;
-/** Bonsai's recommended sampling. */
-const BONSAI_SAMPLING = { top_p: 0.95, top_k: 20, min_p: 0 } as const;
+/** Each family's recommended sampling: Bonsai's, and Inkling's (its vendor sets only temperature 1). */
+const SAMPLING: Record<ManagedFamily, { top_p: number; top_k: number; min_p: number }> = {
+  [ManagedFamily.Bonsai]: { top_p: 0.95, top_k: 20, min_p: 0 },
+  [ManagedFamily.Inkling]: { top_p: 1, top_k: 0, min_p: 0 },
+};
+/**
+ * Inkling's chat template reads `reasoning_effort` by name: none, minimal, low, medium, high, xhigh
+ * or max (its default is high). Its card warns of long reasoning loops, so a build starts at low.
+ */
+const INKLING_EFFORT: Record<string, string> = { low: "low", medium: "medium", high: "high", max: "max" };
 /** Thinking tokens per reasoning effort; -1 lets the model think as long as it likes. */
 const REASONING_BUDGET: Record<string, number> = { low: 512, medium: 2048, high: 8192, max: -1 };
-/** The efforts a Bonsai model offers, and where it starts. */
-const BONSAI_EFFORTS: string[] = [
+/** The efforts a managed model offers, and where it starts. */
+const MANAGED_EFFORTS: string[] = [
   ReasoningEffort.Low,
   ReasoningEffort.Medium,
   ReasoningEffort.High,
@@ -121,10 +130,14 @@ const BONSAI_EFFORTS: string[] = [
  */
 const MESSAGE = {
   AppleSiliconOnly: () => t("Bonsai requires Apple Silicon"),
+  NoLocalModel: () => t("Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC"),
   Ready: () => t("Bonsai installed · starts on demand"),
   NotDownloaded: () => t("Download Bonsai 2 to build locally"),
   DownloadRemedy: () => t("Download Bonsai 2 27B or Bonsai 2 27B Lite in Settings › Local Models."),
-  DownloadFirst: "Download Bonsai first",
+  InklingReady: () => t("Inkling 2 Mini installed · starts on demand"),
+  InklingNotDownloaded: () => t("Download Inkling 2 Mini to build locally"),
+  InklingDownloadRemedy: () => t("Download Inkling 2 Mini in Settings › Local Models."),
+  DownloadFirst: "Download a local model first",
   NoTokens: "Runtime tokenizer returned no tokens",
   EmptyResponse: "Empty inference response",
   StreamEnded: "Inference stream ended before completion",
@@ -137,9 +150,13 @@ type CompletionBody = ReturnType<typeof completionBody>;
 /** POST a JSON body to the running model server. */
 type Post = (route: string, value: unknown) => Promise<Response>;
 
+/**
+ * The models Studio downloads and runs itself on its own llama.cpp server: Bonsai 2 on Apple
+ * Silicon Macs, Inkling 2 Mini on Windows and Linux PCs. Its id stays `bonsai` on the wire.
+ */
 export class BonsaiEngine implements Engine {
   readonly id = EngineId.Bonsai;
-  readonly label = "Bonsai · on this Mac";
+  readonly label = process.platform === StudioPlatform.Mac ? "Bonsai · on this Mac" : "Inkling · on this PC";
   readonly kind = EngineKind.Direct;
   readonly supportsSessions = true;
   /** Its sessions run Genex's own loop (`LocalSessions`), which reads the person's messages between rounds. */
@@ -160,29 +177,40 @@ export class BonsaiEngine implements Engine {
       scratchRoot: options.scratchRoot,
       protectedPaths: options.protectedPaths ?? [options.root],
       complete: (r) => this.complete(r),
-      contextWindow: this.runtime.contextWindow,
+      contextWindow: (model) => this.runtime.contextWindowFor(model),
       toolPath: options.toolPath,
     });
   }
   async status(): Promise<EngineStatus> {
-    if (process.platform !== "darwin" || process.arch !== "arm64")
-      return { code: EngineStatusCode.NotInstalled, detail: MESSAGE.AppleSiliconOnly() };
-    if ((await this.models()).length) return { code: EngineStatusCode.Ready, detail: MESSAGE.Ready() };
-    return { code: EngineStatusCode.NotInstalled, detail: MESSAGE.NotDownloaded(), remedy: MESSAGE.DownloadRemedy() };
+    const family = MANAGED_MODELS.find((model) => this.runtime.runsHere(model.id))?.family;
+    if (!family) {
+      const detail = process.platform === StudioPlatform.Mac ? MESSAGE.AppleSiliconOnly() : MESSAGE.NoLocalModel();
+      return { code: EngineStatusCode.NotInstalled, detail };
+    }
+    const inkling = family === ManagedFamily.Inkling;
+    if ((await this.models()).length)
+      return { code: EngineStatusCode.Ready, detail: inkling ? MESSAGE.InklingReady() : MESSAGE.Ready() };
+    return inkling
+      ? {
+          code: EngineStatusCode.NotInstalled,
+          detail: MESSAGE.InklingNotDownloaded(),
+          remedy: MESSAGE.InklingDownloadRemedy(),
+        }
+      : { code: EngineStatusCode.NotInstalled, detail: MESSAGE.NotDownloaded(), remedy: MESSAGE.DownloadRemedy() };
   }
   async models() {
     const found = [];
-    for (const model of BONSAI_MODELS)
+    for (const model of MANAGED_MODELS)
       if (await this.runtime.installed(model.id))
         found.push({
           id: model.id,
           label: model.label,
-          contextWindow: this.runtime.contextWindow,
+          contextWindow: this.runtime.contextWindowFor(model.id),
           maxTokens: DEFAULT_REPLY_TOKENS,
           supportsTools: true,
           supportsVision: true,
           supportsThinking: true,
-          efforts: [...BONSAI_EFFORTS],
+          efforts: [...MANAGED_EFFORTS],
           defaultEffort: ReasoningEffort.Low,
           installed: true,
           sizeBytes: model.file.bytes,
@@ -198,17 +226,17 @@ export class BonsaiEngine implements Engine {
   async delegate(request: DelegateRequest) {
     const model = request.model ?? (await this.defaultModel());
     if (!model) throw new EngineError(EngineFailureKind.Unavailable, this.id, MESSAGE.DownloadFirst);
-    bonsaiModel(model);
+    managedModel(model);
     return this.sessions.run(request, model);
   }
   async complete(request: CompleteRequest): Promise<CompleteResponse> {
     const model = request.model ?? (await this.defaultModel());
     if (!model) throw new EngineError(EngineFailureKind.Unavailable, this.id, MESSAGE.DownloadFirst);
-    bonsaiModel(model);
+    managedModel(model);
     // Cold long-context prefill can exceed ten minutes on an M2 Max. The caller
     // signal still enforces the enclosing build/session deadline and cancellation.
     const ceilingMs =
-      this.runtime.contextWindow > LONG_CONTEXT_TOKENS ? LONG_CONTEXT_TIMEOUT_MS : SHORT_CONTEXT_TIMEOUT_MS;
+      this.runtime.contextWindowFor(model) > LONG_CONTEXT_TOKENS ? LONG_CONTEXT_TIMEOUT_MS : SHORT_CONTEXT_TIMEOUT_MS;
     const timeout = AbortSignal.timeout(request.timeoutMs ?? ceilingMs);
     const signal = AbortSignal.any([timeout, ...(request.signal ? [request.signal] : [])]);
     let release: (() => void) | undefined;
@@ -261,7 +289,7 @@ export class BonsaiEngine implements Engine {
   async #preflight(request: CompleteRequest, model: string, body: CompletionBody, post: Post): Promise<void> {
     const imageCount = request.messages.reduce((n, m) => n + (m.images?.length ?? 0), 0);
     const tokens = await this.#countPromptTokens(request, body, post);
-    const contextWindow = this.runtime.contextWindow;
+    const contextWindow = this.runtime.contextWindowFor(model);
     const required = tokens + imageCount * IMAGE_RESERVE_TOKENS + body.max_tokens + TEMPLATE_SLACK_TOKENS;
     const percent =
       request.contextPolicy?.mode === "custom"
@@ -395,9 +423,16 @@ export class BonsaiEngine implements Engine {
   }
 }
 
-/** The streaming chat-completion request for one call: messages, sampling, thinking budget, tools. */
+/** How long the model may think: Bonsai's token budget, or Inkling's effort level in its chat template. */
+function reasoningControl(family: ManagedFamily, effort: string) {
+  if (family === ManagedFamily.Inkling)
+    return { chat_template_kwargs: { reasoning_effort: INKLING_EFFORT[effort] ?? INKLING_EFFORT.low } };
+  return { reasoning_budget_tokens: REASONING_BUDGET[effort] ?? REASONING_BUDGET.low };
+}
+
+/** The streaming chat-completion request for one call: messages, sampling, thinking control, tools. */
 function completionBody(request: CompleteRequest, model: string) {
-  const budget = REASONING_BUDGET[request.effort ?? ReasoningEffort.Low] ?? REASONING_BUDGET.low;
+  const { family } = managedModel(model);
   return {
     model,
     messages: openAiMessages(request.messages, request.systemPrompt),
@@ -405,8 +440,8 @@ function completionBody(request: CompleteRequest, model: string) {
     stream_options: { include_usage: true },
     max_tokens: request.maxTokens ?? DEFAULT_REPLY_TOKENS,
     temperature: request.temperature ?? 1,
-    ...BONSAI_SAMPLING,
-    reasoning_budget_tokens: budget,
+    ...SAMPLING[family],
+    ...reasoningControl(family, request.effort ?? ReasoningEffort.Low),
     ...(request.tools?.length
       ? { tools: request.tools.map((t) => ({ type: "function", function: t })), tool_choice: "auto" }
       : {}),

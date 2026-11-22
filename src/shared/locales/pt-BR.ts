@@ -528,8 +528,6 @@ export default {
   Blur: "Desfoque",
   "Bonsai currently requires an Apple Silicon Mac": "Por enquanto, o Bonsai precisa de um Mac com Apple Silicon",
   "Bonsai installed · starts on demand": "Bonsai instalado · inicia quando necessário",
-  "Bonsai is answering a chat or build. Delete the model when it finishes.":
-    "O Bonsai está respondendo em um chat ou build. Exclua o modelo quando ele terminar.",
   "Bonsai requires Apple Silicon": "O Bonsai precisa de Apple Silicon",
   "Bonsai requires at least 16 GiB of memory.": "O Bonsai precisa de pelo menos 16 GiB de memória.",
   "Bonsai runtime is unavailable": "O runtime do Bonsai está indisponível",
@@ -6588,4 +6586,12 @@ export default {
   "The cap is used up": "O limite acabou",
   "This game wants to hear you through your microphone.": "Este jogo quer ouvir você pelo microfone.",
   "Use real AI": "Usar IA real",
+  "A local model is answering a chat or build. Delete the model when it finishes.":
+    "Um modelo local está respondendo em um chat ou build. Exclua o modelo quando ele terminar.",
+  "Download Inkling 2 Mini in Settings › Local Models.": "Baixe o Inkling 2 Mini em Configurações › Modelos locais.",
+  "Download Inkling 2 Mini to build locally": "Baixe o Inkling 2 Mini para criar localmente",
+  "Inkling 2 Mini installed · starts on demand": "Inkling 2 Mini instalado · inicia quando necessário",
+  "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
+    "Modelos locais precisam de um Mac com Apple Silicon ou um PC de 64 bits com Windows ou Linux",
+  "{model} can't run on this computer.": "{model} não roda neste computador.",
 } satisfies LocaleCatalog;

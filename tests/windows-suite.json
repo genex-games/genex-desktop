@@ -175,6 +175,7 @@
   "tests/conformance/loop-shell-quoting.test.ts",
   "tests/conformance/main-ipc.test.ts",
   "tests/conformance/main-memory.test.ts",
+  "tests/conformance/managed-llama-runtime.test.ts",
   "tests/conformance/markdown.test.ts",
   "tests/conformance/mcp-client.test.ts",
   "tests/conformance/mcp-import.test.ts",

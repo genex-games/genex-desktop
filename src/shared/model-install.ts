@@ -17,6 +17,8 @@ export type RuntimeInstallPhase = Exclude<InstallPhase, typeof InstallPhase.Inst
 /** Why a model install failed (`ModelInstallJob.problem`), and its IPC failure's code. Never rename a value. */
 export const ModelInstallProblem = {
   NeedsAppleSilicon: "needs_apple_silicon",
+  /** No pinned build of this model's runtime runs on this computer. */
+  UnsupportedMachine: "unsupported_machine",
   NeedsMemory: "needs_memory",
   NotEnoughSpace: "not_enough_space",
   /** Another model is installing. */

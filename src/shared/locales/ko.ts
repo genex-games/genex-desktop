@@ -471,8 +471,6 @@ export default {
   Blur: "흐림",
   "Bonsai currently requires an Apple Silicon Mac": "Bonsai에는 현재 Apple 실리콘 Mac이 필요해요",
   "Bonsai installed · starts on demand": "Bonsai 설치됨 · 필요할 때 시작",
-  "Bonsai is answering a chat or build. Delete the model when it finishes.":
-    "Bonsai가 채팅이나 빌드에 답하는 중이에요. 끝나면 모델을 삭제해 주세요.",
   "Bonsai requires Apple Silicon": "Bonsai에는 Apple 실리콘이 필요해요",
   "Bonsai requires at least 16 GiB of memory.": "Bonsai에는 최소 16GiB 메모리가 필요해요.",
   "Bonsai runtime is unavailable": "Bonsai 런타임을 사용할 수 없어요",
@@ -6363,4 +6361,12 @@ export default {
   "The cap is used up": "한도를 다 썼어",
   "This game wants to hear you through your microphone.": "이 게임이 마이크로 네 목소리를 듣고 싶어 해.",
   "Use real AI": "실제 AI 사용",
+  "A local model is answering a chat or build. Delete the model when it finishes.":
+    "로컬 모델이 채팅이나 빌드에 답하는 중이에요. 끝나면 모델을 삭제해 주세요.",
+  "Download Inkling 2 Mini in Settings › Local Models.": "설정 › 로컬 모델에서 Inkling 2 Mini를 다운로드해 주세요.",
+  "Download Inkling 2 Mini to build locally": "로컬에서 만들려면 Inkling 2 Mini를 다운로드하세요",
+  "Inkling 2 Mini installed · starts on demand": "Inkling 2 Mini 설치됨 · 필요할 때 시작",
+  "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
+    "로컬 모델에는 Apple 실리콘 Mac이나 64비트 Windows 또는 Linux PC가 필요해요",
+  "{model} can't run on this computer.": "{model}은(는) 이 컴퓨터에서 실행할 수 없어요.",
 } satisfies LocaleCatalog;

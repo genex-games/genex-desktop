@@ -450,8 +450,6 @@ export default {
   Blur: "模糊",
   "Bonsai currently requires an Apple Silicon Mac": "Bonsai 目前需要搭载 Apple 芯片的 Mac",
   "Bonsai installed · starts on demand": "Bonsai 已安装 · 按需启动",
-  "Bonsai is answering a chat or build. Delete the model when it finishes.":
-    "Bonsai 正在回复对话或构建。请等它完成后再删除模型。",
   "Bonsai requires Apple Silicon": "Bonsai 需要 Apple 芯片",
   "Bonsai requires at least 16 GiB of memory.": "Bonsai 需要至少 16 GiB 内存。",
   "Bonsai runtime is unavailable": "Bonsai 运行时不可用",
@@ -6141,4 +6139,12 @@ export default {
   "The cap is used up": "额度用完了",
   "This game wants to hear you through your microphone.": "这个游戏想通过麦克风听你说话。",
   "Use real AI": "使用真实 AI",
+  "A local model is answering a chat or build. Delete the model when it finishes.":
+    "本地模型正在回复对话或构建。请等它完成后再删除模型。",
+  "Download Inkling 2 Mini in Settings › Local Models.": "请在“设置 › 本地模型”中下载 Inkling 2 Mini。",
+  "Download Inkling 2 Mini to build locally": "下载 Inkling 2 Mini 即可在本地构建",
+  "Inkling 2 Mini installed · starts on demand": "Inkling 2 Mini 已安装 · 按需启动",
+  "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
+    "本地模型需要搭载 Apple 芯片的 Mac，或 64 位 Windows / Linux 电脑",
+  "{model} can't run on this computer.": "{model} 无法在这台电脑上运行。",
 } satisfies LocaleCatalog;
