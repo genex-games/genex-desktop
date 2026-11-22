@@ -386,10 +386,13 @@ is.
     (`directGenexEnv`: an https origin, nothing after it) and reaches it, and the relays, authority
     servers and fast endpoints its answers name, over the internet (`internetClient`, outbound TCP
     and UDP); there "Genex only" is not enforced.
-  - **What goes through.** Requests and WebSockets go on to their own Genex host over TLS. Relay and
-    authority addresses in JSON answers (relay lists, `authorityUrls`, `authorityRegions`, a seat's
-    `publicAddress`) are rewritten to their local port, so region probes, joins and room sockets
-    come back through the gateway. An authority room names its fast@1 endpoint inside its WebSocket
+  - **What goes through.** Requests and WebSockets go on to their own Genex host over TLS, on the
+    port its address named (443 when none; the API names authority regions on 2053, 2083 and
+    8443). Relay and authority addresses in JSON answers (relay lists, `authorityUrls`,
+    `authorityRegions`, a seat's `publicAddress`) are rewritten to their local port, which replaces
+    the named one, so region probes, joins and room sockets come back through the gateway. Each
+    host and port gets a local port of its own; an address naming a port Cloudflare doesn't proxy
+    HTTPS on is left as it was. An authority room names its fast@1 endpoint inside its WebSocket
     (`__fast`, multiplayer PROTOCOL.md §17.12): the gateway reads the room's frames (never the
     game's), rewrites that url to a datagram port (`gateway-frames.ts`) and drops the compression
     offer so it can. Each game socket on a datagram port gets its own UDP socket to the endpoint, so
