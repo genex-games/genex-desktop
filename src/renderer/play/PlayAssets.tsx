@@ -315,8 +315,9 @@ function FeedTiles({ online, scroller }: { online: boolean; scroller: RefObject<
   const reload = () => void play.loadFeed(PlayCategory.Assets, { force: true });
   const failed = feed.status === FeedStatus.Failed;
   const failureShown = useTriesAgain({ failed, read: feed.status === FeedStatus.Ready }, reload);
+  const waiting = (failed || feed.status === FeedStatus.Loading) && tiles.length === 0;
   if (failureShown) return <Failed things={things} online={online} onRetry={reload} />;
-  if ((failed || feed.status === FeedStatus.Loading) && tiles.length === 0) return <Loading things={things} />;
+  if (waiting) return <Loading things={things} />;
   if (tiles.length === 0) return <Notice text={PLAY_WORDS.empty(things)} />;
   return (
     <>
@@ -335,9 +336,9 @@ function CatalogTiles({ kind, online }: { kind: KindChoice; online: boolean }): 
   const reload = () => void studio().play.loadAssetCatalog({ force: true });
   const failed = catalog.status === FeedStatus.Failed;
   const failureShown = useTriesAgain({ failed, read: catalog.status === FeedStatus.Ready }, reload);
+  const waiting = (failed || catalog.status === FeedStatus.Loading) && catalog.items.length === 0;
   if (failureShown) return <Failed things={things} online={online} onRetry={reload} />;
-  if ((failed || catalog.status === FeedStatus.Loading) && catalog.items.length === 0)
-    return <Loading things={things} />;
+  if (waiting) return <Loading things={things} />;
   if (tiles.length === 0) return <Notice text={PLAY_WORDS.empty(things)} />;
   return <AssetGrid tiles={tiles} placeholders={0} />;
 }
@@ -425,11 +426,13 @@ function MineTiles({
   const shown = sameLibraryKey(feed, key);
   const reload = () => void play.loadLibrary(key, { force: true });
   const failed = signedIn && shown && feed.status === FeedStatus.Failed;
-  const failureShown = useTriesAgain({ failed, read: feed.status === FeedStatus.Ready }, reload);
+  const read = feed.status === FeedStatus.Ready;
+  const failureShown = useTriesAgain({ failed, read, of: `${kind}\n${typed}` }, reload);
+  const waiting = (failed || feed.status === FeedStatus.Loading) && tiles.length === 0;
+  const loading = !shown || waiting;
   if (account !== null && !signedIn) return <SignInNotice />;
   if (failureShown) return <Failed things={things} online={online} onRetry={reload} />;
-  const waiting = failed || feed.status === FeedStatus.Loading;
-  if (!shown || (waiting && tiles.length === 0)) return <Loading things={things} />;
+  if (loading) return <Loading things={things} />;
   if (tiles.length === 0) return <Notice text={mineEmpty(key)} />;
   return (
     <>

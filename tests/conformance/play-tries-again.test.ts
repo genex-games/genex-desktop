@@ -110,7 +110,9 @@ describe("A failed Play read tried again", () => {
     assert.deepEqual(hand.pending(), []);
     assert.equal(hand.listening(), 0);
   });
+});
 
+describe("A failed Play read out of sight", () => {
   it("keeps a failure out of sight while its first tries run, and shows it with Try again after", () => {
     const hand = handClock();
     const counted: number[] = [];
@@ -128,6 +130,25 @@ describe("A failed Play read tried again", () => {
     assert.equal(shown.at(-1), true, "a failure past its quiet tries shows");
     reads.reset();
     assert.equal(counted.at(-1), 0, "a read that succeeds hides the next failure again");
+  });
+
+  it("starts over, out of sight again, when another read (a tab, a search) takes the failed one's place", () => {
+    const hand = handClock();
+    const counted: number[] = [];
+    const reads = failedRead(hand.clock, WAITS, (tries) => counted.push(tries));
+    reads.readOf("popular");
+    for (let failure = 0; failure < QUIET_TRIES + 1; failure++) {
+      const stop = reads.watch(() => {});
+      hand.fire();
+      stop();
+    }
+    assert.equal(failureShown(counted.at(-1) ?? 0, true), true, "the first tab's failure shows");
+    reads.readOf("popular");
+    assert.equal(failureShown(counted.at(-1) ?? 0, true), true, "the same read keeps its count");
+    reads.readOf("new");
+    assert.equal(failureShown(counted.at(-1) ?? 0, true), false, "the other tab's first failure stays out of sight");
+    reads.watch(() => {});
+    assert.deepEqual(hand.pending(), [WAITS[0]], "and waits the first wait");
   });
 
   it("shows a failure at once while the Mac is offline, where the offline notice says why", () => {

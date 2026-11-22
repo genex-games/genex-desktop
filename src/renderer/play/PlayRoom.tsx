@@ -277,10 +277,11 @@ function FeedBody({
   useOnlineCounts(category, feed.status === FeedStatus.Ready);
   const failed = feed.status === FeedStatus.Failed;
   // While its first tries again run, a failed tab still reads as loading.
-  const failureShown = useTriesAgain({ failed, read: feed.status === FeedStatus.Ready }, reload);
+  const failureShown = useTriesAgain({ failed, read: feed.status === FeedStatus.Ready, of: category }, reload);
+  const waiting = (failed || feed.status === FeedStatus.Loading) && feed.games.length === 0;
   if (failed && !online) return <OfflineNotice text={WORDS.offline.shelf(shelf)} onRetry={reload} />;
   if (failureShown) return <Notice text={WORDS.failed(shelf)} onRetry={reload} />;
-  if ((failed || feed.status === FeedStatus.Loading) && feed.games.length === 0)
+  if (waiting)
     return (
       <div role="status" aria-busy="true" aria-label={WORDS.loading(shelf)}>
         <Grid games={[]} placeholders={PLACEHOLDERS} onRemix={onRemix} />

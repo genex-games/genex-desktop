@@ -70,7 +70,8 @@ const WINDOW_CLOCK: TryAgainClock = {
 /**
  * A read's failures in a row, and its tries again while one is shown: `watch` waits the next of
  * `waits` (the last once they run out) and tries again, unless the Mac is offline, and tries at once
- * when it comes back online or the window comes forward; `reset` starts the waits over.
+ * when it comes back online or the window comes forward; `reset` starts the waits over, as `readOf`
+ * does when another read (a tab, a search) takes the failed one's place.
  */
 export function failedRead(
   clock: TryAgainClock,
@@ -78,6 +79,7 @@ export function failedRead(
   tried: (tries: number) => void = () => {},
 ) {
   let tries = 0;
+  let reading: string | undefined;
   return {
     /** Try `again` while the read stays failed; answers the stop, for when it no longer is. */
     watch(again: () => void): () => void {
@@ -101,6 +103,12 @@ export function failedRead(
       tries = 0;
       tried(tries);
     },
+    /** The read now on screen: another one than before starts the waits over, out of sight again. */
+    readOf(of: string | undefined): void {
+      if (of === reading) return;
+      reading = of;
+      this.reset();
+    },
   };
 }
 
@@ -114,6 +122,8 @@ export const failureShown = (tries: number, online: boolean): boolean => !online
 export interface ReadStanding {
   failed: boolean;
   read: boolean;
+  /** Which read it is (a tab, a search): another one starts its waits over, out of sight again. */
+  of?: string;
 }
 
 /**
@@ -128,10 +138,12 @@ export function useTriesAgain(standing: ReadStanding, retry: () => void): boolea
   const [tries, setTries] = useState(0);
   const [reads] = useState(() => failedRead(WINDOW_CLOCK, TRY_AGAIN_WAITS_MS, setTries));
   const online = useOnline();
-  const { failed, read } = standing;
+  const { failed, read, of } = standing;
   useEffect(() => {
     if (read) reads.reset();
   }, [reads, read]);
-  useEffect(() => (failed ? reads.watch(() => latest.current()) : undefined), [reads, failed]);
+  useEffect(() => reads.readOf(of), [reads, of]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: another read arms its own first wait.
+  useEffect(() => (failed ? reads.watch(() => latest.current()) : undefined), [reads, failed, of]);
   return failed && failureShown(tries, online);
 }
