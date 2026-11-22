@@ -85,6 +85,7 @@ import {
 import { createPeopleStore, type PeopleStore } from "./people.ts";
 import { createItemsStore, type ItemsStore, ItemsRead } from "./items.ts";
 import { createGenexReviewStore, type GenexReviewStore } from "./genex-review.ts";
+import { createPreviewAiStore, type PreviewAiStore } from "./preview-ai.ts";
 import { GENEX_PLUGIN_ID } from "../../shared/genex.ts";
 import { createSharingStore, type SharingStore } from "./sharing.ts";
 import {
@@ -165,6 +166,8 @@ export interface Studio {
   readonly genexReview: GenexReviewStore;
   /** Save and Share on the open game's assets (`sharing.ts`). */
   readonly sharing: SharingStore;
+  /** Live's play-time models and microphone ask per game (`preview-ai.ts`). */
+  readonly previewAi: PreviewAiStore;
   readonly agentScreens: AgentScreensStore;
   readonly commandRuns: CommandRunsStore;
   /** What commands a reply offered have printed, outside React state. */
@@ -261,6 +264,7 @@ interface Stores {
   readonly items: ItemsStore;
   readonly genexReview: GenexReviewStore;
   readonly sharing: SharingStore;
+  readonly previewAi: PreviewAiStore;
   readonly agentScreens: AgentScreensStore;
   readonly commandRuns: CommandRunsStore;
   readonly commandOutput: CommandOutput;
@@ -298,6 +302,7 @@ function createStores(
     items: createItemsStore(api, timers),
     genexReview: createGenexReviewStore(api),
     sharing: createSharingStore(api, timers),
+    previewAi: createPreviewAiStore(api),
     agentScreens: createAgentScreensStore(),
     commandRuns: createCommandRunsStore(),
     commandOutput: createCommandOutput(),
@@ -437,10 +442,25 @@ function bootstrapper(
 
 /** The events that change a store directly, beyond the reads they ask for. */
 function applyUiEvent(
-  { agentScreens, threads, layout, library, update, play, agentsStart, providerUsage, items, genexReview }: Stores,
+  {
+    agentScreens,
+    threads,
+    layout,
+    library,
+    update,
+    play,
+    agentsStart,
+    providerUsage,
+    items,
+    genexReview,
+    previewAi,
+  }: Stores,
   event: UiEvent,
 ): void {
   switch (event.type) {
+    case UiEvent.PreviewAi:
+      previewAi.heard(event.payload);
+      break;
     case UiEvent.GenexReviewChanged:
       // A game's review changed: the sidebar's lines are read again.
       void genexReview.refresh();

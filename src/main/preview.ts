@@ -59,6 +59,13 @@ import {
 import { PAGE_DISPATCH } from "./page-dispatch.ts";
 import { anchoredBounds, placedBounds, slotHidden } from "./preview-anchor.ts";
 import { gameViewPreferences } from "./game-view.ts";
+import {
+  isMediaPermission,
+  previewInputPermissions,
+  previewMicMayAsk,
+  previewMicShown,
+  previewPermitted,
+} from "./preview-permissions.ts";
 import { capActions, type PreviewInputAction } from "../substrate/preview-input.ts";
 import { applyInputAction, type PageDispatch } from "./preview-input-driver.ts";
 import { cropImageFile, diffImageFiles, encodedImageStats, pairJpeg, resizeStill } from "./preview-images.ts";
@@ -161,6 +168,11 @@ export interface GamePreviewOptions {
   muted?: boolean;
   /** The app's default page-shim settings; a single `load` may override any of them. */
   shim?: Partial<ShimOptions>;
+  /**
+   * Live's microphone (`core/preview-mic.ts`): whether the person allows the game it shows, asked
+   * through Live's bar. Absent (every agent's window): the microphone is refused with no prompt.
+   */
+  microphone?: { ask(project: string): Promise<boolean>; allowed(project: string): boolean };
 }
 
 const SCHEME = "game";
@@ -307,6 +319,30 @@ export class GamePreview {
     return this.#view;
   }
 
+  /**
+   * The game never gets the camera or anything else. Pointer lock (and fullscreen, which some
+   * engines request alongside it) is granted: first-person mouse-look is core gameplay, and denying
+   * it silently killed look controls for the user. The microphone is Live's alone, for a game that
+   * declares it and only once the person allowed it (`preview-permissions.ts`).
+   */
+  #grantPermissions(gameSession: Electron.Session): void {
+    const inputs = previewInputPermissions(this.options.offscreen ?? false);
+    const microphone = this.options.microphone;
+    gameSession.setPermissionRequestHandler((wc, permission, callback, details) => {
+      if (!isMediaPermission(permission)) return callback(previewPermitted(permission, inputs));
+      void this.#micRequest(wc.getURL(), details).then(callback, () => callback(false));
+    });
+    gameSession.setPermissionCheckHandler((_wc, permission, _origin, details) => {
+      if (!isMediaPermission(permission)) return previewPermitted(permission, inputs);
+      const allowed = microphone !== undefined && this.#project !== null && microphone.allowed(this.#project);
+      return previewMicShown(
+        { mediaType: details.mediaType, isMainFrame: details.isMainFrame },
+        microphone !== undefined,
+        allowed,
+      );
+    });
+  }
+
   /** Create the view and install the protocol handler on its partition. */
   create(): WebContentsView {
     if (this.#closed) throw new Error(MESSAGE.closed);
@@ -315,14 +351,7 @@ export class GamePreview {
     const gameSession = session.fromPartition(partition);
     this.#session = gameSession;
 
-    // The game never gets to ask for the camera, the mic, or anything else. Pointer lock (and
-    // fullscreen, which some engines request alongside it) is the one exception: first-person
-    // mouse-look is core gameplay, and denying it silently killed look controls for the user.
-    const HUMAN_INPUT_PERMISSIONS = new Set(this.options.offscreen ? ["pointerLock"] : ["pointerLock", "fullscreen"]);
-    gameSession.setPermissionRequestHandler((_wc, permission, callback) =>
-      callback(HUMAN_INPUT_PERMISSIONS.has(permission)),
-    );
-    gameSession.setPermissionCheckHandler((_wc, permission) => HUMAN_INPUT_PERMISSIONS.has(permission));
+    this.#grantPermissions(gameSession);
 
     if (!gameSession.protocol.isProtocolHandled(SCHEME)) {
       gameSession.protocol.handle(SCHEME, (request) => this.#serve(request));
@@ -511,6 +540,23 @@ export class GamePreview {
   async #serve(request: Request): Promise<Response> {
     const url = new URL(request.url);
     return this.#serveFile(url.hostname, url.pathname, request);
+  }
+
+  /**
+   * A media request from the page on `page`: refused at once unless this is Live and it is audio
+   * alone from the game's own top frame (`previewMicMayAsk`); then the person's answer for the game.
+   */
+  async #micRequest(
+    page: string,
+    details: Electron.PermissionRequest | Electron.MediaAccessPermissionRequest,
+  ): Promise<boolean> {
+    const microphone = this.options.microphone;
+    const project = this.#project;
+    if (!microphone || project === null) return false;
+    const mediaTypes = "mediaTypes" in details ? (details.mediaTypes ?? []) : [];
+    const request = { mediaTypes, isMainFrame: details.isMainFrame, requestingUrl: details.requestingUrl };
+    if (!previewMicMayAsk(request, page, true, Date.now())) return false;
+    return microphone.ask(project);
   }
 
   async #serveLoopback(request: Request): Promise<Response> {

@@ -1,11 +1,12 @@
 /**
  * A real HTTP server speaking enough of OpenAI's chat-completions stream for a real coding CLI
- * (Pi, through a `models.json` provider) to run one scripted turn with no account: nothing
- * reaches a provider and nothing is billed.
+ * (Pi, through a `models.json` provider; OpenCode 2.x, through a provider of its config) to run one
+ * scripted turn with no account: nothing reaches a provider and nothing is billed.
  *
- * The script is one call, then done: a turn that offers tools gets one shell command (the `bash`
- * tool), and the request that carries that call's output gets a short reply. A turn with no
- * script, or one that offers no tools, gets the reply at once. Every request is kept.
+ * The script is one call, then done: a turn that offers tools gets one shell command (Pi's `bash`
+ * tool, or the one a test names), and the request that carries that call's output gets a short
+ * reply. A turn with no script, or one that offers no tools (OpenCode's session title, which
+ * leaves the script for the turn after it), gets the reply at once. Every request is kept.
  */
 import { createServer, type IncomingHttpHeaders, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -16,6 +17,8 @@ export const FAKE_CHAT_DONE_TEXT = "Done: the command ran.";
 export const FAKE_CHAT_PROVIDER = "genex-fake";
 export const FAKE_CHAT_MODEL = "probe";
 const TOOL_CALL_ID = "call_probe";
+/** The shell tool as Pi names it. */
+const PI_SHELL_TOOL = "bash";
 
 export interface FakeChat {
   /** The provider's base URL for a `models.json` entry. */
@@ -68,8 +71,11 @@ function wordsOf(content: unknown): string {
 /** The loopback address the fake provider listens on unless a test names another. */
 const LOOPBACK = "127.0.0.1";
 
-/** The fake provider, listening on loopback: on `host`, another address of this computer's own. */
-export async function startFakeChat(host: string = LOOPBACK): Promise<FakeChat> {
+/**
+ * The fake provider, listening on loopback: on `host`, another address of this computer's own.
+ * Its scripted command is a call of `shellTool`, the CLI's own name for its shell tool.
+ */
+export async function startFakeChat(host: string = LOOPBACK, shellTool: string = PI_SHELL_TOOL): Promise<FakeChat> {
   const requests: ChatBody[] = [];
   const headers: IncomingHttpHeaders[] = [];
   let command: string | null = null;
@@ -84,16 +90,16 @@ export async function startFakeChat(host: string = LOOPBACK): Promise<FakeChat> 
       return;
     }
     const run = body.tools?.length ? command : null;
-    command = null;
     if (run === null) {
       stream(res, model, [{ role: "assistant", content: FAKE_CHAT_DONE_TEXT }], "stop");
       return;
     }
+    command = null;
     const call = {
       index: 0,
       id: TOOL_CALL_ID,
       type: "function",
-      function: { name: "bash", arguments: JSON.stringify({ command: run }) },
+      function: { name: shellTool, arguments: JSON.stringify({ command: run }) },
     };
     stream(res, model, [{ role: "assistant", content: null, tool_calls: [call] }], "tool_calls");
   };

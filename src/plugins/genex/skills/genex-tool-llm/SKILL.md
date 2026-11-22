@@ -9,11 +9,15 @@ this preface, this preface wins.
 - Only a game hosted on Genex can call a model. In Studio a game becomes one when you publish its
   first draft with `genex__publish {"operation":"draft"}` (the user approves it); Genex's own
   `npx genex init --convert` does not apply here, and the card's steps below leave it out.
-- Then read the full procedure with `genex__skill {"name":"genex-llm-in-games"}`.
+- Then read the full procedure with `genex__skill {"name":"genex-llm-in-games"}`. Its preface says
+  how a game made here ships with the calls on (provisional ceilings until a bench runs), and that
+  Studio's preview answers every call with practice answers (`source: 'practice'`, made up, free),
+  which the person can switch to real models in Live. The game labels its written lines whenever
+  they play instead.
 - Other commands map onto Studio tools as the `genex` skill describes
   (`genex__skill {"name":"genex"}`).
 
-<!-- upstream genex-demo@6c79d69ed/apps/cli/templates/skills/genex-tool-llm/SKILL.md v1.44.0 sha256 fc87c7a9e032b15e6c7eecd1e279344d92d21efa961128aa1e23b55d322249d2 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-llm/SKILL.md v1.44.0 sha256 fc87c7a9e032b15e6c7eecd1e279344d92d21efa961128aa1e23b55d322249d2 -->
 ---
 name: genex-tool-llm
 description: A language model running while somebody PLAYS the finished game — NPCs that answer in their own words, AI opponents, teammates or agents that plan and act, a narrator or game master, a quest written from what the player typed, a prompt box in the game. On Genex the player pays and approves it, so this is a platform feature, never a key on the author's meter.

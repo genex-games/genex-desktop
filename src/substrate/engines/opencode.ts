@@ -20,6 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as sleep } from "node:timers/promises";
+import type { Writable } from "node:stream";
 import { promisify } from "node:util";
 import { CATALOG_DEADLINE_MS, ModelCatalog } from "./model-catalog.ts";
 import { cliVersion, resolveCodingCli } from "./external-cli.ts";
@@ -58,8 +59,11 @@ import { abortControllerFor, CompletionStop, interruption, partialDelegateResult
 import type { PartialDelegateState } from "./common.ts";
 import { gameSettingsDenyWrites, ProcessSandbox, type SandboxOptions, shellQuote } from "../spawn.ts";
 import { childEnv } from "../child-env.ts";
+import { LoopbackProtocol } from "../linux-loopback-bridge.ts";
+import { LOOPBACK_HOST, loopbackPortFree } from "../loopback-ports.ts";
 import { credentialHomes, openCodeDataHome } from "../credential-homes.ts";
 import { spawnCommand } from "../command-launch.ts";
+import { treeKiller } from "../plugins/native-process.ts";
 import { stopChild } from "../process-tree.ts";
 import type { Usage } from "../types.ts";
 import { CodingCliState } from "../../shared/coding-cli.ts";
@@ -83,6 +87,17 @@ const LISTING_SETTLE_MS = 15 * SECOND_MS;
 const LISTING_READ_TIMEOUT_MS = 5 * SECOND_MS;
 /** The user name 2.x's server takes with the password it was started with. */
 const SERVER_USER = "opencode";
+/** 2.x's flag for a private server the run starts itself, on a port of its own choosing. */
+const STANDALONE_FLAG = "--standalone";
+/** How long a session's own server may take to listen, and how often its port is tried. */
+const OWN_SERVER_READY_TIMEOUT_MS = 30 * SECOND_MS;
+const OWN_SERVER_POLL_MS = 100;
+/** How long one try of a session's server may take. */
+const OWN_SERVER_PROBE_TIMEOUT_MS = SECOND_MS;
+/** What a session's server is asked to tell it from another listener: an answer only its password gets. */
+const OWN_SERVER_PROBE_PATH = "/api/session";
+/** The ports this process's own session servers hold or are starting on. */
+const CLAIMED_PORTS = new Set<number>();
 /** How long a git probe for a worktree's metadata may take. */
 const GIT_PROBE_TIMEOUT_MS = 5 * SECOND_MS;
 /** How long a judge's one-shot answer may take before it is a timeout. */
@@ -122,6 +137,10 @@ const MESSAGE = {
   Untested: (ready: string) => t("{status} · newer than Genex has tested", { status: ready }),
   UnknownVersion: "Genex can't tell which OpenCode version this is. Check it again in Settings › Model Providers.",
   ServerSilent: "OpenCode's model server did not say where it answers",
+  OwnServerSilent: "OpenCode's own server did not start in time",
+  OwnServerFailed: (words: string) => `OpenCode's own server did not start: ${words}`,
+  NoServerPort: (range: readonly [number, number]) =>
+    `OpenCode found no free port for its own server (${range.join("-")}): other sessions or programs hold them all. Try again when one ends.`,
   ListingFailed: (status: number) => `OpenCode's model server answered ${status}`,
   NoTools: "OpenCode's one-shot answers take no studio tools",
   NoCompact: "OpenCode compacts its own sessions",
@@ -705,8 +724,9 @@ function dialectOf(version: string | undefined): OpenCodeDialect {
 /**
  * `opencode run`'s arguments. 1.18 leaves a game's plugins out (`--pure`) and takes the effort as
  * `--variant`; 2.x runs on a private server inside the sandbox (`--standalone`: its shared background
- * one runs outside it, with another process's settings), as OpenCode's builder agent, and takes the
- * effort after the model (`provider/model#variant`).
+ * one runs outside it, with another process's settings; `openCodeEvents` starts that server itself
+ * where the sandbox fences loopback), as OpenCode's builder agent, and takes the effort after the
+ * model (`provider/model#variant`).
  */
 function sessionArgv(
   dialect: OpenCodeDialect,
@@ -717,7 +737,7 @@ function sessionArgv(
   const attached = files.flatMap((file) => ["--file", file]);
   if (dialect === OpenCodeDialect.V2) {
     const picked = model ? ["--model", variant ? `${model}#${variant}` : model] : [];
-    return ["run", "--format", "json", "--standalone", "--agent", OPENCODE_AGENT, ...picked, ...session, ...attached];
+    return ["run", "--format", "json", STANDALONE_FLAG, "--agent", OPENCODE_AGENT, ...picked, ...session, ...attached];
   }
   return [
     "run",
@@ -1051,15 +1071,209 @@ async function* runOpenCode(invocation: OpenCodeInvocation): AsyncGenerator<Reco
   }
 }
 
+/** What `openCodeEvents` asks of a sandbox. */
+type SessionSandbox = Pick<ProcessSandbox, "spawnLongLived" | "loopbackPorts" | "enabled">;
+/** A session as started: everything but the sandbox it is started in. */
+type SessionStart = Omit<OpenCodeInvocation, "sandbox">;
+
+/**
+ * Start `binary` with the invocation's argv in `sandbox` and yield its events. Where the sandbox
+ * fences loopback (Windows), a 2.x session's private server cannot be the run's own: `--standalone`
+ * listens on a port of the system's choosing, which the session may not connect to ("Transport:
+ * EACCES"; newer 2.x reaches loopback past the sandbox's proxy). There the server is started here,
+ * in the same sandbox, on a port the sandbox opens, and the run is pointed at it.
+ */
+export async function* openCodeEvents(
+  sandbox: SessionSandbox,
+  binary: string,
+  invocation: SessionStart,
+): AsyncGenerator<Record<string, unknown>> {
+  // Unboxed (Bypass), the run is the person's own and its loopback is not fenced.
+  const fenced = sandbox.enabled && invocation.argv.includes(STANDALONE_FLAG);
+  const range = fenced ? sandbox.loopbackPorts() : null;
+  if (range === null) {
+    yield* sessionEvents(sandbox, binary, invocation);
+    return;
+  }
+  const server = await startOwnServer(sandbox, binary, invocation, range);
+  try {
+    yield* sessionEvents(sandbox, binary, onOwnServer(invocation, server));
+  } finally {
+    await stopOwnServer(server);
+    CLAIMED_PORTS.delete(server.port);
+  }
+}
+
+/**
+ * End a session's server: its input closed, which ends a `--stdio` server, then it and everything it
+ * started (the sandbox's shell runs it one level down).
+ */
+async function stopOwnServer({ child, input }: Pick<OwnServer, "child" | "input">): Promise<void> {
+  input.end();
+  const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
+  const exited = child.exitCode !== null || child.signalCode !== null;
+  await treeKiller(child)().catch(() => {});
+  if (!exited) await Promise.race([closed, sleep(KILL_GRACE_MS)]);
+}
+
+/** A session's own server: its process, where it answers and the password it takes. */
+interface OwnServer {
+  child: ChildProcess;
+  /** Its stdin, held open for its life: a `--stdio` server ends when it closes. */
+  input: Writable;
+  port: number;
+  url: string;
+  password: string;
+}
+
+/** The invocation with its run pointed at `server` instead of starting one. */
+function onOwnServer(invocation: SessionStart, server: OwnServer): SessionStart {
+  return {
+    ...invocation,
+    argv: invocation.argv.flatMap((arg) => (arg === STANDALONE_FLAG ? ["--server", server.url] : [arg])),
+    env: { ...invocation.env, OPENCODE_PASSWORD: server.password },
+  };
+}
+
+/**
+ * `opencode serve` in the session's sandbox, folder and environment, on the highest free port of
+ * `range` (the sandbox's proxies take it from the bottom) that no other session of this process
+ * holds, with a password made here. A server that exits before it listens on a port another program
+ * took meanwhile lost a race: the next port is tried. One that exits with its port still free failed
+ * to start, and its stderr says why.
+ */
+async function startOwnServer(
+  sandbox: SessionSandbox,
+  binary: string,
+  invocation: SessionStart,
+  range: readonly [number, number],
+): Promise<OwnServer> {
+  const password = randomBytes(32).toString("base64url");
+  const [low, high] = range;
+  for (let port = high; port >= low; port--) {
+    invocation.signal.throwIfAborted();
+    if (CLAIMED_PORTS.has(port)) continue;
+    CLAIMED_PORTS.add(port);
+    const server = await serverOnPort(sandbox, binary, invocation, { port, password }).catch((err: unknown) => {
+      CLAIMED_PORTS.delete(port);
+      throw err;
+    });
+    if (server) return server;
+    CLAIMED_PORTS.delete(port);
+  }
+  throw new Error(MESSAGE.NoServerPort(range));
+}
+
+/**
+ * `opencode serve` on `port`: the server once it answers with its password; null when the port was
+ * not free or another listener took it first. A server that failed to start on a free port throws.
+ */
+async function serverOnPort(
+  sandbox: SessionSandbox,
+  binary: string,
+  invocation: SessionStart,
+  claim: { port: number; password: string },
+): Promise<OwnServer | null> {
+  const { port, password } = claim;
+  if (!(await loopbackPortFree(port, LoopbackProtocol.Tcp))) return null;
+  // `--stdio` as `--standalone` starts it: the server drops the password from the environment its
+  // tools inherit, and it ends when its stdin closes. srt-win passes no stdin of the child on: the
+  // live-input relay holds it. As with `--standalone`, a command of the session that reads another
+  // process's environment can still find the password; the sandbox's own limits hold either way.
+  const serve = [binary, "serve", "--stdio", "--hostname", LOOPBACK_HOST, "--port", String(port)];
+  const { child, input } = await sandbox.spawnLongLived({
+    command: serve.map(shellQuote).join(" "),
+    cwd: invocation.cwd,
+    env: { ...invocation.env, OPENCODE_PASSWORD: password },
+    label: `opencode-server:${path.basename(invocation.cwd)}`,
+    policy: { allowedDomains: invocation.domains },
+    liveInput: true,
+  });
+  // Its stdout is never read (a full pipe would stop it); stderr's tail explains a failed start.
+  child.stdout?.resume();
+  const said = stderrTail(child);
+  const url = `http://${LOOPBACK_HOST}:${port}`;
+  const listening = await ownServerListening(child, { url, password }, invocation.signal).catch(
+    async (err: unknown) => {
+      await stopOwnServer({ child, input });
+      throw err;
+    },
+  );
+  if (listening) return { child, input, port, url, password };
+  input.end();
+  if (await loopbackPortFree(port, LoopbackProtocol.Tcp)) throw await serverFailed(child, said);
+  return null;
+}
+
+/**
+ * Whether the server `child` came to listen at its `url`: true once it answers with its password,
+ * false when it exited first. Stopped by the session's stop; a server silent past its deadline is an error.
+ */
+async function ownServerListening(
+  child: ChildProcess,
+  server: { url: string; password: string },
+  signal: AbortSignal,
+): Promise<boolean> {
+  const deadline = Date.now() + OWN_SERVER_READY_TIMEOUT_MS;
+  const gone = (): boolean => child.exitCode !== null || child.signalCode !== null;
+  let failed = false;
+  child.once("error", () => {
+    failed = true;
+  });
+  while (Date.now() < deadline) {
+    signal.throwIfAborted();
+    if (failed || gone()) return false;
+    if (await answersWithPassword(server)) return !gone();
+    await sleep(OWN_SERVER_POLL_MS);
+  }
+  throw new Error(MESSAGE.OwnServerSilent);
+}
+
+/** The last of what `child` says on stderr, as it says it. */
+function stderrTail(child: ChildProcess): () => string {
+  let tail = "";
+  child.stderr?.setEncoding("utf8");
+  child.stderr?.on("data", (chunk: string) => {
+    tail = `${tail}${chunk}`.slice(-STDERR_TAIL_CHARS);
+  });
+  return () => tail;
+}
+
+/** A session's server that exited before it listened, explained by its stderr once it has closed. */
+async function serverFailed(child: ChildProcess, said: () => string): Promise<Error> {
+  if (child.exitCode === null && child.signalCode === null)
+    await Promise.race([new Promise((resolve) => child.once("close", resolve)), sleep(KILL_GRACE_MS)]);
+  const words = stripTerminalCodes(said()).trim();
+  return new Error(MESSAGE.OwnServerFailed(words || MESSAGE.Stopped(child.exitCode)));
+}
+
+/**
+ * Whether the server at `url` answers a request only its own password opens: a listener of another
+ * program, or another session's server, is never taken for it.
+ */
+async function answersWithPassword(server: { url: string; password: string }): Promise<boolean> {
+  const authorization = `Basic ${Buffer.from(`${SERVER_USER}:${server.password}`).toString("base64")}`;
+  try {
+    const response = await fetch(`${server.url}${OWN_SERVER_PROBE_PATH}`, {
+      headers: { authorization },
+      signal: AbortSignal.timeout(OWN_SERVER_PROBE_TIMEOUT_MS),
+    });
+    await response.body?.cancel();
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Start `binary` with the invocation's argv in `sandbox` and yield its events. The prompt is the
  * sandbox's to deliver: on Windows srt-win does not pass stdin on, so a prompt written to the
  * child never reached the CLI ("You must provide a message").
  */
-export async function* openCodeEvents(
+async function* sessionEvents(
   sandbox: Pick<ProcessSandbox, "spawnLongLived">,
   binary: string,
-  invocation: Omit<OpenCodeInvocation, "sandbox">,
+  invocation: SessionStart,
 ): AsyncGenerator<Record<string, unknown>> {
   const command = [binary, ...invocation.argv].map(shellQuote).join(" ");
   const { child } = await sandbox.spawnLongLived({

@@ -86,7 +86,7 @@ export function openCodeSignInArgs(version: string | undefined): string[] {
 type VersionNumbers = readonly [major: number, minor: number, patch: number];
 /** The oldest 2.x Genex runs (the first Homebrew shipped), and the newest it has been tested on. */
 const OLDEST_V2: VersionNumbers = [2, 0, 20];
-const NEWEST_TESTED_V2: VersionNumbers = [2, 0, 26];
+const NEWEST_TESTED_V2: VersionNumbers = [2, 3, 2];
 /** `1.18.35`, `opencode v2.0.20`: the first dotted triple in what `--version` prints. */
 const VERSION_NUMBERS = /(\d+)\.(\d+)\.(\d+)/;
 

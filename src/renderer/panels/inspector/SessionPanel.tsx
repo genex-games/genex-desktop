@@ -25,6 +25,7 @@ import { AssetThumbnail } from "../AssetThumbnail.tsx";
 import { Panel, Para, Quote } from "./chrome.tsx";
 import { capitalise } from "./format.ts";
 import { IMAGE_OUTLINE, Single } from "./pictures.tsx";
+import { MadeSounds, madeSounds } from "./MadeSounds.tsx";
 import { LiveScreen, usePartScreen } from "./screen.tsx";
 import { Status } from "./tone.tsx";
 import type { StepPanelProps } from "./types.ts";
@@ -98,6 +99,22 @@ function StillMedia({ props, src, asset }: { props: StepPanelProps; src: string 
   );
 }
 
+/**
+ * The card's media when no agent's screen is live. What a step made is on its row (its pictures
+ * stay at the row's right), so its card plays its sounds, never a cut-down picture of one thing;
+ * a step that made nothing shows its still, else its worker's delivered model.
+ */
+function restingMedia(
+  props: StepPanelProps,
+  still: { src: string | null; asset: ProjectAsset | null; pictured: boolean },
+): JSX.Element | null {
+  const made = props.step.assets ?? [];
+  if (!made.length) return still.pictured ? <StillMedia props={props} src={still.src} asset={still.asset} /> : null;
+  // A step that made only pictures has no media here: an empty column would still take the grid's gap.
+  const plays = props.project !== null && madeSounds(made).length > 0;
+  return plays ? <MadeSounds project={props.project} cards={made} /> : null;
+}
+
 /** The card's status: on a Loop's build line, a merged worker's work is in that build, not yet the game. */
 function sessionPill({ step, graph, timeline }: StepPanelProps): string {
   const place = timeline?.places.get(step.id);
@@ -114,7 +131,7 @@ export function SessionPanel(props: StepPanelProps): JSX.Element {
   const src = round ?? worker.src;
   // A worker that kept no picture and delivered nothing to draw has a card of words alone.
   const pictured = src !== null || (props.project !== null && worker.asset !== null);
-  const still = pictured ? <StillMedia props={props} src={src} asset={worker.asset} /> : null;
+  const still = restingMedia(props, { src, asset: worker.asset, pictured });
   const media = screen.frame ? (
     <LiveScreen
       frame={screen.frame}

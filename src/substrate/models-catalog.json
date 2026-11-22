@@ -1,11 +1,10 @@
 {
   "$comment": "Curated local-model picks. Data, not code. `models` holds one entry per model; `about` is the one line the user reads (60 characters at most) and `notes` is evidence that is never displayed. `tiers` rank model ids for a RAM class: the first that fits the machine is Best fit. Sizes are download sizes of the pinned tag, read from registry.ollama.ai manifests on 22 Sep 2026 for the models added then. The 32 GB Qwen MLX figures were measured on a real M2 Max, 21 Aug 2026; the large-Mac models added 22 Sep 2026 have not been measured in Studio.",
-  "updated": "2026-09-22",
+  "updated": "2026-11-21",
   "models": {
     "bonsai-2:27b-pq2_0": {
       "engine": "bonsai",
       "name": "Bonsai 2 27B",
-      "variant": "PQ2_0",
       "sizeGb": 7.84,
       "tools": true,
       "vision": true,
@@ -17,7 +16,7 @@
     "bonsai-2:27b-ptq1_0": {
       "engine": "bonsai",
       "name": "Bonsai 2 27B",
-      "variant": "PTQ1_0",
+      "variant": "Lite",
       "sizeGb": 6.58,
       "tools": true,
       "vision": true,
@@ -49,6 +48,27 @@
       "vision": false,
       "about": "Fast, dependable builder.",
       "notes": "Best tool-calling in class; reasoning effort is configurable — keep it low for long runs. Text-only, so it cannot judge a screenshot."
+    },
+    "inkling-2-mini:26b-a5b": {
+      "name": "Inkling 2 Mini",
+      "sizeGb": 18.8,
+      "tools": true,
+      "vision": true,
+      "appleSilicon": true,
+      "minRamGb": 48,
+      "about": "Best for building games. Fast for its size.",
+      "notes": "Thinking Machines, 20 Nov 2026, Apache 2.0. 26.4B looped mixture-of-experts, 5.4B effective active parameters, trained in NVFP4. Ollama ships one MLX build (latest, 26b-a5b and 26b-a5b-nvfp4 share a digest; 20,188,097,271 bytes), listed for Apple silicon; Ollama 0.32.14 refuses the pull (412), 0.40.17 runs it. Ollama has no Windows or Linux build of it yet: PCs get inkling-2-mini:gguf-q4_k, which Studio runs on its own llama.cpp. Measured on an M2 Max/32 GB, 21 Nov 2026: tool calls correct, ~24 tokens/s out, but Ollama reached 25-26 GB and Metal failed with Insufficient Memory after ~12K prompt tokens, so Genex's first ~15K-token prompt never got an answer. Hence minRamGb 48 although the fit rule's estimate says 32 GB, and not on the 32 GB tier; 48 and 64 GB Macs are not measured yet. Leads open models under 100B on DeepSWE v1.1 (48.2%) and SWE-bench Pro v2 (77.9%), vendor-reported."
+    },
+    "inkling-2-mini:gguf-q4_k": {
+      "engine": "bonsai",
+      "name": "Inkling 2 Mini",
+      "sizeGb": 16.9,
+      "tools": true,
+      "vision": true,
+      "pc": true,
+      "mlx": "inkling-2-mini:26b-a5b",
+      "about": "Best for building games. Fast for its size.",
+      "notes": "Managed mainline llama.cpp b12631 (Vulkan) on x64 Windows and Linux PCs, with AtomicChat's AD-Q4_K GGUF (16,525,559,776 bytes, requantized from BF16 to k-quants, so no NVFP4 tensor) and its Q8_0 projector (345,911,008 bytes); 96.3% top-1 agreement with BF16 per its card. llama-server's --fit keeps what fits on the graphics card and the rest of the experts in RAM: a 12 GB RTX 3060 with 64 GB RAM ran Unsloth's 17.6 GB Q4 at ~22 tokens/s with a 16K context (jakejharris/jjh-inkling-2-mini-12gb, CUDA). Not measured in Studio: the team's only PC has a 6 GB GTX 1060 and 16 GB RAM, which the fit rule rightly refuses. So it is under More models on a PC, in no tier, until a PC measures it. On Apple Silicon the Ollama MLX build stands in for it."
     },
     "qwen3.8:27b-mlx": {
       "name": "Qwen 3.8 27B",
@@ -172,10 +192,25 @@
       ]
     },
     {
+      "minRamGb": 48,
+      "expectation": "good",
+      "label": "48 GB — more room",
+      "picks": [
+        "inkling-2-mini:26b-a5b",
+        "bonsai-2:27b-pq2_0",
+        "qwen3.8:27b-mlx",
+        "qwen3.8:27b",
+        "gemma4:26b",
+        "gpt-oss:20b",
+        "bonsai-2:27b-ptq1_0"
+      ]
+    },
+    {
       "minRamGb": 64,
       "expectation": "good",
       "label": "64 GB — comfortable",
       "picks": [
+        "inkling-2-mini:26b-a5b",
         "bonsai-2:27b-pq2_0",
         "qwen3.8:27b-mlx",
         "qwen3.8:27b",
@@ -188,13 +223,22 @@
       "minRamGb": 96,
       "expectation": "strong",
       "label": "96 GB — roomy",
-      "picks": ["bonsai-2:27b-pq2_0", "gemma4:31b", "qwen3-coder-next", "qwen3.8:27b-mlx", "qwen3.8:27b", "qwen3.6:35b"]
+      "picks": [
+        "inkling-2-mini:26b-a5b",
+        "bonsai-2:27b-pq2_0",
+        "gemma4:31b",
+        "qwen3-coder-next",
+        "qwen3.8:27b-mlx",
+        "qwen3.8:27b",
+        "qwen3.6:35b"
+      ]
     },
     {
       "minRamGb": 128,
       "expectation": "strong",
       "label": "128 GB — large models",
       "picks": [
+        "inkling-2-mini:26b-a5b",
         "qwen3.5:122b",
         "devstral-2:123b",
         "gpt-oss:120b",
@@ -209,6 +253,7 @@
       "expectation": "strong",
       "label": "192 GB+",
       "picks": [
+        "inkling-2-mini:26b-a5b",
         "qwen3.5:122b",
         "qwen3.8-flash-next:125b-mlx",
         "devstral-2:123b",
@@ -240,10 +285,11 @@
     "qwen3.6:27b": "qwen3.8:27b"
   },
   "requiresOllama": {
-    "$comment": "Minimum Ollama version per model; the app warns instead of failing a pull that cannot work.",
+    "$comment": "Minimum Ollama version per model: a model the running Ollama is too old to pull is never a Best fit or ranked pick (hardware.ts ollamaCanPull).",
     "qwen3.8:27b": "0.32.12",
     "qwen3.8:27b-mlx": "0.32.12",
     "gemma4:26b": "0.32.0",
-    "gemma4:31b": "0.32.0"
+    "gemma4:31b": "0.32.0",
+    "inkling-2-mini:26b-a5b": "0.40.17"
   }
 }

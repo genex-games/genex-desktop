@@ -167,25 +167,35 @@
 .sidebar-lists > .play-recent-scroll[data-off="true"] {
   translate: -16px 0;
 }
-/* Recent's rows stand 2px apart; a big cover fills most of the row's height, the title close beside it. */
+/* Recent's rows stand 2px apart; the square cover fills most of the row's height, the title close beside it. */
 [data-play-recent-list] {
   gap: 2px;
 }
 .play-recent-row {
-  gap: 8px;
+  gap: 6px;
   padding-block: 6px;
   padding-inline-end: 8px;
 }
-/* A rounded 16:9 rectangle, so Play's rows read apart from Create's round game pictures; its edge is
-   the theme's line. */
+/* A rounded square, so Play's rows read apart from Create's round game pictures; the cover fills it
+   from its middle. Its edge is a border in the theme's line with the same colour behind the picture,
+   so the picture's rounded corners blend into the edge, not into the page: an outline over the
+   picture darkened at the corners, where its curve let the picture through. */
 .play-thumb {
   flex: none;
-  height: 28px;
-  aspect-ratio: 16 / 9;
-  border-radius: 7px;
+  display: block;
+  box-sizing: border-box;
+  width: 34px;
+  height: 34px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8.5px;
+  background: var(--line);
+}
+.play-thumb > img {
+  display: block;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
-  outline: 1px solid var(--line);
-  outline-offset: -1px;
 }
 .play-thumb-blank {
   overflow: hidden;

@@ -450,8 +450,6 @@ export default {
   Blur: "模糊",
   "Bonsai currently requires an Apple Silicon Mac": "Bonsai 目前需要搭载 Apple 芯片的 Mac",
   "Bonsai installed · starts on demand": "Bonsai 已安装 · 按需启动",
-  "Bonsai is answering a chat or build. Delete the model when it finishes.":
-    "Bonsai 正在回复对话或构建。请等它完成后再删除模型。",
   "Bonsai requires Apple Silicon": "Bonsai 需要 Apple 芯片",
   "Bonsai requires at least 16 GiB of memory.": "Bonsai 需要至少 16 GiB 内存。",
   "Bonsai runtime is unavailable": "Bonsai 运行时不可用",
@@ -658,7 +656,8 @@ export default {
   Checkpoint: "检查点",
   Choose: "选择",
   "Choose Blender…": "选择 Blender…",
-  "Choose PQ2_0 (recommended) or PTQ1_0 in Model setup.": "请在模型设置中选择 PQ2_0（推荐）或 PTQ1_0。",
+  "Download Bonsai 2 27B or Bonsai 2 27B Lite in Settings › Local Models.":
+    "请在“设置 › 本地模型”中下载 Bonsai 2 27B 或 Bonsai 2 27B Lite。",
   "Choose a PNG, JPEG or WebP image, or a valid cover recipe.": "请选择 PNG、JPEG 或 WebP 图片，或有效的封面配方。",
   "Choose a coding model": "选择编程模型",
   "Choose a connector to review and connect. Existing configurations stay unchanged.":
@@ -1332,7 +1331,7 @@ export default {
   "Fit every asset": "显示全部素材",
   "Fit everything": "显示全部",
   "Tidy up": "整理",
-  "Genex is drawing {title}": "Genex 正在画 {title}",
+  "Genex is drawing": "Genex 正在画",
   "{title} · next": "{title} · 接下来",
   "{count, plural, one {# new pick} other {# new picks}}": "{count, plural, other {# 个新选择}}",
   "Use this": "用这个",
@@ -3876,6 +3875,8 @@ export default {
   "This model is unavailable. Check the connection or choose another model.":
     "此模型不可用。请检查连接或选择其他模型。",
   "This model isn’t available right now": "此模型暂时不可用",
+  "This model needs more memory than this computer has free, so resending won't help. Pick a smaller model, or close other apps and try again.":
+    "这个模型需要的内存比这台电脑剩余的内存多，所以重新发送也没用。请换一个更小的模型，或者关掉其他应用后再试。",
   "This page isn't from the sign-in Genex started.": "此页面不属于 Genex 发起的登录。",
   "This paste has {count, plural, other {# servers}}. Pick one:":
     "粘贴内容中有 {count, plural, other {# 个服务器}}。选一个：",
@@ -4839,6 +4840,8 @@ export default {
   'the lead put a worker on "{task}"': "主智能体安排了一个助手做“{task}”",
   'the lead put a worker on "{task}" for {minutes}': "主智能体安排了一个助手做“{task}”，时长 {minutes}",
   "the model could not be reached": "无法连接到模型",
+  "the model needs more memory than this computer has free — close other apps or pick a smaller model, then press Resume":
+    "模型需要的内存比这台电脑剩余的内存多——请关掉其他应用或换一个更小的模型，然后点“继续”",
   "the model provider hit your plan's session limit": "模型提供方提示你套餐的会话额度已用完",
   "the model provider hit your plan's usage cap": "模型提供方提示你套餐的使用额度已用完",
   "the model provider is down": "模型提供方服务中断",
@@ -5236,6 +5239,7 @@ export default {
   "{name} isn't set up for Genex yet. Set it up first.": "{name} 尚未为 Genex 设置。请先设置。",
   "{name} isn’t on this computer any more.": "{name} 已不在这台电脑上。",
   "{name} needs Studio {version} or newer": "{name} 需要 Studio {version} 或更高版本",
+  "{name} still isn't signed in.": "{name} 仍未登录。",
   "{name} needs a sign-in": "{name} 需要登录",
   "{name} opens in Unreal {to} from now on.": "{name} 今后会在 Unreal {to} 中打开。",
   "{name} settings": "{name} 设置",
@@ -6080,8 +6084,8 @@ export default {
   "Install Antigravity's CLI to build with your Google AI plan.": "安装 Antigravity CLI，用你的 Google AI 套餐来制作。",
   "Installing Antigravity. This can take a minute.": "正在安装 Antigravity，可能需要一分钟。",
   "Not signed in to Antigravity.": "未登录 Antigravity。",
-  "Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in.":
-    "打开登录页面，把它给你的代码粘贴到这里。登录信息由 Antigravity 保存。",
+  "Sign in on Google's page in your browser, then paste the code it gives you here. Antigravity keeps the sign-in.":
+    "在浏览器中打开的 Google 页面上登录，然后把它给你的代码粘贴到这里。登录信息由 Antigravity 保存。",
   "Sign in to Antigravity from Settings › Model Providers.": "请在“设置 › 模型提供方”中登录 Antigravity。",
   "Sign in with your Google account to build with your plan.": "登录你的 Google 账号，用你的套餐来制作。",
   "Switch to another Google account": "切换到另一个 Google 账号",
@@ -6112,4 +6116,36 @@ export default {
   "Sees images": "可识图",
   "Step {n} of {total} · {name}": "第 {n} 步，共 {total} 步 · {name}",
   "Version {version} is in your game": "版本 {version} 已加入你的游戏",
+  "Show all {count}": "显示全部 {count} 个",
+  "{at} of {count}": "第 {at} 个，共 {count} 个",
+  "Add {cap} more": "再加 {cap}",
+  Allow: "允许",
+  "Genex's real models are switched off right now. Practice answers go on.":
+    "Genex 的真实模型现在已关闭。练习回答会继续。",
+  "Most credits this play session may spend": "这次游戏最多可用的积分",
+  "Practice answers (free, made up)": "练习回答（免费、编的）",
+  "Practice answers could not start: {error}": "练习回答没能启动：{error}",
+  "Real AI is billed to this game's draft on Genex, and it has none yet. Ask the chat to publish a draft, then try again. Practice answers go on.":
+    "真实 AI 会计费到这个游戏在 Genex 上的草稿，但它还没有草稿。让聊天发布一个草稿，然后再试一次。练习回答会继续。",
+  "Real AI is not available in this test profile. Practice answers go on.":
+    "这个测试配置里不能用真实 AI。练习回答会继续。",
+  "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
+    "真实 AI 需要你登录 Genex。在设置里登录，然后再试一次。练习回答会继续。",
+  "Real AI stopped. Practice answers go on.": "真实 AI 已停止。练习回答会继续。",
+  "Real AI · {spent} of {cap} credits": "真实 AI · {spent} / {cap} 积分",
+  "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
+    "这个预览里由真实模型回答，用你的 Genex 积分付费：这次游戏最多 {cap} 积分（{dollars}）。",
+  Start: "开始",
+  "Starting real AI…": "正在启动真实 AI…",
+  "The cap is used up": "额度用完了",
+  "This game wants to hear you through your microphone.": "这个游戏想通过麦克风听你说话。",
+  "Use real AI": "使用真实 AI",
+  "A local model is answering a chat or build. Delete the model when it finishes.":
+    "本地模型正在回复对话或构建。请等它完成后再删除模型。",
+  "Download Inkling 2 Mini in Settings › Local Models.": "请在“设置 › 本地模型”中下载 Inkling 2 Mini。",
+  "Download Inkling 2 Mini to build locally": "下载 Inkling 2 Mini 即可在本地构建",
+  "Inkling 2 Mini installed · starts on demand": "Inkling 2 Mini 已安装 · 按需启动",
+  "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
+    "本地模型需要搭载 Apple 芯片的 Mac，或 64 位 Windows / Linux 电脑",
+  "{model} can't run on this computer.": "{model} 无法在这台电脑上运行。",
 } satisfies LocaleCatalog;

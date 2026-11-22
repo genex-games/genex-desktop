@@ -310,6 +310,11 @@ async function pauseOn(loopRun: LoopRun, limit: EngineLimit): Promise<void> {
  */
 async function pauseOnProvider(loopRun: LoopRun, err: any, now: number): Promise<boolean> {
   if (loopRun.ctx.cancelled) return false;
+  // The lead's model does not fit this computer's free memory: no wait mends it, the person does.
+  if (err?.kind === EngineFailure.OutOfMemory) {
+    await pauseOn(loopRun, engineLimitOf(err, now));
+    return true;
+  }
   if (isProviderLoss(err?.kind)) {
     // Judges on the lead's engine stop asking it too, until the run resumes or the limit resets.
     noteProviderLoss(loopRun.run.runId, loopRun.run.engine, err, now);

@@ -12,7 +12,7 @@ this preface wins.
   `no-download`: Studio submits every create without waiting and delivers the file into the
   game. Pick it up with operation `wait` and its generationId.
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-image/SKILL.md v1.43.6 sha256 164974cb1243b5de9bf22b09d2b1603c64ab1701030f33556d69530fbb30a080 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-image/SKILL.md v1.44.0 sha256 1dc42905c9a511a6cbec47d60d0f6de5519a1b7142c9ab400b74df41ef321756 -->
 ---
 name: genex-tool-image
 description: Generate a real image (PNG/JPEG) from a text prompt with `npx genex image` — posters, signs, logos, sprites, icons, card and item art, loading screens, decals, art for in-game screens. Pass `--transparent` for an alpha channel, `--edit` to modify an existing image, `--remove-bg` to cut a background. The file downloads to ./assets and is yours.
@@ -48,7 +48,7 @@ Wire the **local path**. The URL is provenance — never fetch it at runtime.
 - `--remove-bg` — cut the background after generating or editing.
 - `--bg-mode <sprite|glyph|sheet|matte>` — which removal model. `matte` gives soft alpha for hair, glow and smoke edges.
 - `--clean <url>` — remove the background of an existing image, no generation.
-- `--upscale <url>` — 2× an existing image.
+- `--upscale <url>` — 2× an existing image; priced by the picture's size, so a large one costs many times a small one.
 - `--aspect <ratio>` · `--size <WxH>` · `--quality <low|medium|high|xhigh|max>` — framing and fidelity (GPT Image 2.6 tiers; `xhigh` and `max` are for hero art and cost the most).
 - `--candidates <2-4>` — several variants in ONE call, so you pick instead of re-rolling. Needs `--quality` or `--size`.
 - `--open` — also open it in a browser, for something the user must look at and approve.

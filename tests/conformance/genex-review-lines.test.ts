@@ -204,19 +204,19 @@ describe("the sidebar's lines", () => {
 });
 
 describe("the line as the sidebar draws it", () => {
-  it("says the mockup's words, green for Public, red for what needs fixing, the working dot while fixing", () => {
+  it("says its words in grey with a small mark, problems in orange, the working dot while fixing", () => {
     const drawn = (line: GenexSidebarLine, things?: number) => {
       const view = reviewLineView({ line, ...(things === undefined ? {} : { things }) });
-      return view ? [view.text, view.tone, view.busy] : null;
+      return view ? [view.text, view.tone, view.icon, view.busy] : null;
     };
-    assert.deepEqual(drawn(GenexSidebarLine.Public), ["Public", "ok", false]);
-    assert.deepEqual(drawn(GenexSidebarLine.InReview), ["In review", "quiet", false]);
-    assert.deepEqual(drawn(GenexSidebarLine.HumanReview), ["Human review", "quiet", false]);
-    assert.deepEqual(drawn(GenexSidebarLine.NotApproved), ["Not approved", "err", false]);
-    assert.deepEqual(drawn(GenexSidebarLine.TakenDown), ["Taken down", "err", false]);
-    assert.deepEqual(drawn(GenexSidebarLine.Fixing, 3), ["Fixing 3 things", "quiet", true]);
-    assert.deepEqual(drawn(GenexSidebarLine.Fixing, 1), ["Fixing 1 thing", "quiet", true]);
-    assert.deepEqual(drawn(GenexSidebarLine.CheckingFixes), ["Checking fixes", "quiet", false]);
+    assert.deepEqual(drawn(GenexSidebarLine.Public), ["Public", "quiet", "globe", false]);
+    assert.deepEqual(drawn(GenexSidebarLine.InReview), ["In review", "quiet", "clock", false]);
+    assert.deepEqual(drawn(GenexSidebarLine.HumanReview), ["Human review", "quiet", "clock", false]);
+    assert.deepEqual(drawn(GenexSidebarLine.NotApproved), ["Not approved", "warn", "warning", false]);
+    assert.deepEqual(drawn(GenexSidebarLine.TakenDown), ["Taken down", "warn", "warning", false]);
+    assert.deepEqual(drawn(GenexSidebarLine.Fixing, 3), ["Fixing 3 things", "quiet", null, true]);
+    assert.deepEqual(drawn(GenexSidebarLine.Fixing, 1), ["Fixing 1 thing", "quiet", null, true]);
+    assert.deepEqual(drawn(GenexSidebarLine.CheckingFixes), ["Checking fixes", "quiet", "clock", false]);
   });
 
   it("draws no line for a game with none, or a line from a newer build", () => {

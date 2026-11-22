@@ -29,19 +29,105 @@ disagrees with this preface, this preface wins.
   publish a draft with `genex__publish {"operation":"draft"}` first. `init --convert` does not
   apply in Studio.
 
+## The model calls ship on
+
+- A game that calls a model ships with the calls enabled. No switch, flag or setting leaves them
+  off by default; the written lines are what the game plays when a call cannot answer.
+- The bench is not a gate. Until a bench has run for a prompt, the ceilings are provisional:
+  a call starts at `maxCredits` 4, and on a budget `perCallMaxCredits` 16 and `perCallEstimateCredits` 1
+  (so a period's credits are its calls × 1). Each sits in a named constant whose comment says it is
+  provisional, until `llm bench` measures it. This replaces the card's rule that only a benched
+  figure is declared. When a bench runs, its figures replace the provisional ones.
+- A ceiling also bounds how long an answer may be, so a provisional one needs short answers: the
+  prompt states the answer's length, every string in the schema has a `maxLength`, and the call
+  passes `maxOutputTokens`. Each ceiling is one named constant, so one edit raises it.
+- A call that ends `provider_token_limit` was cut off because its ceiling is too low for that model:
+  the game plays the written line with its label, and the next call of that prompt declares twice
+  the `maxCredits`, up to the budget's `perCallMaxCredits` (16), for the rest of the session. That is
+  why the provisional budget allows 16 a call while a call starts at 4. A bench settles the figures.
+- Ask for the bench once. When its `genex__cli-paid` card is not approved, declined or left
+  unanswered, ask no more and keep the feature on with the provisional ceilings; the final message
+  says the ceilings are provisional and that a bench would replace them.
+
+## Where the model answers
+
+- Studio's preview runs a game that calls a model beside Genex's practice helper: every call there
+  (`requestSpendGrant`, `generate`, `generateStream`, `judge`, `getGenerationModels`) answers at
+  once, free and made up, with `source: 'practice'`, and a budget is approved by the helper. Your own
+  preview windows get these answers too, so you can watch the feature work. A practice answer is a
+  real answer for wiring: the game shows it, streams it and applies it exactly as a model's, and
+  never treats `source: 'practice'` as a refusal or a reason to play the written lines. Do not judge
+  the writing of a practice answer: it proves the wiring, not the model.
+- In Live, the person can press Use real AI and approve a credit cap: real models then answer in
+  the preview, billed to the game's published draft from their own credits. Only they can switch it;
+  your windows always get practice answers. Real models need the game's draft, from
+  `genex__publish {"operation":"draft"}`, which the person approves.
+- On genex.games the published draft calls the real model for its owner, signed in (anyone else gets
+  `player_wallet_required` on a test build).
+- The final message for a game that calls a model says in one line that Live answers with practice
+  answers until the person presses Use real AI there (which needs a published draft and spends their
+  credits up to the cap they choose), and that the draft on genex.games uses the real model; give
+  the draft's link when there is one.
+
+## When the written lines play, the game says so
+
+Whenever the game plays its written lines instead of a model (the Genex app's `native_unsupported`,
+a guest, a declined or ended budget, a refusal, `local_test_unsupported` where no helper answers),
+it shows a small visible label saying so and why, for example "Written lines: no AI budget". Never
+an error, and never a silent swap that reads as a broken AI. A practice answer is not a fallback and
+gets no such label.
+
+## A game that listens and speaks
+
+- When the person wants the player to talk to the game, or its characters to speak aloud, build it
+  on Genex voice. Read
+  `genex__skill {"name":"genex-llm-in-games","file":"skills/genex-llm-in-games/references/voice.md"}`
+  first: `getVoiceCatalog()`, `voice` on the budget request, `createVoiceRecorder()` and
+  `transcribe()` for listening, `createSpeaker()` for speech.
+- Never the browser's own `SpeechRecognition`, `webkitSpeechRecognition` or `speechSynthesis`. In
+  Studio's preview the recognition object exists but hears nothing (it needs Google's speech
+  service, which Studio's browser does not have), the Genex app has none, and where it works it
+  sends the player's voice to a company the approval sheet never named.
+- Voice is an upgrade of a text conversation that already works. `getVoiceCatalog()` answers
+  `enabled: false` wherever voice is not served; the game then takes typed input and shows its
+  lines as text, with the small visible label this preface asks for ("Voice: not available here").
+  Build and check that path first.
+- Where Studio's preview serves voice (its catalog says `enabled: true`), the practice helper
+  answers it free: `transcribe()` returns made-up words and `speak()` a soft placeholder babble as
+  long as the line. That proves the wiring (the recording, the queue, the subtitles, an
+  interruption), never how a voice sounds. In Live, once the person presses Use real AI, real voices
+  answer inside the same credit cap; a real voice call there costs at least one credit.
+- Until a bench has run, the provisional budget covers voice as it stands: `perCallMaxCredits` 16
+  holds one spoken line of any length the catalog allows, on any tier. Keep a spoken line to one to
+  three sentences, ask for the `standard` tier unless the person asks for the best voice, and
+  estimate honestly: `estimatedCharactersPerPeriod` is the lines a period holds times their length,
+  `estimatedSecondsPerPeriod` the seconds a player talks.
+- A game that records the player declares the microphone for its Genex page. A draft or gallery
+  publish reads `createVoiceRecorder(` in the game's source and prints what the build is given
+  (`On its Genex page this build is given: microphone.`); when that line is missing, declare it in
+  the game's `package.json`: `"genex": { "capabilities": ["microphone"] }`. An undeclared build is
+  refused the microphone on its Genex page without the player being asked. The rules are in
+  `genex__skill {"name":"genex-threejs-embed-auth","file":"skills/genex-threejs-embed-auth/references/shells.md"}`.
+- Studio's Live preview grants the microphone to a game that declares it, once the person allows it
+  in Live's bar. Your own preview windows never get it and the Genex app never grants it, so you
+  cannot record there: check the listening path through the typed input, and check speech by
+  calling the speaker from a click.
+- The final message for a game with voice says in one line that talking to it needs Live with the
+  microphone allowed, that the preview's voice is a placeholder until Use real AI is on, and that
+  the game also takes typed input.
+
 ## Not in Studio yet
 
-The card below is from Genex CLI 1.44.0, ahead of the CLI Studio runs. These parts of that release
-are left out of it because Studio cannot run them yet:
+These parts of Genex CLI 1.44.0 are left out of the card below because Studio cannot run them yet:
 
 - `llm bench` takes no `system` or `messages` option here. Put the system text and a typical
   history into the bench prompt itself, so the measured size is the real call's.
 - Practice mode (`llm practice`), creator-paid budgets (`llm sponsor`, `sponsored: true`) and
-  `llm usage` are commands of that CLI. `features.sponsor` may read true on a stand; a game made
-  here still asks the player for the budget.
+  `llm usage` are commands Studio does not run. `features.sponsor` may read true on a stand; a game
+  made here still asks the player for the budget.
 - Model calls from a multiplayer server room (`shareWithRooms`, `lendSpendGrantToRoom`,
-  `ctx.models`) need a newer multiplayer SDK than Studio ships. `features.roomCalls` may read true
-  on a stand; a game made here calls the model from the player's page.
+  `ctx.models`) are not built here. `features.roomCalls` may read true on a stand; a game made here
+  calls the model from the player's page.
 - Unity, Godot, Rust and Unreal games have no model-call binding in Studio.
 
 `system`, `messages`, the controls and `features` work: Studio ships the SDK that has them.
@@ -57,16 +143,19 @@ player text) is `play-time-models` in the `genex-recommendations` plugin.
 
 Other commands map onto Studio tools as the `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream genex-demo@6c79d69ed/apps/cli/templates/skills/genex-llm-in-games/SKILL.md v1.44.0 sha256 38fddf6a4244f70d0b879ca532c5da9b7b5a1dbc6d655224e65bd118b212ebb7 -->
+<!-- upstream genex-demo@7b1af3a36/templates/skills/genex-llm-in-games/SKILL.md v1.45.0 sha256 a82075f1266ce9225eaa99c7aa558f1d72e8cd3571efc8327bcafc9ca4060546 -->
 ---
 name: genex-llm-in-games
-description: Call a language model from a running game — NPCs that answer in their own words, AI opponents, teammates and agents that plan and act, faction leaders, a narrator or game master, a judge of what the player typed, quests written per save. The PLAYER pays and approves on a Genex surface. Covers one-time calls and standing budgets, benchmarking the ceiling, streaming, the judge and every refusal.
+description: Call a language model from a running game — NPCs that answer in their own words, AI opponents, teammates and agents that plan and act, a narrator or game master, a judge of what the player typed, quests written per save — and let players talk to characters that answer aloud. The PLAYER pays and approves on a Genex surface. Covers one-time calls and standing budgets, the ceiling, streaming, the judge, voice and every refusal.
 ---
 
 # Genex LLM in Games
 
 A Genex game can call a language model **while the player is playing** and get
-back text or JSON. Nothing else: no images, no code execution, no tools.
+back text or JSON. Nothing else: no images, no code execution, no tools. Where
+the stand serves voice, the same budget can also turn what the player says
+into text and speak the game's lines aloud
+([references/voice.md](references/voice.md)).
 
 **The player pays, and the player approves.** Funding is their Genex credits —
 billed as used, never past the per-call ceiling your game declares — or their
@@ -181,6 +270,14 @@ identity must be resolved first — `$genex-threejs-embed-auth`.
   in-game budget readout.
 - `stopSpendGrant(grantId)` — the game's own stop door. Prospective: no further
   calls are admitted, anything in flight drains and settles.
+- Voice, where `getVoiceCatalog()` answers `enabled: true` and the budget was
+  requested with `voice`: `transcribe({ grantId, audio })` (a recording in,
+  the words out), `speak({ grantId, text, voice, tier? })` (a line in, audio
+  out), and the two helpers a game should use instead of raw audio code,
+  `createVoiceRecorder()` (push to talk) and `createSpeaker({ grantId, voice,
+  tier? })` (speaks a streamed reply sentence by sentence). Read
+  [references/voice.md](references/voice.md) before writing any microphone or
+  speech code; never use the browser's `SpeechRecognition` or `speechSynthesis`.
 - `waitForGeneration(id)` / `getGeneration(id)` — re-attach to a call already
   started, including after a reload.
 - `generationErrorMessage(code)` — one player-facing sentence for an error code.
@@ -256,7 +353,7 @@ sample really cost and was charged, then the numbers to declare:
   average rounded up to a whole credit: the honest figures a budget's disclosure
   is built on.
 
-Declare the printed numbers. Never guess them, never work them out from a
+Declare the printed numbers once a bench has run. Never work them out from a
 vendor's price list, never add a margin of your own. Full procedure — reading
 p50/p95, turning the loop into disclosure numbers, re-benchmarking after a
 prompt change — is in [references/pricing.md](references/pricing.md).
@@ -437,8 +534,7 @@ their spend, and a Stop; a Stop pressed there reaches the game as `grant_stopped
   on your machine, never something a shipped build does.
 - **Never hand-roll fetch to the runtime API** — the SDK owns the approval
   handshake, and a hand-rolled call cannot obtain one.
-- **Never hardcode a ceiling the bench did not print, a model id, a stand URL,
-  or a margin.**
+- **Never hardcode a model id, a stand URL or a margin.**
 - **Never let the model be an authority over money, items or rewards**
   (`$genex-monetization` owns what may move a wallet).
 
@@ -450,7 +546,7 @@ These are source contracts, not a claim that every stand runs this lane —
 - [ ] `npx genex llm models` says the lane is live
 - [ ] Model ids come from `getGenerationModels()`, never from source
 - [ ] The picker offers the featured set, labelled with the server's own `label`
-- [ ] `maxCredits` — and a budget's `perCallMaxCredits` / `perCallEstimateCredits` — are the figures `npx genex llm bench` printed, verbatim — never a charged number
+- [ ] `maxCredits` — and a budget's `perCallMaxCredits` / `perCallEstimateCredits` — are the figures `npx genex llm bench` printed, verbatim, or the provisional ceilings — never a charged number
 - [ ] No coin spelling (`estimateCoins`, `perCallMaxCoins`, `estimatedCoinsPerPeriod`) in new code
 - [ ] The schema uses only the accepted dialect (no `$ref`, `pattern`, `format`, `anyOf`, `default`)
 - [ ] A bench refused as `generation_limit` was answered with `npx genex llm status`, never a retry

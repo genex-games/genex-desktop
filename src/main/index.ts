@@ -184,6 +184,7 @@ import { fixtureDownload, fixtureFileResponse } from "./dev/fixture-asset-librar
 import {
   buildHostsFor,
   type GalleryRequest,
+  type NetworkRequestOptions,
   mintedTicket,
   networkRequest,
   type PlayGallery,
@@ -220,7 +221,7 @@ import { gitRemixReadiness, type RemixReadiness, readyFor, withReadyRemix } from
 import { type MentionSources, vendorAssetModule } from "./core/mention-tags.ts";
 import type { PlayViewer } from "./play/viewer.ts";
 import { playMicStore } from "./play/mic-store.ts";
-import { playViewsOf, wirePlayViewer } from "./play/viewer-view.ts";
+import { microphoneAccess, playViewsOf, wirePlayViewer } from "./play/viewer-view.ts";
 import { purchaseConfirmOrigin } from "./play/purchase-window.ts";
 import { type PlayComments, playComments } from "./play/comments.ts";
 import { type PlayCoin, playCoin } from "./play/coin.ts";
@@ -858,7 +859,7 @@ function subscription(id: string): SubscriptionEngine | null {
  * renderer is pushed (`core/provider-usage.ts`).
  */
 const providerUsage = createProviderUsage({
-  engines: [...SUBSCRIPTION_ENGINES, EngineId.Genex],
+  engines: [...SUBSCRIPTION_ENGINES, EngineId.Antigravity, EngineId.Genex],
   source: (id) => {
     if (!core?.engines.has(id)) return null;
     return engineUsageSource(core.engines.get(id), subscription(id)?.accounts ?? null);
@@ -1028,6 +1029,8 @@ async function createCore(userData: string): Promise<StudioCore> {
   const launch = launchCoreOptions();
   const studio: StudioCore = new StudioCore({
     renderGameCover,
+    // Google's page for verifying an Antigravity account (a fixture profile's engines open none).
+    openPage: (url: string) => shell.openExternal(url),
     // Read at send time, once the core exists: Play's catalog and account hang off it.
     mentionSources: mentionSourcesFor(() => studio),
     ...optionalLocalPlays(localPlaysFor(() => studio)),
@@ -1051,6 +1054,12 @@ async function createCore(userData: string): Promise<StudioCore> {
             refused: (token) => genexAccountFor(studio).refused(token),
           },
         }),
+    // Real models in Live spend the person's own credits: a fixture launch never does, and its
+    // Use real AI answers that real models are not available here.
+    previewAiLive: !fixtureNativePolicy,
+    // The system's microphone switch, as Play asks it; a fixture launch asks the system nothing and
+    // gives Live's game no microphone.
+    ...(fixtureNativePolicy ? {} : { microphoneAccess }),
     // A game's local item drafts after its publish: Put on sale as the app's account; a fixture
     // launch uploads them to its own store in place of the CLI.
     localItems: {
@@ -1257,6 +1266,11 @@ function attachPreviews(studio: StudioCore, win: BrowserWindow): void {
     gamesRoot: studio.layout.gamesRoot,
     vendorDir: path.join(resources, "vendor"),
     resolveRoot: (name) => studio.games.dirFor(name),
+    // Live alone asks the person for a game's microphone; agents' windows never do.
+    microphone: {
+      ask: (project) => studio.previewMic.ask(project),
+      allowed: (project) => studio.previewMic.allowed(project),
+    },
   });
   preview = view;
   studio.options.preview = view;
@@ -1309,13 +1323,25 @@ function genexAccountFor(studio: StudioCore): GenexAccount {
 }
 
 /**
+ * Genex's API over the network: a read that fails says so in the log, and one that fails in a way
+ * that passes is tried again while the Mac is online (`retryWaitsMs: []` reads once).
+ */
+function apiRequest(options: Pick<NetworkRequestOptions, "retryWaitsMs"> = {}): GalleryRequest {
+  return networkRequest(globalThis.fetch, playOrigin.api, {
+    ...options,
+    online: () => net.isOnline(),
+    note: (line) => studioLog.write("main", `genex api ${line}`),
+  });
+}
+
+/**
  * What the app's Genex account rides on: a fixture launch's own, a development copy of genex.games'
  * own sign-in (the Genex plugin's token is genex.games' and the copy would refuse it), or the plugin's.
  */
 function genexAccountPort(studio: StudioCore): GenexAccountPort {
   if (fixtureNativePolicy) return fixtureAccountPort(fixtureGenexAccount, Date.now);
   if (playOrigin.api !== PLAY_ORIGIN.api) {
-    const request = networkRequest(globalThis.fetch, playOrigin.api);
+    const request = apiRequest();
     return devStandAccountPort({ request, now: Date.now, web: playOrigin.web });
   }
   return pluginAccountPort(studio.plugins);
@@ -1467,7 +1493,7 @@ function playsFor(studio: StudioCore): NonNullable<NativeSessionsDeps["presence"
   const account = genexAccountFor(studio);
   const plays = nativePlays({
     root: studio.layout.installedGames,
-    request: networkRequest(globalThis.fetch, playOrigin.api),
+    request: apiRequest(),
     token: account.token,
     refused: account.refused,
     log: (line) => studioLog.write("main", line),
@@ -1540,7 +1566,7 @@ async function libraryGameOf(studio: StudioCore): Promise<{ dir: string; title: 
 function playCatalogFor(studio: StudioCore): PlayGallery {
   const host = thisComputer();
   playCatalog ??= playGallery({
-    request: fixtureNativePolicy ? fixturePlayRequest : networkRequest(globalThis.fetch, playOrigin.api),
+    request: fixtureNativePolicy ? fixturePlayRequest : apiRequest(),
     token: genexAccountFor(studio).token,
     now: Date.now,
     localImages: fixtureNativePolicy,
@@ -1556,7 +1582,7 @@ function playCatalogFor(studio: StudioCore): PlayGallery {
 function playAccountFor(studio: StudioCore): NonNullable<typeof playAccount> {
   const account = genexAccountFor(studio);
   const deps: PeopleDeps = {
-    request: fixtureNativePolicy ? fixturePlayRequest : networkRequest(globalThis.fetch, playOrigin.api),
+    request: fixtureNativePolicy ? fixturePlayRequest : apiRequest(),
     token: account.token,
     now: Date.now,
     localImages: fixtureNativePolicy,
@@ -1585,7 +1611,7 @@ function playAccountFor(studio: StudioCore): NonNullable<typeof playAccount> {
  */
 function playManageFor(studio: StudioCore): PlayManage {
   const account = genexAccountFor(studio);
-  const request = fixtureNativePolicy ? fixturePlayRequest : networkRequest(globalThis.fetch, playOrigin.api);
+  const request = fixtureNativePolicy ? fixturePlayRequest : apiRequest();
   playManage ??= createPlayManage({
     // A 401 ends the sign-in as one to the account's own calls does.
     request: refusingRequest(request, account.refused),
@@ -1690,7 +1716,7 @@ function popShareMenu(url: string, at: PlayPoint | undefined): void {
 function playCommentsFor(studio: StudioCore): PlayComments {
   const account = genexAccountFor(studio);
   return playComments({
-    request: fixtureNativePolicy ? fixturePlayRequest : networkRequest(globalThis.fetch, playOrigin.api),
+    request: fixtureNativePolicy ? fixturePlayRequest : apiRequest(),
     token: account.token,
     now: Date.now,
     localImages: fixtureNativePolicy,
@@ -1706,7 +1732,7 @@ function playCommentsFor(studio: StudioCore): PlayComments {
 function playCoinFor(studio: StudioCore): PlayCoin {
   const account = genexAccountFor(studio);
   return playCoin({
-    request: fixtureNativePolicy ? fixturePlayRequest : networkRequest(globalThis.fetch, playOrigin.api),
+    request: fixtureNativePolicy ? fixturePlayRequest : apiRequest(),
     token: account.token,
     now: Date.now,
     localImages: fixtureNativePolicy,
@@ -1739,9 +1765,11 @@ function storeFor(studio: StudioCore): PlayStoreParts {
   if (playStoreDeps) return playStoreDeps;
   const account = genexAccountFor(studio);
   const deps = {
+    // Read once: a started purchase's sheet must open within STORE_SHEET_OPEN_MS, which allows one
+    // bounded wait for the read back and one for the balance, not their tries again.
     request: fixtureNativePolicy
       ? createFixtureStore({ now: Date.now, fallback: fixturePlayRequest })
-      : networkRequest(globalThis.fetch, playOrigin.api),
+      : apiRequest({ retryWaitsMs: [] }),
     token: account.token,
     now: Date.now,
     localImages: fixtureNativePolicy,
@@ -2380,7 +2408,9 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
     pushUiEvent,
     openRouterLogin,
     usage: providerUsage,
-    readHardware: isSmoke ? async () => smokeReads.hardware ?? hardwareReport() : undefined,
+    readHardware: isSmoke
+      ? async () => smokeReads.hardware ?? hardwareReport(ollamaHost)
+      : async () => hardwareReport(ollamaHost),
   });
   registerPreviewIpc(handle, {
     core: studio,

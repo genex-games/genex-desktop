@@ -107,6 +107,12 @@ describe("a plan's limits", () => {
     assert.equal(planWords("codex", "plus"), "ChatGPT Plus plan");
     assert.equal(planWords("codex"), "ChatGPT plan");
     assert.equal(planWords("other", "team-pro"), "other Team pro plan");
+    assert.equal(
+      planWords("antigravity", "Antigravity Starter Quota"),
+      "Antigravity Starter Quota plan",
+      "its brand once",
+    );
+    assert.equal(planWords("claude-code", "claude"), "Claude plan");
   });
 
   it("names Genex's plan by the name genex.games gives it", () => {

@@ -12,6 +12,7 @@ import { chatMemory, noteRewound } from "../analytics/chat-memory.ts";
 import { messagesBack, rewindCompletedProperties } from "../analytics/chat-properties.ts";
 import { track } from "../analytics/client.ts";
 import { AnalyticsEvent } from "../analytics/events.ts";
+import { useKept } from "./kept-value.ts";
 import { focusPromptEnd, promptInput, restorePictures } from "./put-back.ts";
 
 /** The event a user bubble was written in: its entry id is `<event id>-<message index>:user` (chat-entries.ts). */
@@ -27,8 +28,13 @@ const restoredWords = (files: number): string =>
   t("{count, plural, one {Restored # game file.} other {Restored # game files.}}", { count: files });
 
 export interface ChatRewind {
-  /** Whether a user bubble (by entry id) offers Rewind now. */
+  /**
+   * Whether a user bubble (by entry id) carries Rewind. It changes only with the messages that can
+   * be rewound, so the transcript's rows are not drawn again each time an answer starts or ends.
+   */
   offers: (entryId: string) => boolean;
+  /** Rewind can be pressed now: the chat is between answers. The bubbles' buttons show only then. */
+  available: boolean;
   /** Stable, so memoized bubbles do not re-render whenever the chat does. */
   open: (entryId: string) => void;
   target: RewindTarget | null;
@@ -49,9 +55,8 @@ export function useChatRewind(input: {
   jumpToLatest: () => void;
 }): ChatRewind {
   const { threadId, studio, threadEvents, between } = input;
-  const rewindable = useMemo(
-    () => (studio ? new Map<string, string>() : rewindableMessages(threadEvents)),
-    [threadEvents, studio],
+  const rewindable = useKept(
+    useMemo(() => (studio ? new Map<string, string>() : rewindableMessages(threadEvents)), [threadEvents, studio]),
   );
   const [target, setTarget] = useState<RewindTarget | null>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
@@ -60,7 +65,7 @@ export function useChatRewind(input: {
     const eventId = bubbleEvent(entryId);
     const messageId = rewindable.get(eventId);
     returnFocus.current = null;
-    if (!threadId || !messageId) return;
+    if (!between || !threadId || !messageId) return;
     setTarget({ threadId, eventId, messageId });
     track(AnalyticsEvent.RewindOpened, { messages_back: messagesBack(threadEvents, eventId) });
   };
@@ -80,11 +85,12 @@ export function useChatRewind(input: {
     focusPromptEnd();
   };
   const offers = useCallback(
-    (entryId: string) => !studio && between && rewindable.has(bubbleEvent(entryId)),
-    [studio, between, rewindable],
+    (entryId: string) => !studio && rewindable.has(bubbleEvent(entryId)),
+    [studio, rewindable],
   );
   return {
     offers,
+    available: between,
     open,
     target: target && target.threadId === threadId ? target : null,
     returnFocus,

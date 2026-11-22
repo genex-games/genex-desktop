@@ -1,8 +1,8 @@
 /**
  * What a game with no cover shows where its cover would be: a still wire floor plate lying toward
  * the horizon, in the theme's quiet ink, its lines fading with depth and its face faintly filled.
- * Recent's small tile draws the plate with fewer lines than a card does; a game page's top, wider
- * than 16:9, draws a card's plate cut to fill it (`fill`).
+ * Recent's small square tile draws the plate with fewer lines than a card does, cut to fill it; a game
+ * page's top, wider than 16:9, draws a card's plate cut to fill it (`fill`).
  */
 import type { JSX } from "react";
 

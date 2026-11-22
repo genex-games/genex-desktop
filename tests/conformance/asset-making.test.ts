@@ -26,7 +26,7 @@ import {
 } from "../../src/shared/asset-making.ts";
 import { GenexBlocked, GenexJobStatus, GenexOperation, type GenexJob } from "../../src/shared/genex.ts";
 import type { PluginAssetKind } from "../../src/plugin-sdk/index.d.ts";
-import { elapsedWords, kindLook, makingView } from "../../src/renderer/asset-making.ts";
+import { assetMaker, elapsedWords, kindLook, makingView } from "../../src/renderer/asset-making.ts";
 import { MakingDrawing } from "../../src/renderer/making-art.ts";
 import { genexJobRows } from "../../src/renderer/panels/plugins/genex/genex-view.ts";
 
@@ -303,6 +303,29 @@ describe("what a job says: kind, drawing and tool", () => {
       name: "My server",
       mark: null,
     });
+  });
+
+  it("marks a delivered asset's picture with the tool that made it: Genex's routed tool, Blender, else none", () => {
+    const made = (source: string, operation: string | null) => assetMaker({ source, operation });
+    assert.equal(made("genex", GenexOperation.Model)?.name, "Tripo");
+    assert.equal(made("genex", GenexOperation.Character)?.name, "Meshy");
+    assert.equal(made("genex", GenexOperation.Sfx)?.name, "ElevenLabs");
+    assert.equal(made("genex", GenexOperation.Image)?.name, "GPT Image");
+    assert.equal(made("genex", GenexOperation.CharacterAnimate)?.name, "Genex", "no one tool: Genex itself");
+    assert.equal(made("genex", null)?.name, "Genex", "an operation it did not record");
+    assert.equal(made("genex", "constructor")?.name, "Genex", "never an inherited name read off the table");
+    assert.equal(made("blender", null)?.name, "Blender");
+    for (const source of ["genex", "blender"]) assert.ok(made(source, null)?.mark?.startsWith("media/tools/"), source);
+    assert.equal(made("sprite-forge", GenexOperation.Model), null, "another plugin's record keeps no mark");
+    assert.deepEqual(
+      [
+        made("genex", GenexOperation.Sfx)?.light,
+        made("genex", GenexOperation.Model)?.light,
+        made("blender", null)?.light,
+      ],
+      [true, false, false],
+      "ElevenLabs' mark is drawn light, Tripo's and Blender's are not",
+    );
   });
 
   it("keeps the Genex page's names for its generations", () => {

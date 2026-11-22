@@ -197,7 +197,7 @@ export function useSignInGate({
       allowLocal: local !== null,
       // The card itself counts its Sign in and Recheck presses (provider_action_clicked, chat_card).
       onSignIn: () => void signIn(),
-      onRecheck: () => void window.studio.recheckEngines(selectedEngine?.id).then(onEnginesRefresh),
+      onRecheck: () => window.studio.recheckEngines(selectedEngine?.id).then(onEnginesRefresh),
       onContinueLocal: local ? () => continueLocal(local) : undefined,
     },
   };

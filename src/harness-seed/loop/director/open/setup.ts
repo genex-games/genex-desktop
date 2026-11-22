@@ -6,7 +6,7 @@
  * contract, no preview, no copy of the game for the lead: it works in the game folder itself.
  */
 import type { AnyRecord, HarnessCtx, Run } from "../../../types/harness.d.ts";
-import { type FactRef, factsOfGame, type FolderHolds, seenInWindow } from "../../folder-facts.ts";
+import { type FactRef, factsOfGame, FolderHolds, kindUnknown, seenInWindow } from "../../folder-facts.ts";
 import { HostMethod } from "../../host-methods.ts";
 import { modelOn, RoleKey, roleEffort, roleEngine } from "../../model-roles.ts";
 import { folderLabelOf } from "../../workers/identity.ts";
@@ -68,6 +68,17 @@ export function settledAcrossPause(loopRun: LoopRun, open: OpenLoop): void {
   if (rewind) loopRun.note(OPEN_NEWS.rewindDropped(rewind.label), NoteKind.Folder);
   if (restart) loopRun.note(OPEN_NEWS.restartDropped, NoteKind.Folder);
   open.journal.between = { rewind: null, restart: false };
+}
+
+/**
+ * The Loop's first line about a folder of a kind Genex can't name (`kindUnknown`), which takes no
+ * starter and is worked on as it is: what it holds, and that no web page is written into it unless the
+ * goal asks for one. A folder of a kind Genex names, or with none yet, gets no line.
+ */
+export function noteFolderKind(loopRun: LoopRun, game: Pick<OpenedGame, "facts" | "holds">): void {
+  if (!kindUnknown(game)) return;
+  const line = game.holds === FolderHolds.Unreadable ? OPEN_NEWS.unreadableFolder : OPEN_NEWS.ownFilesKind;
+  loopRun.note(line, NoteKind.Folder);
 }
 
 /**

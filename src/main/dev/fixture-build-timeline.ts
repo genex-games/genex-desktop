@@ -261,7 +261,7 @@ function madeByCall(
       pluginName: "Genex",
       tool: "asset",
       facetId: worker.id,
-      args: `operation=${job.file.endsWith(".wav") ? "sound" : "image"} prompt=${job.prompt}`,
+      args: `operation=${job.file.endsWith(".wav") ? "sfx" : "image"} prompt=${job.prompt}`,
     }),
     delivered(run, project, worker, job, workspace),
     run(CustomEvent.PluginTool, { callId, facetId: worker.id, ok: true, jobId: job.id, files: [job.file] }),

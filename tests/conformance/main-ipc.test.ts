@@ -612,13 +612,20 @@ describe("both sign-in paths go through the controllers", () => {
     assert.equal(signedIn, 1);
   });
 
-  it("the Antigravity sign-in runs `agy acp --login` in the sessions' box, gives the box back when it ends, and rechecks", async () => {
-    const opened: Array<{ file: string; args: string[]; kind: string; env: NodeJS.ProcessEnv }> = [];
+  it("the Antigravity sign-in runs `agy acp --login` in the sessions' box, opens Google's page, gives the box back when it ends, and rechecks", async () => {
+    const opened: Array<{
+      file: string;
+      args: string[];
+      kind: string;
+      env: NodeJS.ProcessEnv;
+      onUrl?: ((url: string) => void) | undefined;
+    }> = [];
     const boxed: Array<{ binary: string; env: Record<string, string>; scratchRoot?: string }> = [];
     let exit: ((code: number) => void) | undefined;
     let released = 0;
     let signedIn = 0;
     let open: TerminalSession[] = [];
+    const browsed: string[] = [];
     const { antigravityLogin } = createLoginControllers({
       terminals: {
         list: () => open,
@@ -638,7 +645,9 @@ describe("both sign-in paths go through the controllers", () => {
         },
         stop: async () => {},
       },
-      openExternal: async () => {},
+      openExternal: async (url) => {
+        browsed.push(url);
+      },
       subscription: () => null,
       pushUiEvent: () => {},
       showCodexState: () => {},
@@ -692,6 +701,20 @@ describe("both sign-in paths go through the controllers", () => {
     assert.equal(opened[0]?.file, "/usr/bin/sandbox-exec", "the terminal starts the boxed command");
     assert.deepEqual(opened[0]?.args.slice(-2), ["acp", "--login"]);
     assert.equal(opened[0]?.kind, "antigravity-login");
+    // The boxed CLI cannot hand its page to the browser: Genex opens Google's sign-in page itself,
+    // once, and never a page on another host the terminal prints.
+    const page =
+      "https://accounts.google.com/o/oauth2/auth?client_id=x&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback";
+    for (const url of [
+      "https://evil.example/o/oauth2/auth",
+      "http://accounts.google.com/o",
+      page,
+      page,
+      "https://accounts.google.com/other",
+    ])
+      opened[0]?.onUrl?.(url);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(browsed, [page]);
     assert.deepEqual(await antigravityLogin.start(), { started: true });
     assert.equal(opened.length, 1, "a sign-in already open is shown again");
     assert.equal(released, 1, "and the box made for the second one is given back");

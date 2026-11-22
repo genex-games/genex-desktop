@@ -34,7 +34,7 @@ import { useBuildsModel, useNow, useRunStills } from "./run-graph/use-builds-mod
 import { Inspector, Lightbox, type LightItem, type Reply } from "./RunInspector.tsx";
 import { webBuildShown } from "../web-build-shown.ts";
 import { Pending } from "../ui/Pending.tsx";
-import { SkeletonLines } from "../ui/Skeleton.tsx";
+import { Skeleton } from "../ui/Skeleton.tsx";
 import { nodeKindOf } from "../analytics/builds-stage.ts";
 import { track } from "../analytics/client.ts";
 import { AnalyticsEvent } from "../analytics/events.ts";
@@ -206,12 +206,27 @@ function turnActions(graph: BuildsModel["graph"], onShowLive: Props["onShowLive"
   return { hasBuild, play: (): void => onShowLive?.(), openJob: (): void => {} };
 }
 
-/** Over the hidden list until the run's recorded outcome arrives: the list's shape. */
+/** The widths of the rows' names while the list is on its way: a first screen of rows. */
+const PENDING_ROWS = [260, 200, 240, 180] as const;
+
+/** Over the hidden list until the run's recorded outcome arrives: rows shaped like the ones that come. */
 function OutcomePending(): JSX.Element {
   return (
     <div data-builds-loading className="absolute inset-0 bg-canvas p-6" style={{ visibility: "visible" }}>
       <Pending label={t("Loading builds")}>
-        <SkeletonLines widths={[110, 260, 220, 240]} className="w-[260px]" />
+        <span className="skeleton-rows w-full max-w-[880px]">
+          <Skeleton width={110} />
+          {PENDING_ROWS.map((width) => (
+            <span key={width} className="skeleton-row">
+              <Skeleton width={16} height={16} radius={8} />
+              <span className="skeleton-row-text">
+                <Skeleton width={width} />
+                <Skeleton width={90} />
+              </span>
+              <Skeleton width={96} height={60} radius={10} />
+            </span>
+          ))}
+        </span>
       </Pending>
     </div>
   );
@@ -319,6 +334,7 @@ export const RunGraph = memo(function RunGraph({
             selected={selected}
             onSelect={select}
             onClose={() => setSelectedId(null)}
+            onLight={(items, index) => overlays.setLight({ items, index })}
             card={
               selected ? (
                 <SelectedPanel
@@ -414,6 +430,7 @@ function LightboxOf({
   return (
     <Lightbox
       item={item}
+      index={light.index}
       count={light.items.length}
       onPrev={() => move(-1)}
       onNext={() => move(1)}

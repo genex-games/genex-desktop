@@ -20,6 +20,7 @@ import {
   openLoopPool,
   openStartingPoint,
   recordCreditCap,
+  noteFolderKind,
   settledAcrossPause,
 } from "./open/setup.ts";
 import type { AnyRecord, HarnessCtx, Run } from "../../types/harness.d.ts";
@@ -198,6 +199,7 @@ export async function prepareLoopRun(
   Object.assign(loopRun, loopRunData({ run, threadId, priorJournal, inbox }, game, { baseCommit, report, open }));
   restoreLoopRun(loopRun);
   settledAcrossPause(loopRun, open);
+  noteFolderKind(loopRun, game);
   await loopRun.saveJournal();
   await openLoopPool(loopRun, open);
   return loopRun;

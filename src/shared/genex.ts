@@ -90,7 +90,7 @@ export const GENEX_ACCOUNT_ACTIONS: readonly GenexAction[] = [
  * the play-time model card for one with `system`, `messages` and `features` (0.37.0).
  */
 export const GENEX_GAME_PACKAGES = {
-  "@genex-ai/multiplayer": "0.17.19",
+  "@genex-ai/multiplayer": "0.17.20",
   "@genex-ai/embed-sdk": "0.37.0",
 } as const;
 /** A Genex SDK package a game may add. */
@@ -103,7 +103,7 @@ export type GenexGamePackage = keyof typeof GENEX_GAME_PACKAGES;
  * room check runs for a game that installed nothing.
  */
 export const GENEX_STUDIO_TOOLS = {
-  "@genex-ai/authority-dev": "0.1.10",
+  "@genex-ai/authority-dev": "0.1.11",
 } as const;
 /** A Genex tool Studio ships. */
 export type GenexStudioTool = keyof typeof GENEX_STUDIO_TOOLS;

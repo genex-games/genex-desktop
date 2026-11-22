@@ -23,7 +23,7 @@ import { LoadStatus } from "../state/people.ts";
 import { studio } from "../state/studio.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
-import { useBackOnline, useOnline } from "../ui/use-online.ts";
+import { useBackOnline, useOnline, useTriesAgain } from "../ui/use-online.ts";
 import { PLAY_WORDS } from "../words.ts";
 import { AddTone, FriendButton } from "./FriendButton.tsx";
 import { PeopleCarousel, PersonTile } from "./PeopleCarousel.tsx";
@@ -182,6 +182,14 @@ export function PlayProfile({
   // Offline it shows what was read last; back online it reads again by itself.
   useBackOnline(() => void studio().people.loadProfile(userId, { force: true }));
   const profile = entry?.profile ?? null;
+  // A profile that could not be read is read again by itself, as Try again does, and reads as
+  // loading while its first tries run.
+  const failureShown = useTriesAgain(
+    { failed: !profile && entry?.status === LoadStatus.Failed, read: profile !== null },
+    () => {
+      void studio().people.loadProfile(userId, { force: true });
+    },
+  );
   const own = me?.id === userId;
   return (
     <PlayPageFrame
@@ -191,7 +199,7 @@ export function PlayProfile({
       onBack={() => studio().play.back()}
     >
       {!profile && offline && <OfflineNotice text={PLAY_WORDS.offline.profile} />}
-      {!profile && !offline && entry?.status === LoadStatus.Failed && (
+      {!profile && !offline && failureShown && (
         <div className="people-note">
           {WORDS.profileFailed}
           <Button variant="secondary" onClick={() => void studio().people.loadProfile(userId, { force: true })}>
@@ -199,7 +207,7 @@ export function PlayProfile({
           </Button>
         </div>
       )}
-      {!profile && !offline && entry?.status !== LoadStatus.Failed && <ProfilePlaceholder />}
+      {!profile && !offline && !failureShown && <ProfilePlaceholder />}
       {profile && (
         <div className="profile-page" data-profile-page={own ? "own" : "other"}>
           <ProfileHead profile={profile} me={me} />

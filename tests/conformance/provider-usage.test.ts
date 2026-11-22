@@ -124,6 +124,19 @@ describe("a subscription's plan limits", () => {
     assert.equal(last(CODEX)?.state, UsageState.NotShared);
   });
 
+  it("say a plan named with no limit (Antigravity's) shares none, and keep its name", async () => {
+    const named: ProviderUsage = {
+      measuredAt: "2026-11-22T12:00:00.000Z",
+      plan: "Antigravity Starter Quota",
+      windows: [],
+    };
+    const codex = fakeSource({ reads: [async () => named] });
+    const { usage, last } = rig({ [CODEX]: codex.engine });
+    await usage.refresh();
+    assert.equal(last(CODEX)?.state, UsageState.NotShared);
+    assert.equal(last(CODEX)?.usage?.plan, "Antigravity Starter Quota");
+  });
+
   it("say a read failed instead of reporting no limits, keeping the account's last numbers", async () => {
     const claude = fakeSource({
       reads: [

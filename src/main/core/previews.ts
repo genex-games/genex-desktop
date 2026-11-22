@@ -24,7 +24,8 @@ import {
 } from "../../substrate/game-workspace.ts";
 import type { HarnessParams, HarnessResult } from "../../shared/harness-api.ts";
 import type { ProjectShape } from "../../shared/game-project.ts";
-import { templateLoadsGenexSdk } from "../../substrate/project-shape.ts";
+import { gameCallsPlayTimeModels, templateLoadsGenexSdk } from "../../substrate/project-shape.ts";
+import { withPracticeKey } from "./preview-ai.ts";
 import { genexOutputFile, isGenexRef } from "../../shared/genex-ref.ts";
 import { isBuildRef } from "../../shared/build-ref.ts";
 import { type ProjectAssetRead, ProjectAssetScope } from "../../shared/game-assets.ts";
@@ -407,6 +408,11 @@ export class PreviewService {
   #liveStopped = false;
   /** Each game's local room address (`genex__room`), which its loopback page is loaded with. */
   readonly #localRooms = new Map<string, string>();
+  /** The name each agent's window is known by to the practice helpers (`PreviewAiService`); Live is `LIVE_HANDLE`. */
+  readonly #holders = new WeakMap<PreviewPort, string>();
+  #nextHolder = 0;
+  /** Live's page carries a practice helper's key: a Play after Stop loads it again with a fresh one. */
+  #liveKeyed = false;
 
   constructor(core: StudioCore, x: CoreInternals) {
     this.#core = core;
@@ -488,15 +494,51 @@ export class PreviewService {
   pool(): PreviewPool {
     if (!this.#x.previewPool) {
       if (!this.#core.options.preview) throw new Error(MESSAGE.noPreview);
+      const create = this.#core.options.createHeadlessPreview;
       this.#x.previewPool = new PreviewPool({
         live: this.#core.options.preview,
-        ...(this.#core.options.createHeadlessPreview
-          ? { createHeadless: this.#core.options.createHeadlessPreview }
-          : {}),
+        ...(create ? { createHeadless: () => this.#releasingOnClose(create) } : {}),
         max: this.#core.options.previewPoolMax ?? this.#x.settings.agentsMax,
       });
     }
     return this.#x.previewPool;
+  }
+
+  /** A new agent's window whose game's practice helper is let go when the window closes. */
+  async #releasingOnClose(create: () => Promise<PreviewPort>): Promise<PreviewPort> {
+    const port = await create();
+    const dispose = port.dispose?.bind(port);
+    port.dispose = async () => {
+      await this.#core.previewAi.release(this.#holderOf(port)).catch(() => {});
+      await dispose?.();
+    };
+    return port;
+  }
+
+  /** The name a preview is known by to the practice helpers: Live's handle for Live, one of its own for each other window. */
+  #holderOf(port: PreviewPort): string {
+    if (port === this.#core.options.preview) return LIVE_HANDLE;
+    let holder = this.#holders.get(port);
+    if (holder === undefined) {
+      this.#nextHolder += 1;
+      holder = `window-${this.#nextHolder}`;
+      this.#holders.set(port, holder);
+    }
+    return holder;
+  }
+
+  /**
+   * The practice helper's key a loopback page of a game that calls play-time models is loaded with
+   * (`PreviewAiService.keyFor`): real models only in Live, made-up answers everywhere else. A page
+   * that needs none lets go of the helper its window held.
+   */
+  async #practiceKey(project: string, dir: string, port: PreviewPort, loopback: boolean): Promise<string | null> {
+    const holder = this.#holderOf(port);
+    const calls = loopback && (await gameCallsPlayTimeModels(dir));
+    const key = calls ? await this.#core.previewAi.keyFor(holder, project) : null;
+    if (!calls) await this.#core.previewAi.noModels(holder, project);
+    if (holder === LIVE_HANDLE) this.#liveKeyed = key !== null;
+    return key;
   }
 
   async previewRevision(project: string, root: string | null): Promise<string | null> {
@@ -547,9 +589,10 @@ export class PreviewService {
     // its own, and a review worktree keeps the root its caller passed.
     const asSource = path.resolve(served.dir) === path.resolve(base);
     const plain = entry ?? (asSource ? sourceEntry(descriptor, shape) : path.basename(shape.entry));
+    const practice = await this.#practiceKey(project, base, port, loopback);
     return {
-      // Only a loopback page's SDK takes a local room's address.
-      entry: loopback ? withLocalRoom(plain, this.#localRooms.get(project)) : plain,
+      // Only a loopback page's SDK takes a local room's address and a practice helper's key.
+      entry: loopback ? withPracticeKey(withLocalRoom(plain, this.#localRooms.get(project)), practice) : plain,
       root: asSource ? (root ?? undefined) : served.dir,
       loopback,
       stale: served.stale ? note : null,
@@ -567,6 +610,16 @@ export class PreviewService {
     if (showing?.project !== project || this.#liveStopped) return false;
     const loaded = await this.loadPreview({ project, ...(showing.root ? { root: showing.root } : {}) });
     return url !== null && new URL(loaded).searchParams.get(AUTHORITY_URL_PARAM) === url;
+  }
+
+  /**
+   * The game's practice helper changed (the person chose real models or practice, or a paid run
+   * ended): Live, when it shows that game and plays, is loaded again with the new key.
+   */
+  async reloadLiveFor(project: string): Promise<void> {
+    const showing = this.#x.servedRoots.get(LIVE_HANDLE);
+    if (showing?.project !== project || this.#liveStopped) return;
+    await this.loadPreview({ project, ...(showing.root ? { root: showing.root } : {}) });
   }
 
   /** `preview.load`: serve a game (or a checked worktree of it) into a preview, one load per handle at a time. */
@@ -1412,18 +1465,28 @@ export class PreviewService {
     });
   }
 
-  /** The person's Stop: Live's game stops running, after any load of it already under way. */
+  /** The person's Stop: Live's game stops running, after any load of it already under way, and its practice helper with it. */
   stopLive(): Promise<void> {
     return serial(this.#x.previewOperations, LIVE_HANDLE, async () => {
       await this.#optionalPreview()?.stop?.();
       this.#liveStopped = true;
+      await this.#core.previewAi.release(LIVE_HANDLE);
     });
   }
 
-  /** The person's Play on a stopped Live: the same page again. */
+  /**
+   * The person's Play on a stopped Live: the same page again. A page that carried a practice
+   * helper's key is served again instead, as its helper stopped with the game and a new one has a
+   * new key.
+   */
   playLive(): Promise<void> {
     return serial(this.#x.previewOperations, LIVE_HANDLE, async () => {
-      await this.#optionalPreview()?.resume?.();
+      const showing = this.#x.servedRoots.get(LIVE_HANDLE);
+      if (this.#liveKeyed && showing) {
+        const checkedRoot = await this.#x.assertHarnessRoot(showing.project, showing.root);
+        const again = { project: showing.project, ...(showing.entry ? { entry: showing.entry } : {}) };
+        await this.#loadServedPreview(again, LIVE_HANDLE, checkedRoot, this.preview());
+      } else await this.#optionalPreview()?.resume?.();
       this.#liveStopped = false;
     });
   }

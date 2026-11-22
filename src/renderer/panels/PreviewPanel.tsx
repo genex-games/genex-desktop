@@ -78,6 +78,7 @@ import { useNativeViewBounds } from "./stage/native-bounds.ts";
 import { PluginCardStage } from "./stage/PluginCardStage.tsx";
 import { resolveStageView, stageFlags, stageHas } from "./stage/stage-flags.ts";
 import { EmptyGame, LiveLoading, NoGame, PlanningBuild, StoppedGame } from "./stage/StageBody.tsx";
+import { PreviewAiBar } from "./stage/PreviewAiBar.tsx";
 import { StageStrip } from "./stage/StageStrip.tsx";
 import { keptViews, type StageTabKey, tabChoice, webBuildView } from "./stage/stage-tabs.ts";
 import { StillsStage } from "./stage/StillsStage.tsx";
@@ -958,6 +959,7 @@ export function PreviewPanel({
       />
 
       {previewOnStage ? <StageBanners trouble={trouble} /> : null}
+      {previewOnStage ? <PreviewAiBar project={project} /> : null}
       <div className="relative min-h-0 flex-1 overflow-hidden bg-base">
         <div ref={slot} data-preview-slot className="absolute inset-0" />
         <StageContents

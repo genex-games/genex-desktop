@@ -25,6 +25,7 @@ import { readRoomGameManifest } from "../../substrate/genex-game-manifest.ts";
 import { nameRoom, unnameRoom } from "./genex-room-handoff.ts";
 import { roomModulePath } from "../../substrate/genex-room-stage.ts";
 import { LoopbackProtocol } from "../../substrate/linux-loopback-bridge.ts";
+import { LOOPBACK_HOST, loopbackPortFree } from "../../substrate/loopback-ports.ts";
 import { containedReal } from "../../substrate/paths.ts";
 import { treeKiller } from "../../substrate/plugins/native-process.ts";
 import {
@@ -58,7 +59,7 @@ const RoomLine = {
 type RoomLine = (typeof RoomLine)[keyof typeof RoomLine];
 
 /** The address the room listens on and its own clients reach it at. */
-const ROOM_HOST = "127.0.0.1";
+const ROOM_HOST = LOOPBACK_HOST;
 /** The transports a room listens on: its WebSocket and its fast@1 datagrams (the loopback bridge's table). */
 export const RoomPortProtocol = LoopbackProtocol;
 /** One of {@link RoomPortProtocol}. */
@@ -353,26 +354,6 @@ export function roomLine(line: string): { kind: RoomLine; value: unknown } | nul
   } catch {
     return { kind, value: rest };
   }
-}
-
-/** Whether a listener on `port` of {@link ROOM_HOST} can open now: opened and closed again. */
-export async function loopbackPortFree(port: number, protocol: RoomPortProtocol): Promise<boolean> {
-  if (protocol === RoomPortProtocol.Udp) {
-    const socket = createSocket("udp4");
-    const bound = await new Promise<boolean>((resolve) => {
-      socket.once("error", () => resolve(false));
-      socket.bind(port, ROOM_HOST, () => resolve(true));
-    });
-    if (bound) await new Promise<void>((resolve) => socket.close(() => resolve()));
-    return bound;
-  }
-  const server = createServer();
-  const listening = await new Promise<boolean>((resolve) => {
-    server.once("error", () => resolve(false));
-    server.listen({ port, host: ROOM_HOST, exclusive: true }, () => resolve(true));
-  });
-  if (listening) await new Promise<void>((resolve) => server.close(() => resolve()));
-  return listening;
 }
 
 /** A port of {@link ROOM_HOST} free for `protocol` now: the system's pick, opened and closed again. */

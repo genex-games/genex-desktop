@@ -993,9 +993,9 @@ it("a runtime with no downloaded model is not installed and refuses to start", a
   try {
     assert.equal(await runtime.installed(model), false);
     assert.equal(await runtime.binary(), null);
-    await assert.rejects(runtime.start(model, new AbortController().signal), /Download this Bonsai model/);
+    await assert.rejects(runtime.start(model, new AbortController().signal), /Download this local model/);
     await runtime.dispose();
-    await assert.rejects(runtime.start(model, new AbortController().signal), /Bonsai runtime is closed/);
+    await assert.rejects(runtime.start(model, new AbortController().signal), /local model runtime is closed/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1137,7 +1137,7 @@ it("install never reports Ready when the native server fails its startup", STAGE
   try {
     await assert.rejects(
       runtime.install(model, () => {}),
-      /Bonsai stopped during startup/,
+      /The local model stopped during startup/,
     );
     const job = await runtime.installStatus();
     assert.equal(job?.phase, "failed");
@@ -1234,7 +1234,7 @@ it(
         assert.deepEqual(await filesUnder(root), before, why);
       };
       for (const id of ["", "bonsai-2:", `${model}/../../models`, `../${model}`, model.toUpperCase(), "gemma4:12b"]) {
-        await assert.rejects(runtime.remove(id), /Unknown Bonsai model/, JSON.stringify(id));
+        await assert.rejects(runtime.remove(id), /Unknown local model/, JSON.stringify(id));
         await kept(`an unknown id ${JSON.stringify(id)} removes nothing`);
       }
 

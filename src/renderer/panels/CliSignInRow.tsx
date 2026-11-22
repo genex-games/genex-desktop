@@ -151,7 +151,9 @@ const ANTIGRAVITY_WORDS = {
   installingLine: t("Installing Antigravity. This can take a minute."),
   signIn: t("Sign in"),
   signInLine: t("Sign in with your Google account to build with your plan."),
-  signingIn: t("Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in."),
+  signingIn: t(
+    "Sign in on Google's page in your browser, then paste the code it gives you here. Antigravity keeps the sign-in.",
+  ),
   cancelSignIn: t("Cancel"),
   openSignInPage: t("Open sign-in page"),
   signInAgain: t("Sign in again…"),

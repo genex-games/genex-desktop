@@ -471,8 +471,6 @@ export default {
   Blur: "흐림",
   "Bonsai currently requires an Apple Silicon Mac": "Bonsai에는 현재 Apple 실리콘 Mac이 필요해요",
   "Bonsai installed · starts on demand": "Bonsai 설치됨 · 필요할 때 시작",
-  "Bonsai is answering a chat or build. Delete the model when it finishes.":
-    "Bonsai가 채팅이나 빌드에 답하는 중이에요. 끝나면 모델을 삭제해 주세요.",
   "Bonsai requires Apple Silicon": "Bonsai에는 Apple 실리콘이 필요해요",
   "Bonsai requires at least 16 GiB of memory.": "Bonsai에는 최소 16GiB 메모리가 필요해요.",
   "Bonsai runtime is unavailable": "Bonsai 런타임을 사용할 수 없어요",
@@ -681,7 +679,8 @@ export default {
   Checkpoint: "체크포인트",
   Choose: "선택",
   "Choose Blender…": "Blender 선택…",
-  "Choose PQ2_0 (recommended) or PTQ1_0 in Model setup.": "모델 설정에서 PQ2_0(권장) 또는 PTQ1_0을 선택해 주세요.",
+  "Download Bonsai 2 27B or Bonsai 2 27B Lite in Settings › Local Models.":
+    "설정 › 로컬 모델에서 Bonsai 2 27B 또는 Bonsai 2 27B Lite를 다운로드해 주세요.",
   "Choose a PNG, JPEG or WebP image, or a valid cover recipe.":
     "PNG, JPEG, WebP 이미지나 올바른 커버 레시피를 선택하세요.",
   "Choose a coding model": "코딩 모델 선택",
@@ -1384,7 +1383,7 @@ export default {
   "Fit every asset": "모든 에셋 보기",
   "Fit everything": "전체 보기",
   "Tidy up": "정리",
-  "Genex is drawing {title}": "Genex가 {title} 그리는 중",
+  "Genex is drawing": "Genex가 그리는 중",
   "{title} · next": "{title} · 다음",
   "{count, plural, one {# new pick} other {# new picks}}": "{count, plural, other {새 선택 #개}}",
   "Use this": "이걸로",
@@ -4020,6 +4019,8 @@ export default {
   "This model is unavailable. Check the connection or choose another model.":
     "이 모델은 사용할 수 없어요. 연결을 확인하거나 다른 모델을 고르세요.",
   "This model isn’t available right now": "이 모델은 지금 사용할 수 없어요",
+  "This model needs more memory than this computer has free, so resending won't help. Pick a smaller model, or close other apps and try again.":
+    "이 모델은 이 컴퓨터에 남은 메모리보다 더 많은 메모리가 필요해서 다시 보내도 해결되지 않아요. 더 작은 모델을 고르거나 다른 앱을 닫고 다시 시도해 주세요.",
   "This page isn't from the sign-in Genex started.": "이 페이지는 Genex가 시작한 로그인에서 온 것이 아니에요.",
   "This paste has {count, plural, other {# servers}}. Pick one:":
     "붙여 넣은 내용에 서버가 {count, plural, other {#개}} 있어요. 하나 골라 주세요:",
@@ -5008,6 +5009,8 @@ export default {
   'the lead put a worker on "{task}" for {minutes}':
     "메인 에이전트가 작업자에게 “{task}” 작업을 {minutes} 동안 맡겼어요",
   "the model could not be reached": "모델에 연결할 수 없었어요",
+  "the model needs more memory than this computer has free — close other apps or pick a smaller model, then press Resume":
+    "모델에 필요한 메모리가 이 컴퓨터에 남은 메모리보다 많아요 — 다른 앱을 닫거나 더 작은 모델을 고른 뒤 ‘재개’를 눌러 주세요",
   "the model provider hit your plan's session limit": "모델 제공자에서 요금제 세션 한도에 도달했어요",
   "the model provider hit your plan's usage cap": "모델 제공자에서 요금제 사용 한도에 도달했어요",
   "the model provider is down": "모델 제공자가 다운됐어요",
@@ -5414,6 +5417,7 @@ export default {
     "{name} 프로젝트는 아직 Genex용으로 설정되지 않았어요. 먼저 설정하세요.",
   "{name} isn’t on this computer any more.": "{name} 파일은 이제 이 컴퓨터에 없어요.",
   "{name} needs Studio {version} or newer": "{name}에는 Studio {version} 이상이 필요해요",
+  "{name} still isn't signed in.": "{name}에 아직 로그인되지 않았어요.",
   "{name} needs a sign-in": "{name} 로그인 필요",
   "{name} opens in Unreal {to} from now on.": "{name}은(는) 이제부터 Unreal {to}에서 열려요.",
   "{name} settings": "{name} 설정",
@@ -6297,8 +6301,8 @@ export default {
     "Antigravity CLI를 설치하면 Google AI 요금제로 만들 수 있어요.",
   "Installing Antigravity. This can take a minute.": "Antigravity를 설치하는 중이에요. 1분 정도 걸릴 수 있어요.",
   "Not signed in to Antigravity.": "Antigravity에 로그인되어 있지 않아요.",
-  "Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in.":
-    "로그인 페이지를 열고, 거기서 받은 코드를 여기에 붙여 넣어 주세요. 로그인 정보는 Antigravity가 보관해요.",
+  "Sign in on Google's page in your browser, then paste the code it gives you here. Antigravity keeps the sign-in.":
+    "브라우저에 열린 Google 페이지에서 로그인하고, 거기서 받은 코드를 여기에 붙여 넣어 주세요. 로그인 정보는 Antigravity가 보관해요.",
   "Sign in to Antigravity from Settings › Model Providers.": "설정 › 모델 제공자에서 Antigravity에 로그인해 주세요.",
   "Sign in with your Google account to build with your plan.": "Google 계정으로 로그인하면 요금제로 만들 수 있어요.",
   "Switch to another Google account": "다른 Google 계정으로 전환",
@@ -6334,4 +6338,36 @@ export default {
   "Sees images": "이미지 인식",
   "Step {n} of {total} · {name}": "{total}단계 중 {n}단계 · {name}",
   "Version {version} is in your game": "버전 {version}이 게임에 들어갔어요",
+  "Show all {count}": "{count}개 모두 보기",
+  "{at} of {count}": "{at} / {count}",
+  "Add {cap} more": "{cap} 더 추가",
+  Allow: "허용",
+  "Genex's real models are switched off right now. Practice answers go on.":
+    "지금 Genex의 실제 모델이 꺼져 있어. 연습 답변은 계속돼.",
+  "Most credits this play session may spend": "이번 플레이에서 쓸 수 있는 최대 크레딧",
+  "Practice answers (free, made up)": "연습 답변 (무료, 지어낸 답)",
+  "Practice answers could not start: {error}": "연습 답변을 시작하지 못했어: {error}",
+  "Real AI is billed to this game's draft on Genex, and it has none yet. Ask the chat to publish a draft, then try again. Practice answers go on.":
+    "실제 AI는 Genex에 있는 이 게임의 초안으로 청구되는데, 아직 초안이 없어. 채팅에 초안을 게시해 달라고 한 다음 다시 해 봐. 연습 답변은 계속돼.",
+  "Real AI is not available in this test profile. Practice answers go on.":
+    "이 테스트 프로필에서는 실제 AI를 쓸 수 없어. 연습 답변은 계속돼.",
+  "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
+    "실제 AI를 쓰려면 Genex에 로그인해야 해. 설정에서 로그인한 다음 다시 해 봐. 연습 답변은 계속돼.",
+  "Real AI stopped. Practice answers go on.": "실제 AI가 멈췄어. 연습 답변은 계속돼.",
+  "Real AI · {spent} of {cap} credits": "실제 AI · {cap} 중 {spent} 크레딧",
+  "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
+    "이 미리보기에서는 실제 모델이 답하고, 네 Genex 크레딧으로 결제돼: 이번 플레이에서 최대 {cap} 크레딧 ({dollars}).",
+  Start: "시작",
+  "Starting real AI…": "실제 AI 시작하는 중…",
+  "The cap is used up": "한도를 다 썼어",
+  "This game wants to hear you through your microphone.": "이 게임이 마이크로 네 목소리를 듣고 싶어 해.",
+  "Use real AI": "실제 AI 사용",
+  "A local model is answering a chat or build. Delete the model when it finishes.":
+    "로컬 모델이 채팅이나 빌드에 답하는 중이에요. 끝나면 모델을 삭제해 주세요.",
+  "Download Inkling 2 Mini in Settings › Local Models.": "설정 › 로컬 모델에서 Inkling 2 Mini를 다운로드해 주세요.",
+  "Download Inkling 2 Mini to build locally": "로컬에서 만들려면 Inkling 2 Mini를 다운로드하세요",
+  "Inkling 2 Mini installed · starts on demand": "Inkling 2 Mini 설치됨 · 필요할 때 시작",
+  "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
+    "로컬 모델에는 Apple 실리콘 Mac이나 64비트 Windows 또는 Linux PC가 필요해요",
+  "{model} can't run on this computer.": "{model}은(는) 이 컴퓨터에서 실행할 수 없어요.",
 } satisfies LocaleCatalog;

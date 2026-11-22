@@ -17,7 +17,7 @@ export const TurnStop = {
   Aborted: "aborted",
   /** The engine needs a sign-in only a person can give. */
   NeedsSignin: "needs_signin",
-  /** The engine is out of usage, or throttled with nothing to fall back to. */
+  /** The engine is out of usage, throttled with nothing to fall back to, or its model does not fit this computer's memory. */
   EngineLimited: "engine_limited",
   /** The loop spent every tool round it was given. */
   MaxRounds: "max_rounds",

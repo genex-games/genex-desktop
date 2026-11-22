@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "genex",
-  "version": "1.16.29",
+  "version": "1.16.32",
   "name": "Genex plugin",
   "publisher": "Genex",
   "description": "3D models, characters, sound and art for your games, made in chat with Genex credits. Coding stays on your own provider.",
@@ -248,7 +248,7 @@
       "engines": ["web"],
       "summary": "Building AI opponents, teammates, NPCs, a game master or a judge that call a language model from the running game, paid for and approved by the player on Genex: one call or a standing budget, judge() for decisions, streaming, benchmarking the ceiling with genex__cli-paid, and its refusals.",
       "file": "skills/genex-llm-in-games/SKILL.md",
-      "references": ["skills/genex-llm-in-games/references/pricing.md"]
+      "references": ["skills/genex-llm-in-games/references/pricing.md", "skills/genex-llm-in-games/references/voice.md"]
     },
     {
       "name": "genex-tool-llm",

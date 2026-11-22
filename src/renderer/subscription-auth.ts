@@ -13,6 +13,8 @@ import { t } from "../shared/i18n.ts";
 import { EngineId, loginKind, PROVIDERS, providerInfo } from "../shared/providers.ts";
 import { reportSignInStarted } from "./analytics/welcome-report.ts";
 import { useAsyncEffect } from "./use-async-effect.ts";
+import { CLI_SIGN_IN, isCliProvider } from "./panels/cli-sign-in.ts";
+import { openSettings, SettingsOpenedFrom, SettingsSection } from "./settings-navigation.ts";
 
 /** The subscriptions the composer and the Models room show, in order: the provider table's. */
 export { SUBSCRIPTION_ENGINES, type SubscriptionId } from "../shared/providers.ts";
@@ -40,7 +42,7 @@ export function signInVendor(engine: string): {
   const copy = provider?.signIn;
   if (!provider || !copy)
     return {
-      name: engine,
+      name: provider?.label ?? engine,
       url: "",
       get: t("Install it"),
       useLine: t("Use your subscription to build games."),
@@ -161,6 +163,22 @@ function usePolledSignIn(when: { probeOnFocus: boolean; poll: boolean }, refresh
   }, [poll, refresh]);
 }
 
+/**
+ * Start `engine`'s sign-in. A CLI that signs in in its own terminal (Antigravity, Grok Build,
+ * Cursor, OpenCode, Pi) runs it in its Settings row, so Settings opens there; the subscriptions sign
+ * in through main's own flow.
+ */
+export async function startSignIn(
+  engine: string,
+  opts?: { separate?: boolean; account?: string },
+  from: SettingsOpenedFrom = SettingsOpenedFrom.ConnectCard,
+): Promise<{ started: boolean; missingCli?: boolean; error?: string }> {
+  if (!isCliProvider(engine)) return window.studio.subscriptionSignIn({ engine, ...(opts ?? {}) });
+  const result = await CLI_SIGN_IN[engine].signIn();
+  if (result.started) openSettings(SettingsSection.Providers, null, from);
+  return result;
+}
+
 export interface SubscriptionAuth {
   engine: EngineDescriptor | undefined;
   waiting: boolean;
@@ -204,16 +222,19 @@ export function useSubscriptionAuth(
   // user can sign into their existing subscription without changing their terminal's login.
   const signIn = async (opts?: { separate?: boolean; account?: string }): Promise<void> => {
     setError(null);
-    const result = await window.studio
-      .subscriptionSignIn({ engine: engineId, ...(opts ?? {}) })
-      .catch((err: Error) => ({ started: false as const, missingCli: false, error: err.message }));
+    const result = await startSignIn(engineId, opts).catch((err: Error) => ({
+      started: false as const,
+      missingCli: false,
+      error: err.message,
+    }));
     reportSignInStarted(engineId, result.started, Boolean(!result.started && result.missingCli));
     if (!result.started) {
       setMissingCli(Boolean(result.missingCli));
       setError(result.error ?? t("Couldn't start sign-in"));
       return;
     }
-    if (!consoleLogin) {
+    // A CLI's own sign-in reports its end itself (its terminal closes and the engines change).
+    if (!consoleLogin && !isCliProvider(engineId)) {
       setWaiting(true);
       void refresh();
     }

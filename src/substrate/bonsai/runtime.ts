@@ -1,7 +1,7 @@
 import { InstallPhase, type ModelInstallJob, ModelInstallProblem } from "../../shared/model-install.ts";
-import { atomicWriteJson, pathExists, readJsonIfExists } from "../fsx.ts";
+import { atomicWriteJson, pathExists, readJsonIfExists, renameFolder } from "../fsx.ts";
 import { spawn, execFile, type ChildProcess } from "node:child_process";
-import { mkdir, readFile, writeFile, readdir, rm, rename, stat, statfs } from "node:fs/promises";
+import { mkdir, readFile, writeFile, readdir, rm, stat, statfs } from "node:fs/promises";
 import { createServer } from "node:net";
 import path from "node:path";
 import os from "node:os";
@@ -9,14 +9,15 @@ import { createWriteStream } from "node:fs";
 import { randomBytes, randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import {
-  BONSAI_BINARY,
-  BONSAI_MODELS,
-  BONSAI_PROJECTOR,
-  BONSAI_RUNTIME,
-  BONSAI_NOTICES,
-  bonsaiModel,
+  MANAGED_MODELS,
+  ManagedFamily,
+  RUNTIME_BUILDS,
+  managedModel,
   type DownloadFile,
+  type ManagedModel,
+  type RuntimeBuild,
 } from "./manifest.ts";
+import { StudioPlatform } from "../../shared/boot.ts";
 import { download, DownloadStatus, type DownloadProgress } from "./download.ts";
 import { CodedError, errorCodeIn, errorMessage } from "../../shared/errors.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
@@ -29,6 +30,12 @@ const MIB = 1024 ** 2;
 const LARGE_HOST_MEMORY_BYTES = 32 * GIB;
 const LARGE_CONTEXT_TOKENS = 102400;
 const SMALL_CONTEXT_TOKENS = 16384;
+/**
+ * Inkling's working window. Only 4 of its 24 layers keep a full-context KV cache (8 with the loop),
+ * about 2 GB at this size, and Genex's first prompt alone is ~18K tokens.
+ */
+const INKLING_CONTEXT_TOKENS = 65536;
+/** Bonsai's minimum machine; Inkling's is the fit rule Settings applies before offering a download. */
 const MIN_MEMORY_BYTES = 16 * GIB;
 /** Temporary extraction needs several times the runtime archive, plus a fixed reserve. */
 const EXTRACTION_EXPANSION_FACTOR = 8;
@@ -43,6 +50,9 @@ const RUNTIME_LOG_MAX_BYTES = 4 * MIB;
 const STOP_GRACE_MS = 3 * SECOND_MS;
 /** How deep under the runtime folder the `llama-server` binary may sit. */
 const BINARY_SEARCH_DEPTH = 3;
+const SERVER_BINARY = "llama-server";
+const WINDOWS_SERVER_BINARY = "llama-server.exe";
+const WINDOWS_ROOT = "C:\\Windows";
 const LOOPBACK_HOST = "127.0.0.1";
 const JOB_FILE = "install-job.json";
 
@@ -58,6 +68,7 @@ const MESSAGE = {
   StatusUnreadable: () => t("Cannot read model installation status."),
   AnotherInstall: () => t("Another model installation is running."),
   NeedsAppleSilicon: () => t("Bonsai currently requires an Apple Silicon Mac"),
+  UnsupportedMachine: (model: string) => t("{model} can't run on this computer.", { model }),
   AnotherDownload: () => t("Another Bonsai download is running"),
   NeedsMemory: () => t("Bonsai requires at least 16 GiB of memory."),
   NotEnoughSpace: (required: number, available: number) =>
@@ -67,13 +78,13 @@ const MESSAGE = {
     ),
   UnsafeArchive: () => t("Unsafe runtime archive"),
   DownloadCancelled: () => t("Download cancelled. Verified files and resumable partials are retained."),
-  RuntimeClosed: "Bonsai runtime is closed",
-  StartupCancelled: "Bonsai startup cancelled",
-  NotDownloaded: "Download this Bonsai model in Model setup first",
+  RuntimeClosed: "The local model runtime is closed",
+  StartupCancelled: "Local model startup cancelled",
+  NotDownloaded: "Download this local model in Settings › Local Models first",
   RemoveWhileDownloading: () => t("A model is downloading. Delete this one when the download finishes."),
-  RemoveWhileAnswering: () => t("Bonsai is answering a chat or build. Delete the model when it finishes."),
-  StoppedDuringStartup: (stderr: string) => `Bonsai stopped during startup: ${stderr}`,
-  StartupTimedOut: (stderr: string) => `Bonsai startup timed out: ${stderr}`,
+  RemoveWhileAnswering: () => t("A local model is answering a chat or build. Delete the model when it finishes."),
+  StoppedDuringStartup: (stderr: string) => `The local model stopped during startup: ${stderr}`,
+  StartupTimedOut: (stderr: string) => `The local model's startup timed out: ${stderr}`,
 } as const;
 
 /** What a failure in each phase of an install is, when nothing more exact was said. */
@@ -92,7 +103,7 @@ export function installProblem(err: unknown, phase: InstallPhase | undefined): M
 }
 
 /** The llama-server flags Studio pins for Bonsai, after the per-launch model, port and context. */
-const LLAMA_SERVER_TUNING = [
+const BONSAI_SERVER_TUNING = [
   "--parallel",
   "1",
   "--cache-ram",
@@ -113,6 +124,27 @@ const LLAMA_SERVER_TUNING = [
   `http://${LOOPBACK_HOST}`,
 ] as const;
 
+/**
+ * Inkling's: no layer count, so llama-server's `--fit` (on by default) keeps on the graphics card
+ * what fits there and the rest of the experts in RAM, as a 12 GB card needs. Its reasoning effort
+ * travels with each request (`chat_template_kwargs`), not as a server flag.
+ */
+const INKLING_SERVER_TUNING = [
+  "--parallel",
+  "1",
+  "--cache-ram",
+  "0",
+  "--jinja",
+  "--no-webui",
+  "--cors-origins",
+  `http://${LOOPBACK_HOST}`,
+] as const;
+
+const SERVER_TUNING: Record<ManagedFamily, readonly string[]> = {
+  [ManagedFamily.Bonsai]: BONSAI_SERVER_TUNING,
+  [ManagedFamily.Inkling]: INKLING_SERVER_TUNING,
+};
+
 /** The install phase a download progress report puts the job in. */
 const INSTALL_PHASE_FOR_DOWNLOAD: Record<DownloadStatus, InstallPhase> = {
   [DownloadStatus.Downloading]: InstallPhase.Downloading,
@@ -123,10 +155,13 @@ const INSTALL_PHASE_FOR_DOWNLOAD: Record<DownloadStatus, InstallPhase> = {
 
 const exec = promisify(execFile);
 
-/** Whether a Mac can run Bonsai, and how much memory it has. */
+/** What kind of machine this is, for the build a model runs on, and how much memory it has. */
 export interface Machine {
   appleSilicon: boolean;
   memoryBytes: number;
+  /** `process.platform` and `process.arch`; an Apple Silicon machine without them is a Mac. */
+  platform?: string;
+  arch?: string;
 }
 
 /**
@@ -147,9 +182,24 @@ export interface BonsaiRuntimeOptions {
 }
 
 const thisMachine = (): Machine => ({
-  appleSilicon: process.platform === "darwin" && process.arch === "arm64",
+  appleSilicon: process.platform === StudioPlatform.Mac && process.arch === "arm64",
   memoryBytes: os.totalmem(),
+  platform: process.platform,
+  arch: process.arch,
 });
+
+/** The machine as the manifest's builds see it. */
+function hostOf(machine: Machine) {
+  const mac = machine.appleSilicon ? { platform: StudioPlatform.Mac, arch: "arm64" } : null;
+  return {
+    platform: machine.platform ?? mac?.platform ?? process.platform,
+    arch: machine.arch ?? mac?.arch ?? process.arch,
+    appleSilicon: machine.appleSilicon,
+  };
+}
+
+/** Every file a pinned build unpacks from. */
+const ARCHIVES: ReadonlySet<DownloadFile> = new Set(RUNTIME_BUILDS.flatMap((build) => build.archives));
 
 function scheduleUnref(run: () => void, ms: number): () => void {
   const timer = setTimeout(run, ms);
@@ -181,6 +231,27 @@ function terminate(child: ChildProcess): Promise<void> {
 // and long-prompt checks; see docs/local-models.md#future-context-manager-integration.
 export const bonsaiContextWindow = (memoryBytes = os.totalmem()): number =>
   memoryBytes >= LARGE_HOST_MEMORY_BYTES ? LARGE_CONTEXT_TOKENS : SMALL_CONTEXT_TOKENS;
+
+/** Where `child` and its tools find their libraries: a Linux build keeps its own beside the server. */
+function serverEnv(platform: string, binary: string, key: string): NodeJS.ProcessEnv {
+  const base = { PATH: process.env.PATH, LLAMA_API_KEY: key };
+  if (platform === StudioPlatform.Windows)
+    return {
+      ...base,
+      SystemRoot: process.env.SystemRoot ?? WINDOWS_ROOT,
+      windir: process.env.windir ?? WINDOWS_ROOT,
+      TEMP: process.env.TEMP,
+      TMP: process.env.TMP,
+    };
+  const libraries = platform === StudioPlatform.Linux ? { LD_LIBRARY_PATH: path.dirname(binary) } : {};
+  return { ...base, TMPDIR: process.env.TMPDIR, ...libraries };
+}
+
+/** The archive tool: macOS's and Linux's `tar`, or Windows' own `tar.exe` (bsdtar, which reads zip). */
+function tarOf(platform: string): string {
+  if (platform !== StudioPlatform.Windows) return "/usr/bin/tar";
+  return path.win32.join(process.env.SystemRoot ?? WINDOWS_ROOT, "System32", "tar.exe");
+}
 
 /** What a starting llama-server has said so far: the tail of stderr and any spawn error. */
 interface ServerOutput {
@@ -220,18 +291,20 @@ async function freeLoopbackPort(): Promise<number> {
   return port;
 }
 
-/** Find `llama-server` at most `depth` folders below `dir`. */
-async function findServerBinary(dir: string, depth: number): Promise<string | null> {
+/** Find the server binary `name` at most `depth` folders below `dir`. */
+async function findServerBinary(dir: string, name: string, depth: number): Promise<string | null> {
   for (const item of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
-    if (item.isFile() && item.name === "llama-server") return path.join(dir, item.name);
+    if (item.isFile() && item.name === name) return path.join(dir, item.name);
     if (!item.isDirectory() || depth <= 0) continue;
-    const found = await findServerBinary(path.join(dir, item.name), depth - 1);
+    const found = await findServerBinary(path.join(dir, item.name), name, depth - 1);
     if (found) return found;
   }
   return null;
 }
 
-const isUnsafeArchiveEntry = (name: string) => name.startsWith("/") || name.split("/").includes("..");
+/** An archive entry that would land outside the folder it unpacks into, on any platform. */
+const isUnsafeArchiveEntry = (name: string) =>
+  /^[\\/]/.test(name) || /^[a-z]:/i.test(name) || name.split(/[\\/]/).includes("..");
 
 /** One model's launch in flight, shared by everyone waiting on that model. */
 interface Starting {
@@ -278,9 +351,21 @@ export class BonsaiRuntime {
   #receiptFile(id: string): string {
     return path.join(this.root, `${id.replaceAll(":", "-")}.json`);
   }
-  /** The runtime archive waits in `downloads`; weights and notices live in `models`. */
+  /** A runtime archive waits in `downloads`; weights, projectors and notices live in `models`. */
   #directoryFor(file: DownloadFile): string {
-    return path.join(this.root, file === BONSAI_BINARY ? "downloads" : "models");
+    return path.join(this.root, ARCHIVES.has(file) ? "downloads" : "models");
+  }
+  /** The build `model` runs on on this machine, or null when it cannot run here. */
+  #buildFor(model: ManagedModel): RuntimeBuild | null {
+    return model.runtimeFor(hostOf(this.#machine));
+  }
+  /** Whether this machine has a pinned build that runs `id`. */
+  runsHere(id: string): boolean {
+    return Boolean(this.#buildFor(managedModel(id)));
+  }
+  /** The working window `id` runs with on this machine. */
+  contextWindowFor(id: string): number {
+    return managedModel(id).family === ManagedFamily.Inkling ? INKLING_CONTEXT_TOKENS : this.contextWindow;
   }
   async installStatus(): Promise<ModelInstallJob | null> {
     if (this.#job) return { ...this.#job };
@@ -353,22 +438,31 @@ export class BonsaiRuntime {
     await this.#stopProcess();
   }
   async installed(id: string): Promise<boolean> {
-    const spec = bonsaiModel(id);
+    const spec = managedModel(id);
+    const build = this.#buildFor(spec);
+    if (!build) return false;
     try {
       const receipt = JSON.parse(await readFile(this.#receiptFile(id), "utf8"));
       return (
-        receipt.runtime === BONSAI_RUNTIME &&
+        receipt.runtime === build.name &&
         receipt.sha256 === spec.file.sha256 &&
         (await stat(path.join(this.root, "models", spec.file.name))).size === spec.file.bytes &&
-        (await stat(path.join(this.root, "models", BONSAI_PROJECTOR.name))).size === BONSAI_PROJECTOR.bytes &&
-        Boolean(await this.binary())
+        (await stat(path.join(this.root, "models", spec.projector.name))).size === spec.projector.bytes &&
+        Boolean(await this.#binaryOf(build))
       );
     } catch {
       return false;
     }
   }
-  async binary(): Promise<string | null> {
-    return findServerBinary(path.join(this.root, BONSAI_RUNTIME), BINARY_SEARCH_DEPTH);
+  /** The server binary `id` runs (by default the first model this machine runs), once unpacked. */
+  async binary(id?: string): Promise<string | null> {
+    const model = id ? managedModel(id) : MANAGED_MODELS.find((m) => this.#buildFor(m));
+    const build = model && this.#buildFor(model);
+    return build ? this.#binaryOf(build) : null;
+  }
+  #binaryOf(build: RuntimeBuild): Promise<string | null> {
+    const name = hostOf(this.#machine).platform === StudioPlatform.Windows ? WINDOWS_SERVER_BINARY : SERVER_BINARY;
+    return findServerBinary(path.join(this.root, build.name), name, BINARY_SEARCH_DEPTH);
   }
   cancelInstall() {
     this.#install?.abort();
@@ -379,17 +473,28 @@ export class BonsaiRuntime {
    * here. Refused, removing nothing, while a download runs or a request holds the server.
    */
   async remove(id: string): Promise<void> {
-    const spec = bonsaiModel(id);
+    const spec = managedModel(id);
     if (this.#installPromise) throw new Error(MESSAGE.RemoveWhileDownloading());
     if (this.#leases || this.#starting) throw new Error(MESSAGE.RemoveWhileAnswering());
     await rm(this.#receiptFile(id), { force: true });
     if (this.#model === id) await this.#stopProcess();
     await this.#removeDownload(spec.file);
     await this.#forgetJob(id);
-    if (await this.#othersKeepBytes(id)) return;
-    for (const file of [BONSAI_BINARY, ...BONSAI_NOTICES, BONSAI_PROJECTOR]) await this.#removeDownload(file);
-    for (const folder of [BONSAI_RUNTIME, `${BONSAI_RUNTIME}.staging`])
-      await rm(path.join(this.root, folder), { recursive: true, force: true });
+    await this.#removeUnneeded(await this.#modelsKeepingBytes(id));
+  }
+  /** The projectors, notices and builds no model in `kept` needs any more, and their partials. */
+  async #removeUnneeded(kept: ManagedModel[]): Promise<void> {
+    const keptBuilds = new Set(kept.map((model) => this.#buildFor(model)));
+    const needed = new Set<DownloadFile>(
+      kept.flatMap((model) => [model.projector, ...model.notices, ...(this.#buildFor(model)?.archives ?? [])]),
+    );
+    const shared = new Set(MANAGED_MODELS.flatMap((model) => [model.projector, ...model.notices]));
+    for (const file of [...ARCHIVES, ...shared]) if (!needed.has(file)) await this.#removeDownload(file);
+    for (const build of RUNTIME_BUILDS) {
+      if (keptBuilds.has(build)) continue;
+      for (const folder of [build.name, `${build.name}.staging`])
+        await rm(path.join(this.root, folder), { recursive: true, force: true });
+    }
   }
   /** A pinned file and its resumable partial. */
   async #removeDownload(file: DownloadFile): Promise<void> {
@@ -397,15 +502,19 @@ export class BonsaiRuntime {
     await rm(target, { force: true });
     await rm(`${target}.part`, { force: true });
   }
-  /** Whether another model still has a receipt, weights or a partial download here. */
-  async #othersKeepBytes(id: string): Promise<boolean> {
-    for (const other of BONSAI_MODELS) {
+  /** The other models that still have a receipt, weights or a partial download here. */
+  async #modelsKeepingBytes(id: string): Promise<ManagedModel[]> {
+    const kept: ManagedModel[] = [];
+    for (const other of MANAGED_MODELS) {
       if (other.id === id) continue;
       const weights = path.join(this.#directoryFor(other.file), other.file.name);
       for (const file of [this.#receiptFile(other.id), weights, `${weights}.part`])
-        if (await pathExists(file)) return true;
+        if (await pathExists(file)) {
+          kept.push(other);
+          break;
+        }
     }
-    return false;
+    return kept;
   }
   /** The download record of a deleted model goes with it; another model's stopped download stays. */
   async #forgetJob(id: string): Promise<void> {
@@ -426,22 +535,29 @@ export class BonsaiRuntime {
     });
     return this.#installPromise;
   }
-  async #performInstall(id: string, progress: (p: DownloadProgress) => void): Promise<void> {
-    if (!this.#machine.appleSilicon)
+  /** The build `model` runs on here; a machine that cannot run it is refused before anything is fetched. */
+  #buildOrRefuse(model: ManagedModel): RuntimeBuild {
+    const build = this.#buildFor(model);
+    if (build) return build;
+    if (model.family === ManagedFamily.Bonsai)
       throw new CodedError(ModelInstallProblem.NeedsAppleSilicon, MESSAGE.NeedsAppleSilicon());
+    throw new CodedError(ModelInstallProblem.UnsupportedMachine, MESSAGE.UnsupportedMachine(model.label));
+  }
+  async #performInstall(id: string, progress: (p: DownloadProgress) => void): Promise<void> {
+    const model = managedModel(id);
+    const build = this.#buildOrRefuse(model);
     if (this.#install) throw new CodedError(ModelInstallProblem.AnotherDownload, MESSAGE.AnotherDownload());
     const controller = new AbortController();
     this.#install = controller;
     try {
-      const model = bonsaiModel(id);
-      const files = [BONSAI_BINARY, ...BONSAI_NOTICES, model.file, BONSAI_PROJECTOR];
+      const files = [...build.archives, ...model.notices, model.file, model.projector];
       const total = totalBytes(files);
-      await this.#preflight(id, files, total);
-      await this.#downloadAll(files, total, controller.signal, progress);
+      await this.#preflight(model, build, files, total);
+      await this.#downloadAll(build, files, total, controller.signal, progress);
       controller.signal.throwIfAborted();
       await writeFile(
         this.#receiptFile(id),
-        JSON.stringify({ runtime: BONSAI_RUNTIME, sha256: model.file.sha256, installedAt: new Date().toISOString() }),
+        JSON.stringify({ runtime: build.name, sha256: model.file.sha256, installedAt: new Date().toISOString() }),
       );
       await this.#updateJob({ phase: InstallPhase.Installed, completed: total });
       await this.#updateJob({ phase: InstallPhase.Starting });
@@ -483,14 +599,15 @@ export class BonsaiRuntime {
     return remaining;
   }
   /** Start the job record, then refuse a host without the memory or disk the install needs. */
-  async #preflight(id: string, files: DownloadFile[], total: number): Promise<void> {
+  async #preflight(model: ManagedModel, build: RuntimeBuild, files: DownloadFile[], total: number): Promise<void> {
     await mkdir(this.root, { recursive: true });
     const disk = await statfs(this.root);
     const remaining = await this.#remainingBytes(files);
-    const requiredBytes = remaining + BONSAI_BINARY.bytes * EXTRACTION_EXPANSION_FACTOR + DISK_RESERVE_BYTES;
+    const extraction = totalBytes([...build.archives]) * EXTRACTION_EXPANSION_FACTOR;
+    const requiredBytes = remaining + extraction + DISK_RESERVE_BYTES;
     this.#job = {
       id: randomUUID(),
-      model: id,
+      model: model.id,
       phase: InstallPhase.Preflight,
       completed: 0,
       total,
@@ -501,7 +618,7 @@ export class BonsaiRuntime {
       active: true,
     };
     await this.#updateJob({});
-    if (this.#machine.memoryBytes < MIN_MEMORY_BYTES)
+    if (model.family === ManagedFamily.Bonsai && this.#machine.memoryBytes < MIN_MEMORY_BYTES)
       throw new CodedError(ModelInstallProblem.NeedsMemory, MESSAGE.NeedsMemory());
     if (requiredBytes > availableBytes(disk))
       throw new CodedError(
@@ -510,12 +627,14 @@ export class BonsaiRuntime {
       );
   }
   async #downloadAll(
+    build: RuntimeBuild,
     files: DownloadFile[],
     total: number,
     signal: AbortSignal,
     progress: (p: DownloadProgress) => void,
   ): Promise<void> {
     let completed = 0;
+    const unpacked: string[] = [];
     for (const file of files) {
       const downloaded = await this.#download(file, this.#directoryFor(file), signal, (p) => {
         progress({ ...p, total, completed: completed + p.completed });
@@ -526,21 +645,31 @@ export class BonsaiRuntime {
         }).catch(() => {});
       });
       completed += file.bytes;
-      if (file === BONSAI_BINARY && !(await this.binary())) await this.#extractRuntime(downloaded, signal);
+      if (!build.archives.includes(file)) continue;
+      unpacked.push(downloaded);
+      // A build's archives unpack together, once the last of them is here.
+      if (unpacked.length === build.archives.length && !(await this.#binaryOf(build)))
+        await this.#extractRuntime(build, unpacked, signal);
     }
   }
-  async #extractRuntime(archive: string, signal: AbortSignal): Promise<void> {
+  async #extractRuntime(build: RuntimeBuild, archives: string[], signal: AbortSignal): Promise<void> {
     await this.#updateJob({ phase: InstallPhase.Extracting });
-    const stage = path.join(this.root, `${BONSAI_RUNTIME}.staging`);
+    const stage = path.join(this.root, `${build.name}.staging`);
     await rm(stage, { recursive: true, force: true });
     await mkdir(stage, { recursive: true });
-    const listing = await exec("/usr/bin/tar", ["-tzf", archive], { signal, timeout: TAR_LIST_TIMEOUT_MS });
-    if (listing.stdout.split("\n").some(isUnsafeArchiveEntry))
-      throw new CodedError(ModelInstallProblem.UnsafeArchive, MESSAGE.UnsafeArchive());
-    // This exact publisher archive was verified above before any native code is extracted.
-    await exec("/usr/bin/tar", ["-xzf", archive, "-C", stage], { signal, timeout: TAR_EXTRACT_TIMEOUT_MS });
-    await rm(path.join(this.root, BONSAI_RUNTIME), { recursive: true, force: true });
-    await rename(stage, path.join(this.root, BONSAI_RUNTIME));
+    const tar = tarOf(hostOf(this.#machine).platform);
+    for (const archive of archives) {
+      // `-t`/`-x` without a compression flag: macOS's and Windows' bsdtar and GNU tar each read a
+      // gzip tarball, and bsdtar reads a zip, by what the file is.
+      const listing = await exec(tar, ["-tf", archive], { signal, timeout: TAR_LIST_TIMEOUT_MS, windowsHide: true });
+      if (listing.stdout.split(/\r?\n/).some(isUnsafeArchiveEntry))
+        throw new CodedError(ModelInstallProblem.UnsafeArchive, MESSAGE.UnsafeArchive());
+      // This exact publisher archive was verified above before any native code is extracted.
+      await exec(tar, ["-xf", archive, "-C", stage], { signal, timeout: TAR_EXTRACT_TIMEOUT_MS, windowsHide: true });
+    }
+    await rm(path.join(this.root, build.name), { recursive: true, force: true });
+    // On Windows, antivirus may still hold a just-unpacked .exe: renameFolder waits that out.
+    await renameFolder(stage, path.join(this.root, build.name));
   }
   async start(id: string, signal: AbortSignal): Promise<string> {
     signal.throwIfAborted();
@@ -606,12 +735,13 @@ export class BonsaiRuntime {
     await this.#stopProcess();
     if (!(await this.installed(id))) throw new Error(MESSAGE.NotDownloaded);
     const port = await freeLoopbackPort();
-    const binary = await this.binary();
+    const binary = await this.binary(id);
     if (!binary) throw new Error(MESSAGE.NotDownloaded);
     const child = spawn(binary, this.#serverArgs(id, port), {
       cwd: path.dirname(binary),
       stdio: ["ignore", "ignore", "pipe"],
-      env: { PATH: process.env.PATH, HOME: this.root, TMPDIR: process.env.TMPDIR, LLAMA_API_KEY: this.#key },
+      env: { ...serverEnv(hostOf(this.#machine).platform, binary, this.#key), HOME: this.root },
+      windowsHide: true,
     });
     this.#child = child;
     const output = watchServerOutput(child, path.join(this.root, "runtime.log"));
@@ -627,11 +757,12 @@ export class BonsaiRuntime {
     return host;
   }
   #serverArgs(id: string, port: number): string[] {
+    const model = managedModel(id);
     return [
       "--model",
-      path.join(this.root, "models", bonsaiModel(id).file.name),
+      path.join(this.root, "models", model.file.name),
       "--mmproj",
-      path.join(this.root, "models", BONSAI_PROJECTOR.name),
+      path.join(this.root, "models", model.projector.name),
       "--alias",
       id,
       "--host",
@@ -639,8 +770,8 @@ export class BonsaiRuntime {
       "--port",
       String(port),
       "--ctx-size",
-      String(this.contextWindow),
-      ...LLAMA_SERVER_TUNING,
+      String(this.contextWindowFor(id)),
+      ...SERVER_TUNING[model.family],
     ];
   }
   /** Poll `/health` until it answers, the process dies, the caller aborts or startup times out. */

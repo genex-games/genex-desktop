@@ -3917,8 +3917,9 @@ Genex:
   open, taken down, not approved and public again are a toast with **Open** for 8 s
   (`reviewToasts`). A click anywhere opens the game's chat with Publish (`openPluginSetupFor`, which
   waits for that game's strip) and sends nothing. The sidebar's second line under a game on Genex
-(Public in green, In review, Human review, Not approved and Taken down in red, Fixing n things
-with the working dot, Checking fixes; none for a game Genex doesn't know) comes from
+(small grey words after a mark: Public with a globe, In review, Human review and Checking fixes with
+a clock, Not approved and Taken down in orange with the warning triangle, Fixing n things with the
+working dot; none for a game Genex doesn't know) comes from
   `studio:plugins.genex-review-lines` (fixture-safe; `core/genex-review-lines.ts`): the kept
   review, the chat's newest fix press (Fixing while the agent works, Checking fixes once the app went
   again) and the publish record (Public for any listed game), each game's review part kept until
@@ -4188,10 +4189,27 @@ with the working dot, Checking fixes; none for a game Genex doesn't know) comes 
   `genex` plugin keeps Genex's product requirements and API facts: Studio's cuts (`cuts.json`, a
   section, a run of lines, a replaced sentence or a dropped reference, each matching the pinned text
   exactly once) take Genex's design and process advice out of the vendored text, and the steps
-  Studio refuses (the play-time model cards' `init --convert` and `llm price`) or cannot run yet
-  (from CLI 1.44.0: practice mode, creator-paid budgets, model calls from a server room, the engine
-  bindings and the bench's `system` and `messages` options, with the four references that describe
-  them and the design guide dropped), and the prefaces carry the API facts those passages held. That advice, reworded as optional, is the bundled
+  Studio refuses (the play-time model cards' `init --convert` and `llm price`), runs itself (practice
+  mode: Studio starts `llm practice` beside each preview, so an agent never runs it) or cannot run
+  yet (from CLI 1.44.0: creator-paid budgets, model calls from a server room, with the
+  server-authoritative card's `ctx.models` section, the engine bindings and the bench's `system` and
+  `messages` options, with the four references that describe them and the design guide dropped),
+  and the prefaces carry the API facts those passages held. The play-time model card's preface also
+  wins over its bench-first rule: a game ships with its model calls on, on provisional ceilings
+  (a call starts at `maxCredits` 4, a budget's `perCallMaxCredits` is 16 so a call cut off as `provider_token_limit` can double its `maxCredits` up to 16, and `perCallEstimateCredits` stays 1, marked in the
+  code) until a bench replaces them, a bench card left unapproved is asked once; Studio's previews
+  answer with practice answers (`source: 'practice'`), which the game wires as real answers, and the
+  person can switch Live to real models ([Builds and Live](product/builds-live.md#the-two-views)), so
+  the final message says so and gives the draft's link; the game labels its written lines whenever
+  they play instead; and a game that listens or speaks is built on Genex voice (the card's
+  `references/voice.md`, vendored from CLI 1.45.0 ahead of the pin: `getVoiceCatalog`, `voice` on
+  the budget request, `createVoiceRecorder` with `transcribe`, `createSpeaker`), never on the
+  browser's speech recognition, which hears nothing in Studio's preview. Such a game is whole
+  where the catalog answers `enabled: false`: it takes typed input and shows its lines as text.
+  Its build is given the microphone when a publish sees the recorder in its source (else it
+  declares `microphone` in its `package.json`), and Live asks the person for it. Until the pinned
+  CLI is 1.45.0 the preview's practice helper serves no voice, so the catalog there is disabled
+  and the text path is what runs. That advice, reworded as optional, is the bundled
   `genex-recommendations` plugin (skills only: multiplayer patterns, cover craft, asset sources, shop
   design, player experience, play-time models), which works under the hood of Genex (see
   [First-party privileges](#first-party-privileges)). Genex's currency is Nex (the cards
@@ -4202,11 +4220,14 @@ with the working dot, Checking fixes; none for a game Genex doesn't know) comes 
   CLI release not yet on npm changed is vendored ahead of the pin (`--ahead-from <apps/cli> --ahead
   <cards> --ahead-source <label>`): its files record that `version` and a `pending` note, plain
   refreshes keep them, and the test fails once the pin reaches that version until a refresh takes
-  them from the published CLI. Today the two play-time model cards (`genex-llm-in-games`, `genex-tool-llm`) are ahead of the pin, from CLI 1.44.0; every other card comes from the pinned CLI.
+  them from the published CLI. Today no card is ahead of the pin: every card comes from the pinned CLI.
 - The bundled CLI follows npm: every 6 hours `.github/workflows/genex-cli-follow.yml` compares
   npm's `latest` `@genex-ai/cli-demo` with the pin. When npm is ahead, `scripts/follow-genex-cli.ts`
   opens one bump PR against `dev` with the exact pin, refreshed skills, the plugin's next patch
-  version and the version mentions it lists.
+  version and the version mentions it lists. It does not move Studio's SDK pins
+  (`GENEX_GAME_PACKAGES`, `GENEX_STUDIO_TOOLS` in `shared/genex.ts`): when a new card asks for newer
+  ones, its run fails `genex-skills-vendor.test.ts` and opens nothing until someone raises those
+  pins by hand (as CLI 1.44.0 did with multiplayer 0.17.20 and authority-dev 0.1.11).
 - Its backend and adapter import core substrate modules (session credentials, secrets, delivery,
   outcomes, atomic writes, snapshots), which `scripts/build-plugins.mjs` bundles from this repo.
 

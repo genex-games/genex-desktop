@@ -10,10 +10,14 @@ import type { ProviderUsageReport } from "../../shared/provider-usage.ts";
 import { MODEL_KEY_SEPARATOR } from "../model-key.ts";
 import { MINUTES_PER_HOUR } from "../words.ts";
 
-/** A plan's own names, and where its usage lives. */
-export const PLAN_PROVIDERS: Readonly<Record<string, { brand: string; usagePage: string }>> = {
+/**
+ * A plan's own names, and where its usage lives (none for Antigravity, whose plan Google names
+ * without a page of its limits).
+ */
+export const PLAN_PROVIDERS: Readonly<Record<string, { brand: string; usagePage: string | null }>> = {
   [EngineId.ClaudeCode]: { brand: "Claude", usagePage: "https://claude.ai/settings/usage" },
   [EngineId.Codex]: { brand: "ChatGPT", usagePage: "https://chatgpt.com/codex/settings/usage" },
+  [EngineId.Antigravity]: { brand: "Antigravity", usagePage: null },
 };
 
 /** A limit this full shows as full, this high as high (percent). */
@@ -49,9 +53,11 @@ export function pendingPlans(usedBy: Readonly<Record<string, readonly string[]>>
 export function planWords(engine: string, plan?: string): string {
   if (engine === EngineId.Genex) return plan?.trim() || "Genex";
   const brand = PLAN_PROVIDERS[engine]?.brand ?? engine;
+  // A plan named with its brand ("claude_max", "Antigravity Starter Quota") is said with it once.
   const word = plan
-    ?.replace(/^claude[_-]?/i, "")
-    .replace(/[_-]+/g, " ")
+    ?.replace(/[_-]+/g, " ")
+    .trim()
+    .replace(new RegExp(`^${brand}(\\s+|$)`, "i"), "")
     .trim();
   return word
     ? t("{brand} {plan} plan", { brand, plan: `${word.charAt(0).toUpperCase()}${word.slice(1)}` })

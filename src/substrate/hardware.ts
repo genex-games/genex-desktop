@@ -28,6 +28,7 @@ import catalog from "./models-catalog.json" with { type: "json" };
 import { SECOND_MS } from "../shared/duration.ts";
 import { StudioPlatform } from "../shared/boot.ts";
 import { detectGpus, type GpuInfo } from "./gpu-memory.ts";
+import { versionGte } from "./plugins/marketplace.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -79,7 +80,7 @@ export interface HardwareInfo {
 /** One catalog model. `about` is the user's one line; `notes` is evidence that is never displayed. */
 export interface CatalogModel {
   name: string;
-  /** Packing or build shown beside the name when the tag alone would not say it (Bonsai). */
+  /** A plain word after the name that tells two builds of one model apart ("Bonsai 2 27B Lite"). */
   variant?: string;
   engine?: string;
   sizeGb: number;
@@ -89,6 +90,8 @@ export interface CatalogModel {
   appleSilicon?: boolean;
   /** Managed packs also have a minimum machine (Bonsai: 16 GB). */
   minRamGb?: number;
+  /** Runs only on an x64 Windows or Linux PC, on the llama.cpp build Studio downloads there. */
+  pc?: boolean;
   /** The Apple-Silicon build of the same weights; on Apple Silicon only that build is shown. */
   mlx?: string;
   about: string;
@@ -104,7 +107,7 @@ export interface CatalogTier {
 }
 
 /** A catalog model judged against one machine. */
-export interface CatalogChoice extends Omit<CatalogModel, "notes" | "mlx" | "minRamGb"> {
+export interface CatalogChoice extends Omit<CatalogModel, "notes" | "mlx" | "minRamGb" | "pc"> {
   model: string;
   fits: boolean;
   /** Weights + context + overhead, the figure compared with the machine's model budget. */
@@ -256,9 +259,14 @@ export function fitFor(
   };
 }
 
+/** An x64 Windows or Linux PC, where Studio's own llama.cpp build runs. */
+const isX64Pc = (hw: HardwareInfo): boolean =>
+  hw.arch === "x64" && (hw.platform === StudioPlatform.Windows || hw.platform === StudioPlatform.Linux);
+
 /** Whether this machine's architecture should see the model at all — one build per model. */
 function offered(id: string, model: CatalogModel, hw: HardwareInfo): boolean {
   if (model.appleSilicon && !hw.appleSilicon) return false;
+  if (model.pc && !isX64Pc(hw)) return false;
   if (model.minRamGb !== undefined && hw.ramGb < model.minRamGb) return false;
   // One build per model: on Apple Silicon the MLX sibling replaces the portable GGUF.
   const mlxSibling = model.mlx && model.mlx !== id ? catalogModels()[model.mlx] : undefined;
@@ -266,11 +274,24 @@ function offered(id: string, model: CatalogModel, hw: HardwareInfo): boolean {
 }
 
 function choice(id: string, model: CatalogModel, hw: HardwareInfo): CatalogChoice {
-  const { notes: _notes, mlx: _mlx, minRamGb: _min, ...shown } = model;
+  const { notes: _notes, mlx: _mlx, minRamGb: _min, pc: _pc, ...shown } = model;
   return { ...shown, model: id, ...fitFor(model.sizeGb, hw) };
 }
 
-export async function recommendModels(hardware?: HardwareInfo): Promise<Recommendation> {
+/** Whether `ollamaVersion` can pull `model`; null (no Ollama running) can, since installing it brings a new one. */
+function ollamaCanPull(model: string, ollamaVersion: string | null): boolean {
+  const minimum = (catalog as { requiresOllama: Record<string, string> }).requiresOllama[model];
+  return !minimum || ollamaVersion === null || versionGte(ollamaVersion, minimum);
+}
+
+/**
+ * The models that fit this machine, ranked, with the rest under More models. A model the running
+ * Ollama (`ollamaVersion`) is too old to pull is never a pick: its Download would fail.
+ */
+export async function recommendModels(
+  hardware?: HardwareInfo,
+  ollamaVersion: string | null = null,
+): Promise<Recommendation> {
   const hw = hardware ?? (await detectHardware());
   const tier = tierFor(tierRamGb(hw));
   const models = catalogModels();
@@ -281,7 +302,7 @@ export async function recommendModels(hardware?: HardwareInfo): Promise<Recommen
       const model = offeredById.get(id);
       return model ? [choice(id, model, hw)] : [];
     })
-    .filter((pick) => pick.fits);
+    .filter((pick) => pick.fits && ollamaCanPull(pick.model, ollamaVersion));
   // A model on the card answers many times faster than one split with RAM: those rank first.
   const picks = [...ranked.filter((pick) => !pick.split), ...ranked.filter((pick) => pick.split)];
   const shown = new Set(picks.map((pick) => pick.model));

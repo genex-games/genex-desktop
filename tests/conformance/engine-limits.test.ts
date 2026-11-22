@@ -7,8 +7,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { limitKind, limitResetMs } from "../../src/substrate/engines/claude-code.ts";
-import { classifyHttpFailure } from "../../src/substrate/engines/types.ts";
+import { classifyHttpFailure, classifyLocalFailure } from "../../src/substrate/engines/types.ts";
 import { DAY_MS, HOUR_MS, MINUTE_MS, SECOND_MS } from "../../src/shared/duration.ts";
+import { isTransientProviderError } from "../../src/harness-seed/loop/outage.ts";
 
 describe("engine limits", () => {
   it("classifies session, usage and rate limits by their text, and nothing else", () => {
@@ -88,5 +89,40 @@ describe("HTTP failures of an API engine", () => {
     for (const [status, body, kind] of rows)
       assert.equal(classifyHttpFailure("openrouter", status, body).kind, kind, `${status}`);
     assert.equal(classifyHttpFailure("openrouter", 429, "retry-after: 7").retryAfterMs, 7000);
+  });
+});
+
+describe("a local model out of the computer's memory", () => {
+  // Live, 2026-11-21: Inkling 2 Mini on a Mac's Ollama crashed on Metal's memory, and the chat said
+  // Ollama was unreachable and to wait and resend.
+  it("is its own failure, whatever runtime said it, and a hosted provider's words stay an outage", () => {
+    const outOfMemory = [
+      '{"error":{"message":"mlx runner failed: panic: mlx: [METAL] Command buffer execution failed: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)"}}',
+      '{"error":"model requires more system memory (23.4 GiB) than is available (10.1 GiB)"}',
+      '{"error":"llama runner process has terminated: cudaMalloc failed: out of memory"}',
+      '{"error":"llama runner process has terminated: error loading model: unable to allocate CUDA0 buffer"}',
+      '{"error":{"message":"ggml_vulkan: Device memory allocation failed: ErrorOutOfDeviceMemory"}}',
+      '{"error":{"code":500,"message":"failed to allocate compute buffers"}}',
+    ];
+    for (const body of outOfMemory) {
+      const failure = classifyLocalFailure("ollama", 500, body, "inkling-2-mini");
+      assert.equal(failure.kind, "out_of_memory", body);
+      assert.match(failure.message, /inkling-2-mini needs more memory than this computer has free/);
+      assert.equal(isTransientProviderError(failure), false, `no wait fits the model in: ${body}`);
+    }
+    const otherwise: Array<[number, string, string]> = [
+      [500, '{"error":"llama runner process has terminated: exit status 2"}', "unavailable"],
+      [503, '{"error":"loading model"}', "unavailable"],
+      [500, "error parsing tool call", "unavailable"],
+      [400, '{"error":"memory is a feature of this model"}', "other"],
+      [500, '{"error":"failed to allocate a port for the runner"}', "unavailable"],
+    ];
+    for (const [status, body, kind] of otherwise)
+      assert.equal(classifyLocalFailure("ollama", status, body).kind, kind, body);
+    assert.equal(
+      classifyHttpFailure("openrouter", 500, "CUDA out of memory").kind,
+      "unavailable",
+      "a hosted provider's memory is its own outage: a wait mends it",
+    );
   });
 });

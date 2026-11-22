@@ -177,11 +177,19 @@ request is sent once more asking for 90% of that), 429 a rate limit. Errors are 
 spoken, picked by the version `opencode --version` prints (`openCodeRelease` in
 [opencode-cli.ts](../src/substrate/engines/opencode-cli.ts)), never guessed: 1.18 (`--pure`,
 `--variant`, the `permission` map, `opencode models --verbose`) and 2.x from 2.0.20 (Homebrew ships
-2.x while OpenCode's own installer still ships 1.18). A 2.x newer than the tested 2.0.26 runs and
+2.x while OpenCode's own installer still ships 1.18). A 2.x newer than the tested 2.3.2 runs and
 its status says so; an older 2.x, 3.x or an unreadable version is refused, and discovery then tries
 the next OpenCode on the search path (a manual choice never yields). On 2.x every session passes
 `--standalone --agent build`: OpenCode's shared background server runs outside the sandbox with the
-settings of whoever started it, so each session runs a private one inside `ProcessSandbox`. 2.x
+settings of whoever started it, so each session runs a private one inside `ProcessSandbox`. Where
+the sandbox fences loopback (Windows, `loopbackPorts`), `openCodeEvents` starts that server itself:
+`opencode serve --stdio --port <n>` in the same sandbox, folder and environment, on the highest
+free port of the range that no other session holds, with a password made for it (`--stdio` makes it
+drop the password from the environment its tools inherit, as `--standalone` does, and end when its
+stdin, held by the live-input relay, closes); it counts as up once it answers that password, and the run gets `--server` in place of `--standalone`,
+whose server listens on a port of the system's choosing that the session may not connect to
+("Transport: EACCES" from 2.2: newer 2.x reaches loopback past the sandbox's proxy). The server is
+stopped with its session; with every port of the range held, the session says so. 2.x
 reads its folder from `PWD`, gets `OPENCODE_DISABLE_PROJECT_CONFIG=1` (a game's own OpenCode config,
 plugins and agents never load, as `--pure` kept them out on 1.18) and an empty `OPENCODE_TEST_HOME`
 (2.x stops when the sandbox refuses it the home folder's `.claude`), and takes the effort as
@@ -231,7 +239,8 @@ sign in again; and a failure on one of OpenCode's free models says so, keeping i
 lists every OpenAI model even on a ChatGPT sign-in, where OpenAI refuses some, so while Codex is
 signed in the picker starts OpenCode's GPT models with the ones Codex lists (`runnableModels` in
 `renderer/model-lineup.ts`). Recorded streams and listings: `tests/fixtures/transcripts/opencode-*`
-(OpenCode 1.18 and 2.0.20).
+(OpenCode 1.18 and 2.0.20); `STUDIO_OPENCODE_CLI_TESTS=1` runs a real 2.x CLI in the real sandbox
+against a made-up provider (`opencode-cli-live.test.ts`).
 
 **Pi** ([pi.ts](../src/substrate/engines/pi.ts)) is the Pi coding agent (`pi --mode json`), not the
 `pi-ai` HTTP client. Sign in and `--list-models` run with `--no-extensions --offline`; of Pi's
@@ -441,13 +450,17 @@ bill, but the provider is `metered` in the table so the app never picks a Beta o
 
 Settings › Model Providers has its row (`CliSignInRow`): Install, Sign in (`agy acp --login` in a
 terminal inside the row, started in the box a session runs in (`antigravitySignInLaunch`,
-`ProcessSandbox.terminalLaunch`): it prints Google's page for Open sign-in page and takes the code
-that page gives; `studio:antigravity.signin`, native; on Windows the terminal reaches the boxed CLI
+`ProcessSandbox.terminalLaunch`): it prints Google's page and takes the code that page gives. The
+boxed CLI cannot hand the page to the browser itself (macOS refuses its `open` from the box), so
+Genex opens the first `https://accounts.google.com` page the terminal prints, once, and Open
+sign-in page stays for a second look; `studio:antigravity.signin`, native; on Windows the terminal reaches the boxed CLI
 through the sandbox's input relay: Git Bash starts a feeder (written in the person's own temp
 folder, which no box can write, since it runs outside every box) under the studio's own Node, which
 starts the box and hands it what the person types, because Electron started straight in a Windows
 terminal reads and prints nothing; the box is made under the engine's own scratch folder), and once
-connected Check connection, Sign in again and Update. The CLI has no command that says whether it
+connected Check connection, Sign in again and Update. The chat's sign-in card for a CLI that signs
+in in its own terminal (Antigravity, Grok Build, Cursor, OpenCode, Pi) starts that same sign-in and
+opens Settings › Model Providers, where its terminal runs; it names the provider by its table label. The CLI has no command that says whether it
 is signed in, so the engine asks by opening a session in an empty folder, at most once a minute:
 the answer lists the models the account can run and its plan, or refuses with ACP's sign-in code
 (`-32000`). While a boxed session of a turn is open it is the proof and nothing is asked, and a
@@ -459,9 +472,12 @@ Antigravity keeps its Google sign-in in the operating system's own store (the Ke
 Credential Manager, the Secret Service) when it can reach it, and in
 `~/.gemini/antigravity-cli/antigravity-oauth-token` when it cannot or when it believes it runs over
 SSH. Genex never reads either. Its sign-in runs in the session's box, so the sign-in lands in the
-file every session reads: on a Mac the box denies the Keychain; off a Mac the box sets
-`SSH_CONNECTION` and `SSH_CLIENT` (`antigravityBoxEnv`), because on Windows the boxed CLI otherwise
-saved the sign-in in the sandbox user's Credential Manager, which every Windows sandbox runs as. On
+file every session reads: every box sets `SSH_CONNECTION` and `SSH_CLIENT` (`antigravityBoxEnv`;
+a Mac's box denies the Keychain anyway), because on Windows the boxed CLI otherwise saved the
+sign-in in the sandbox user's Credential Manager, which every Windows sandbox runs as. A Bypass
+build, which runs as the person, is told the same (`antigravityPersonEnv`): outside the box the CLI
+read the Keychain, which held another Google account than the one Genex signed in, so the chat's
+model (from the boxed account's list) was unknown to it ("Unknown model ID"). On
 Windows the box also sets `USERPROFILE` to the person's home, so that file is in the person's
 `~/.gemini`, not the sandbox user's profile. A box is given Antigravity's own variables alone
 (`vendorEnv`) and builds the rest from its allow-list: Windows' env file refuses a name like
@@ -483,7 +499,14 @@ sandbox, and every other sandbox still denies `~/.gemini` and opens no extra ser
 
 A failed turn is named by ACP's code (`-32000` a sign-in failure) or by Google's status name in
 the error (`RESOURCE_EXHAUSTED` a usage limit; `UNAVAILABLE`, `INTERNAL`, `DEADLINE_EXCEEDED`
-unavailable); anything else ends the build with the CLI's words. Stop sends `session/cancel` and
+unavailable); anything else ends the build with the CLI's words. When Google refuses a turn the
+CLI does not say so over ACP: it writes one notice as the whole reply ("⚠ Verification Required")
+and ends the turn as finished. A reply that is nothing but the notice of Google's account check
+(`PERMISSION_DENIED` with `VALIDATION_REQUIRED`; `antigravityNotice`, `AntigravityNotice`) fails
+the turn and a one-shot answer, so a game is never named by it; any other reply, one starting with
+the sign included, stays the model's. The engine reads the page Google named from the CLI's newest
+logs since the turn began (`verificationPage`, only `https://accounts.google.com`), opens it in the
+browser once (`openPage`), and the turn says to verify there and send again. Stop sends `session/cancel` and
 gives the CLI five seconds to answer before it is stopped; a turn that says nothing for 10 minutes
 (30 while a tool call is open) is stopped with its process group. Compact now is refused.
 A live run on a signed-in Mac (CLI 1.5.7, free plan) reads the sign-in, builds in the game and
@@ -880,7 +903,10 @@ windows. Codex starts `codex app-server` with the login's `CODEX_HOME` and profi
 sends `initialize` and one `account/rateLimits/read`, then closes stdin; `normalizeCodexUsage`
 names windows by length and scopes non-default buckets. Claude sessions at work never read plan
 usage (see Native context telemetry). `readUsage()` answers null when the plan shares no limits and
-throws when they could not be read; each engine reuses a reading under a minute old and shares an
+throws when they could not be read; a plan named with no limit is `not_shared` and keeps its name.
+Antigravity's plan is listed too: its session names the plan (`_meta.antigravity.tier`) and no
+limit, so it shows by name with the note that it shares none, and no account switch; its Sign in
+again starts its own sign-in in Model Providers. Each engine reuses a reading under a minute old and shares an
 in-flight read; a Recheck clears it. The composer asks when its ring panel opens or the ring is
 hovered, and every minute while open; until the first answer it draws each plan this setup uses
 at full size with shimmering bars, and a plan being read with no numbers yet does the same. A
@@ -994,7 +1020,9 @@ A benchmark of an in-game model call (`llm bench`) spends the person's own credi
 to the `max-credits` its card shows for one attempt, and may name the game's answer-shape file
 (`schema`: one `.json` file inside the game, at most 16 KB), which Studio checks by real path and
 copies in. `llm price` is refused: it rereads a file from the CLI's folder, which Studio removes
-after every command, so the benchmark's answer is the record.
+after every command, so the benchmark's answer is the record. A benchmark is not a gate: until one
+runs, a game declares provisional ceilings and ships with its model calls on (the play-time model
+card's preface, [plugins](plugins.md)).
 `genex__package` adds `@genex-ai/multiplayer` or `@genex-ai/embed-sdk` at Studio's pin to a
 build game after consent, opening the npm registry for that one install. A Studio-template game
 gets player identity by mapping Studio's copy in its import map instead, and Studio then calls

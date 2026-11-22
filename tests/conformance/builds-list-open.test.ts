@@ -73,15 +73,18 @@ async function renderList(selected: string | null): Promise<string> {
       selected,
       onSelect: () => {},
       onClose: () => {},
+      onLight: () => {},
       card,
     }),
   );
 }
 
-/** The opening tag of the row button named `id`. */
+/** The opening tag of the header button of the row named `id`: the first button in it. */
 function rowTag(markup: string, id: string): string {
-  const tag = new RegExp(`<button[^>]*data-graph-node="${id}"[^>]*>`).exec(markup)?.[0];
-  assert.ok(tag, `the row ${id} is on the list`);
+  const row = markup.indexOf(`data-graph-node="${id}"`);
+  assert.ok(row >= 0, `the row ${id} is on the list`);
+  const tag = /<button[^>]*>/.exec(markup.slice(row))?.[0];
+  assert.ok(tag, `the row ${id} has its header button`);
   return tag;
 }
 const attr = (tag: string, name: string): string | undefined => new RegExp(`${name}="([^"]*)"`).exec(tag)?.[1];

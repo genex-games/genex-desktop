@@ -25,7 +25,7 @@ import {
 } from "./asset-jobs.ts";
 import { Panel, Section } from "./chrome.tsx";
 import { joinDots } from "./format.ts";
-import { IMAGE_OUTLINE, PictureChange } from "./pictures.tsx";
+import { IMAGE_OUTLINE, MadeWith, PictureChange } from "./pictures.tsx";
 import { GraphSelection } from "./selection.ts";
 import type { InspectorProps } from "./types.ts";
 
@@ -88,6 +88,7 @@ function AssetPicture({
       onClick={() => onOpen(job)}
     >
       <DeliveredPicture job={job} project={project} />
+      <MadeWith job={job} />
     </button>
   );
 }

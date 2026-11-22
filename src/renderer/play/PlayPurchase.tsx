@@ -53,15 +53,9 @@ function GameThumb({ src }: { src: string | null }): JSX.Element {
   const [failed, setFailed] = useState(false);
   if (!src || failed) return <span className="play-thumb play-thumb-blank" aria-hidden="true" />;
   return (
-    <img
-      className="play-thumb"
-      src={src}
-      alt=""
-      aria-hidden="true"
-      draggable={false}
-      decoding="async"
-      onError={() => setFailed(true)}
-    />
+    <span className="play-thumb" aria-hidden="true">
+      <img src={src} alt="" draggable={false} decoding="async" onError={() => setFailed(true)} />
+    </span>
   );
 }
 

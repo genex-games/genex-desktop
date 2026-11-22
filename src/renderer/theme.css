@@ -410,7 +410,8 @@
   .loader-grid > span,
   [style*="infinite"]
 ),
-:root[data-motion="rest"] .graph-shimmer::after {
+:root[data-motion="rest"] :is(.graph-shimmer, .design-redrawing)::after,
+:root[data-motion="rest"] .asset-skeleton {
   animation-play-state: paused !important;
 }
 @keyframes graph-shimmer {
@@ -3095,7 +3096,8 @@ button.chat-header-title:hover {
   background: var(--inset);
   color: var(--ink);
 }
-/* A game on Genex says where it stands under its name: Public in green, Not approved and Taken down in red. */
+/* A game on Genex says where it stands under its name, small and grey after its mark (a globe for
+   Public); Not approved and Taken down in orange. */
 .sidebar-game-names {
   display: flex;
   min-width: 2rem;
@@ -3107,15 +3109,20 @@ button.chat-header-title:hover {
   min-width: 0;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 16px;
+  letter-spacing: 0;
   color: var(--ink-3);
 }
-.sidebar-game-line[data-review-tone="ok"] {
-  color: var(--green);
+.sidebar-game-line > svg {
+  flex: none;
 }
-.sidebar-game-line[data-review-tone="err"] {
-  color: var(--red);
+.sidebar-game-line[data-review-tone="warn"] {
+  color: var(--orange);
+}
+/* The light theme's orange is a fill colour; as small text it takes a little of the ink to read on white. */
+:root[data-theme="light"] .sidebar-game-line[data-review-tone="warn"] {
+  color: color-mix(in oklab, var(--orange) 80%, var(--ink));
 }
 /* The pin and the working dot sit where ⋯ appears, centred in its 28px slot, and give way to it on hover. */
 .sidebar-pin,
@@ -4576,6 +4583,22 @@ button.chat-header-title:hover {
   line-height: 18px;
   letter-spacing: -0.1px;
 }
+/* The status line's press fills the line under its parts (ui/LoadingState.tsx): they stay in front
+   of its focus fill, even while they fade, and let every click through to it. */
+.chat-status-press {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+}
+.chat-disclosure:has(> .chat-status-press) > :not(.chat-status-press) {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+}
+.chat-disclosure:has(> .chat-status-press:focus-visible) {
+  color: var(--ink);
+}
 .chat-status-words {
   display: flex;
   align-items: center;
@@ -4951,6 +4974,10 @@ button.chat-header-title:hover {
 [data-chat-entry]:hover .chat-user-action,
 [data-chat-entry]:focus-within .chat-user-action {
   opacity: 1;
+}
+/* While the chat answers, Rewind waits: the conversation says so once (chat/ChatConversation.tsx). */
+[data-chat-scroll][data-rewind-off] .chat-rewind {
+  display: none;
 }
 @media (hover: none) {
   .chat-user-action {
@@ -6683,6 +6710,23 @@ a:focus-visible {
   object-fit: contain;
   background: #1d1e21;
 }
+/* The tool an asset was made with, on its picture's bottom-left corner in Builds (inspector/pictures.tsx): the
+   bare logo, a soft shadow keeping it readable on any picture. A mark drawn light (OpenAI,
+   ElevenLabs, Genex) turns dark in the light theme, where a tile with no picture is light. */
+.made-with-mark {
+  position: absolute;
+  bottom: 5px;
+  left: 5px;
+  z-index: 1;
+  width: 12px;
+  height: 12px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 1.5px rgb(0 0 0 / 70%)) drop-shadow(0 1px 2px rgb(0 0 0 / 45%));
+  pointer-events: none;
+}
+:root[data-theme="light"] .made-with-mark[data-light-mark] {
+  filter: invert(0.9) drop-shadow(0 0 1.5px rgb(255 255 255 / 85%)) drop-shadow(0 1px 2px rgb(255 255 255 / 50%));
+}
 .making-corner {
   position: absolute;
   top: 12px;
@@ -7064,6 +7108,11 @@ a:focus-visible {
     chat-fade-in 200ms ease-out 50ms backwards;
   animation-delay: calc(0ms - var(--entered, 0ms)), calc(50ms - var(--entered, 0ms));
 }
+/* A row taking over what the busy line already showed: seen at once, only its room opens. */
+.chat-entry-arriving[data-shown] {
+  animation: chat-row-open var(--duration-fast) var(--ease-smooth-out);
+  animation-delay: calc(0ms - var(--entered, 0ms));
+}
 /* min-height: a flex item may not otherwise shrink below its content, so it could not open or close. */
 .presence {
   --presence-gap: 0px;
@@ -7148,6 +7197,7 @@ a:focus-visible {
     transition: none;
   }
   .chat-entry-arriving,
+  .chat-entry-arriving[data-shown],
   .presence[data-presence],
   .chat-jump,
   .chat-waiting-card,

@@ -23,7 +23,10 @@ import { COMPACT_WORDS, PROVIDER_ACCOUNT_WORDS } from "../words.ts";
 import { openSettings, SettingsOpenedFrom, SettingsSection } from "../settings-navigation.ts";
 import type { SubscriptionAccountView } from "../../shared/subscription-accounts.ts";
 import { accountLabel, activeAccount, switchAccount, useSubscriptionAccounts } from "../subscription-accounts.ts";
+import { startSignIn } from "../subscription-auth.ts";
+import { isCliProvider } from "../panels/cli-sign-in.ts";
 import { useEngines, useProviderUsage } from "../state/hooks.ts";
+import { SUBSCRIPTION_ENGINES } from "../../shared/providers.ts";
 import { studio } from "../state/studio.ts";
 export type { ContextUsage };
 /** The ring's circumference: a circle of radius 6. */
@@ -33,6 +36,9 @@ const ROLE_WORDS: Record<RoleKey, string> = { planner: t("Main agent"), builder:
 const USAGE_POLL_MS = MINUTE_MS;
 /** From this full (percent), the context ring and meter show as full. */
 const CONTEXT_FULL = 85;
+
+/** Whether a plan's engine keeps accounts to switch between: the subscriptions' own. */
+const hasAccounts = (engine: string): boolean => (SUBSCRIPTION_ENGINES as readonly string[]).includes(engine);
 
 /** Which roles a plan serves: all of them, some by name, or none. */
 function rolesWords(roles: RoleKey[], allRoles: number): string {
@@ -137,8 +143,15 @@ function PlanAccountsLine({
   return <PlanAccounts engine={report.engine} accounts={accounts} onSwitched={() => onSwitched(reload)} />;
 }
 
-/** Start an account's web sign-in and open Model Providers, where that sign-in shows. */
+/**
+ * Start an account's web sign-in and open Model Providers, where that sign-in shows; a CLI's own
+ * sign-in (Antigravity's) starts in its row there, which `startSignIn` opens.
+ */
 async function signInAgain(engine: string, account: string | null): Promise<void> {
+  if (isCliProvider(engine)) {
+    await startSignIn(engine, undefined, SettingsOpenedFrom.ComposerLimits);
+    return;
+  }
   await window.studio.subscriptionSignIn({ engine, ...(account ? { account } : {}) });
   openSettings(SettingsSection.Providers, undefined, SettingsOpenedFrom.ComposerLimits);
 }
@@ -243,8 +256,8 @@ function PlanLimits({
           </span>
         )}
       </div>
-      {/* A subscription's accounts; Genex's credits belong to the one Genex sign-in. */}
-      {PLAN_PROVIDERS[report.engine] && <PlanAccountsLine report={report} onSwitched={onSwitched} />}
+      {/* A subscription's accounts; Genex's credits and Antigravity's plan belong to one sign-in. */}
+      {hasAccounts(report.engine) && <PlanAccountsLine report={report} onSwitched={onSwitched} />}
       <PlanBody report={report} onRetry={onRetry} />
     </section>
   );

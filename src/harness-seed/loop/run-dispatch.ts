@@ -2,7 +2,7 @@
  * Starting a run: the refusals a run meets before it is registered, the loop that conducts it, and
  * the record a run that died still owes its chat.
  */
-import { type FactsOfDescriptor, kindUnknown, startWebIfPending } from "./folder-facts.ts";
+import { type FactsOfDescriptor, startWebIfPending } from "./folder-facts.ts";
 import { leadsInPlace } from "./engine-seat.ts";
 import { OPEN_LOOP_REFUSAL } from "./open-loop-prompts.ts";
 import { EngineId, withRoles } from "./model-roles.ts";
@@ -491,8 +491,8 @@ function resumedRoute(journal: AnyRecord | null, runId: string): Route | null {
 /**
  * The run's route (`Route`): a resumed run by its own journal (`resumedRoute`). A journal the host
  * can't read, or a game list it can't give, refuses the run with words (a resume stays paused). A
- * game with no kind yet takes the web starter before the Loop starts, but never under a paused Loop,
- * nor a resumed one on a folder of a kind Genex can't name.
+ * game with no kind yet takes the web starter before the Loop starts, but never under a paused Loop;
+ * a folder of a kind Genex can't name takes none and starts as it is.
  */
 async function routeOf(host: Host, run: Run, { threadId, resume }: { threadId: string; resume: boolean }) {
   let journal: AnyRecord | null = null;
@@ -505,9 +505,7 @@ async function routeOf(host: Host, run: Run, { threadId, resume }: { threadId: s
   if (resumed) return resumed;
   const games = await listedGames(host);
   if (!games) return { refusal: OPEN_LOOP_REFUSAL.gamesUnreadable };
-  const game = games.find((listed) => listed.name === run.project);
-  const unknownOnResume = resume && game !== undefined && kindUnknown(game);
-  if (!journal && !unknownOnResume) await startWebIfPending(host, run.project, games);
+  if (!journal) await startWebIfPending(host, run.project, games);
   return { refusal: null };
 }
 

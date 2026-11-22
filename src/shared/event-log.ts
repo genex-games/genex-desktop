@@ -131,6 +131,7 @@ export const GenexLine = {
   StoppedWaiting: "stopped_waiting",
   StoppedBeforeTurn: "stopped_before_turn",
   StoppedBeforeBuild: "stopped_before_build",
+  ModelOutOfMemory: "model_out_of_memory",
 } as const;
 export type GenexLine = (typeof GenexLine)[keyof typeof GenexLine];
 

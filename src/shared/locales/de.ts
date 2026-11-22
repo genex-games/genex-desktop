@@ -532,8 +532,6 @@ export default {
   Blur: "Unschärfe",
   "Bonsai currently requires an Apple Silicon Mac": "Bonsai braucht derzeit einen Mac mit Apple Silicon",
   "Bonsai installed · starts on demand": "Bonsai installiert · startet bei Bedarf",
-  "Bonsai is answering a chat or build. Delete the model when it finishes.":
-    "Bonsai antwortet gerade in einem Chat oder Build. Lösch das Modell, wenn es fertig ist.",
   "Bonsai requires Apple Silicon": "Bonsai braucht Apple Silicon",
   "Bonsai requires at least 16 GiB of memory.": "Bonsai braucht mindestens 16 GiB Arbeitsspeicher.",
   "Bonsai runtime is unavailable": "Bonsai-Runtime ist nicht verfügbar",
@@ -745,8 +743,8 @@ export default {
   Checkpoint: "Checkpoint",
   Choose: "Auswählen",
   "Choose Blender…": "Blender auswählen…",
-  "Choose PQ2_0 (recommended) or PTQ1_0 in Model setup.":
-    "Wähle in der Modelleinrichtung PQ2_0 (empfohlen) oder PTQ1_0.",
+  "Download Bonsai 2 27B or Bonsai 2 27B Lite in Settings › Local Models.":
+    "Lade Bonsai 2 27B oder Bonsai 2 27B Lite unter Einstellungen › Lokale Modelle herunter.",
   "Choose a PNG, JPEG or WebP image, or a valid cover recipe.":
     "Wähle ein PNG-, JPEG- oder WebP-Bild oder ein gültiges Cover-Rezept.",
   "Choose a coding model": "Wähle ein Coding-Modell",
@@ -1476,7 +1474,7 @@ export default {
   "Fit every asset": "Alle Assets einpassen",
   "Fit everything": "Alles einpassen",
   "Tidy up": "Aufräumen",
-  "Genex is drawing {title}": "Genex zeichnet {title}",
+  "Genex is drawing": "Genex zeichnet",
   "{title} · next": "{title} · als Nächstes",
   "{count, plural, one {# new pick} other {# new picks}}":
     "{count, plural, one {# neue Auswahl} other {# neue Auswahlen}}",
@@ -4219,6 +4217,8 @@ export default {
   "This model is unavailable. Check the connection or choose another model.":
     "Dieses Modell ist nicht verfügbar. Prüf die Verbindung oder wähl ein anderes Modell.",
   "This model isn’t available right now": "Dieses Modell ist gerade nicht verfügbar",
+  "This model needs more memory than this computer has free, so resending won't help. Pick a smaller model, or close other apps and try again.":
+    "Dieses Modell braucht mehr Speicher, als auf diesem Computer frei ist, deshalb hilft erneutes Senden nicht. Wähl ein kleineres Modell oder schließ andere Apps und versuch es noch mal.",
   "This page isn't from the sign-in Genex started.":
     "Diese Seite gehört nicht zu der Anmeldung, die Genex gestartet hat.",
   "This paste has {count, plural, other {# servers}}. Pick one:":
@@ -5240,6 +5240,8 @@ export default {
   'the lead put a worker on "{task}" for {minutes}':
     "der Hauptagent hat einen Helfer für {minutes} auf „{task}“ angesetzt",
   "the model could not be reached": "das Modell war nicht erreichbar",
+  "the model needs more memory than this computer has free — close other apps or pick a smaller model, then press Resume":
+    "das Modell braucht mehr Speicher, als auf diesem Computer frei ist – schließ andere Apps oder wähl ein kleineres Modell, dann drück „Fortsetzen“",
   "the model provider hit your plan's session limit": "beim Modellanbieter ist das Sitzungslimit deines Abos erreicht",
   "the model provider hit your plan's usage cap": "beim Modellanbieter ist das Nutzungslimit deines Abos erreicht",
   "the model provider is down": "der Modellanbieter ist ausgefallen",
@@ -5680,6 +5682,7 @@ export default {
     "{name} ist noch nicht für Genex eingerichtet. Richte es zuerst ein.",
   "{name} isn’t on this computer any more.": "{name} ist nicht mehr auf diesem Computer.",
   "{name} needs Studio {version} or newer": "{name} braucht Studio {version} oder neuer",
+  "{name} still isn't signed in.": "{name} ist noch nicht angemeldet.",
   "{name} needs a sign-in": "{name} braucht eine Anmeldung",
   "{name} opens in Unreal {to} from now on.": "{name} öffnet sich ab jetzt in Unreal {to}.",
   "{name} settings": "Einstellungen für {name}",
@@ -6598,8 +6601,8 @@ export default {
     "Installiere die CLI von Antigravity, um mit deinem Google-AI-Tarif zu bauen.",
   "Installing Antigravity. This can take a minute.": "Antigravity wird installiert. Das kann eine Minute dauern.",
   "Not signed in to Antigravity.": "Nicht bei Antigravity angemeldet.",
-  "Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in.":
-    "Öffne die Anmeldeseite und füge den Code, den sie dir gibt, hier ein. Antigravity behält die Anmeldung.",
+  "Sign in on Google's page in your browser, then paste the code it gives you here. Antigravity keeps the sign-in.":
+    "Melde dich auf Googles Seite in deinem Browser an und füge den Code, den sie dir gibt, hier ein. Antigravity behält die Anmeldung.",
   "Sign in to Antigravity from Settings › Model Providers.":
     "Melde dich unter Einstellungen › Modellanbieter bei Antigravity an.",
   "Sign in with your Google account to build with your plan.":
@@ -6638,4 +6641,37 @@ export default {
   "Sees images": "Versteht Bilder",
   "Step {n} of {total} · {name}": "Schritt {n} von {total} · {name}",
   "Version {version} is in your game": "Version {version} ist in deinem Spiel",
+  "Show all {count}": "Alle {count} zeigen",
+  "{at} of {count}": "{at} von {count}",
+  "Add {cap} more": "{cap} mehr hinzufügen",
+  Allow: "Erlauben",
+  "Genex's real models are switched off right now. Practice answers go on.":
+    "Die echten Modelle von Genex sind gerade aus. Übungsantworten laufen weiter.",
+  "Most credits this play session may spend": "Höchstens so viele Credits in dieser Spielsitzung",
+  "Practice answers (free, made up)": "Übungsantworten (kostenlos, ausgedacht)",
+  "Practice answers could not start: {error}": "Übungsantworten konnten nicht starten: {error}",
+  "Real AI is billed to this game's draft on Genex, and it has none yet. Ask the chat to publish a draft, then try again. Practice answers go on.":
+    "Echte KI wird dem Entwurf dieses Spiels auf Genex berechnet, und es hat noch keinen. Bitte den Chat, einen Entwurf zu veröffentlichen, und versuch es nochmal. Übungsantworten laufen weiter.",
+  "Real AI is not available in this test profile. Practice answers go on.":
+    "Echte KI gibt es in diesem Testprofil nicht. Übungsantworten laufen weiter.",
+  "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
+    "Für echte KI musst du bei Genex angemeldet sein. Melde dich in den Einstellungen an und versuch es nochmal. Übungsantworten laufen weiter.",
+  "Real AI stopped. Practice answers go on.": "Echte KI wurde gestoppt. Übungsantworten laufen weiter.",
+  "Real AI · {spent} of {cap} credits": "Echte KI · {spent} von {cap} Credits",
+  "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
+    "In dieser Vorschau antworten echte Modelle, bezahlt mit deinen Genex-Credits: höchstens {cap} Credits ({dollars}) für diese Spielsitzung.",
+  Start: "Starten",
+  "Starting real AI…": "Echte KI startet…",
+  "The cap is used up": "Das Limit ist aufgebraucht",
+  "This game wants to hear you through your microphone.": "Dieses Spiel möchte dich über dein Mikrofon hören.",
+  "Use real AI": "Echte KI nutzen",
+  "A local model is answering a chat or build. Delete the model when it finishes.":
+    "Ein lokales Modell antwortet gerade in einem Chat oder Build. Lösch das Modell, wenn es fertig ist.",
+  "Download Inkling 2 Mini in Settings › Local Models.":
+    "Lade Inkling 2 Mini unter Einstellungen › Lokale Modelle herunter.",
+  "Download Inkling 2 Mini to build locally": "Lade Inkling 2 Mini herunter, um lokal zu bauen",
+  "Inkling 2 Mini installed · starts on demand": "Inkling 2 Mini installiert · startet bei Bedarf",
+  "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
+    "Lokale Modelle brauchen einen Mac mit Apple Silicon oder einen 64-Bit-PC mit Windows oder Linux",
+  "{model} can't run on this computer.": "{model} läuft nicht auf diesem Computer.",
 } satisfies LocaleCatalog;

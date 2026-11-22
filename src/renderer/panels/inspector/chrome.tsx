@@ -129,6 +129,7 @@ export function Panel({
   reply,
   onReply,
   actions,
+  wide = false,
   children,
 }: {
   id: string;
@@ -141,6 +142,11 @@ export function Panel({
   reply?: Reply | null;
   onReply?: ((reply: Reply) => void) | null;
   actions?: ReactNode;
+  /**
+   * A body of rows with their status at the right end (the lead's plan): it spans the card, so each
+   * status lines up with the card's right edge and its caret. Prose keeps its reading width.
+   */
+  wide?: boolean;
   children?: ReactNode;
 }): JSX.Element {
   const card = useRef<HTMLElement>(null);
@@ -178,7 +184,7 @@ export function Panel({
       {/* A card shows the build's own work: its steps, notes, files and pictures. */}
       <div data-analytics-mask className={`grid gap-x-6 gap-y-4 pb-4 ${underRow ? "pt-3" : "pt-4"} ${inset} ${sides}`}>
         {media ? <div className="flex min-w-0 flex-col gap-4">{media}</div> : null}
-        <div className="flex max-w-[720px] min-w-0 flex-col gap-4">{children}</div>
+        <div className={`flex min-w-0 flex-col gap-4 ${wide ? "" : "max-w-[720px]"}`}>{children}</div>
       </div>
       <CardFooter actions={actions} reply={reply} onReply={onReply} inset={inset} />
     </section>

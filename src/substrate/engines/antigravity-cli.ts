@@ -203,3 +203,60 @@ function modelRow(id: string, name: string, providerDefault: boolean): EngineMod
     ...(providerDefault ? { providerDefault: true } : {}),
   };
 }
+
+/**
+ * The titles of the notices the CLI writes as a turn's whole reply when Google refused the turn: it
+ * then ends the turn as finished (`end_turn`) and says nothing more over the protocol (1.5.9: a
+ * `PERMISSION_DENIED` with `VALIDATION_REQUIRED` reads "⚠ Verification Required"). The CLI's own
+ * spelling: never rename a value.
+ */
+export const AntigravityNotice = {
+  /** Google wants the account verified in a browser before it serves it. */
+  VerificationRequired: "Verification Required",
+} as const;
+export type AntigravityNotice = (typeof AntigravityNotice)[keyof typeof AntigravityNotice];
+
+/** The sign the CLI opens such a notice with. */
+const NOTICE_SIGN = "⚠";
+/** A notice is one short line; a reply longer than this is the model's own words. */
+const NOTICE_MAX_CHARS = 80;
+
+/**
+ * The title of the CLI's notice when a reply is nothing but one, else null: one line, the warning
+ * sign, then a title. A model's reply that only starts with the sign has more to it.
+ */
+export function antigravityNotice(reply: string): string | null {
+  const line = reply.trim();
+  if (!line.startsWith(NOTICE_SIGN) || line.includes("\n")) return null;
+  const title = line.slice(NOTICE_SIGN.length).replace(/^️/, "").trim();
+  return title && title.length <= NOTICE_MAX_CHARS ? title : null;
+}
+
+/** Where Google sends an account to be verified: its own sign-in host, over https. */
+const VERIFY_HOST = "accounts.google.com";
+/** The page Google names for the check, as the CLI's log writes Google's refusal. */
+const VALIDATION_URL = /"validation_url"\s*:\s*"([^"]+)"/g;
+
+/**
+ * The page Google gave for verifying the account, from the CLI's log of the refused turn: the last
+ * one it names, and only on Google's own sign-in host over https; null when there is none.
+ */
+export function verificationPage(log: string): string | null {
+  let found: string | null = null;
+  for (const [, raw = ""] of log.matchAll(VALIDATION_URL)) {
+    const page = googleSignInPage(raw.replace(/\\u0026/g, "&"));
+    if (page) found = page;
+  }
+  return found;
+}
+
+/** `address` when it is a page on Google's sign-in host over https, else null. */
+export function googleSignInPage(address: string): string | null {
+  try {
+    const url = new URL(address);
+    const ok = url.protocol === "https:" && url.hostname === VERIFY_HOST && !url.username && !url.password && !url.port;
+    return ok ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}

@@ -18,7 +18,7 @@
  */
 import { execFile } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readdir, realpath, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import { type NeverTouchList, neverTouchVerdict, SHELL_TOOL } from "./never-touch.ts";
 import path from "node:path";
@@ -43,13 +43,16 @@ import {
   ANTIGRAVITY_LOGIN_ARGV,
   ANTIGRAVITY_SESSION_ARGV,
   AntigravityAccess,
+  AntigravityNotice,
   type AntigravitySession,
   type AntigravityTier,
   type Json,
   antigravityModelId,
+  antigravityNotice,
   parseAntigravitySession,
   record,
   text,
+  verificationPage,
 } from "./antigravity-cli.ts";
 import {
   type AntigravityStream,
@@ -87,11 +90,12 @@ import {
 } from "../spawn.ts";
 import { childEnv, vendorEnv } from "../child-env.ts";
 import { StudioPlatform } from "../../shared/boot.ts";
-import { antigravityHomes, credentialHomes } from "../credential-homes.ts";
+import { antigravityHome, antigravityHomes, credentialHomes } from "../credential-homes.ts";
 import { killProcessTree } from "../process-tree.ts";
 import { spawnCommand } from "../command-launch.ts";
 import { withEnvPath } from "../toolchain.ts";
 import type { Usage } from "../types.ts";
+import type { ProviderUsage } from "../../shared/provider-usage.ts";
 import { ChatActivityPhase } from "../../shared/chat-activity.ts";
 import { CodingCliState } from "../../shared/coding-cli.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
@@ -178,7 +182,19 @@ const MESSAGE = {
   Refused: "Antigravity's model refused the request",
   JudgeTimedOut: (minutes: number) => `the judge did not answer within ${minutes} min`,
   NoSuchRequest: (method: string) => `Genex does not answer ${method}`,
+  VerifyOpened:
+    "Google asks you to verify your Google account before Antigravity can run. Genex opened Google's page in your browser: verify there, then send your message again.",
+  Verify:
+    "Google asks you to verify your Google account before Antigravity can run. Sign in to Antigravity again from Settings › Model Providers and follow Google's steps, then send your message again.",
 } as const;
+
+/** How many of the CLI's newest logs are read for the page Google named, and how much of each. */
+const NOTICE_LOGS = 4;
+const NOTICE_LOG_BYTES = 2 * 1024 * 1024;
+/** A log written this long before the turn started may still be the turn's: the clocks are the same, the writes are not. */
+const NOTICE_LOG_SLACK_MS = 2 * SECOND_MS;
+/** The CLI's own logs of its sessions, as it names them in `~/.gemini/antigravity-cli/log`. */
+const SESSION_LOG = /^acp-server-.*\.log$/;
 
 /** The log's record of a session opening, as every engine's mirror spells it (`shared/context.ts` reads it). */
 const SESSION_OPENED = "init";
@@ -267,6 +283,10 @@ export interface AntigravityEngineOptions {
   now?: () => number;
   /** Test seam: the clock a turn's watch runs on. */
   schedule?: AntigravitySchedule;
+  /** Where the CLI writes its logs; its own folder in `~/.gemini` when not given. */
+  logDir?: string;
+  /** Open a page in the person's browser: Google's page for verifying the account. Nothing opens when not given. */
+  openPage?: (url: string) => unknown;
 }
 
 /** What one turn is asked: the session's folder, the session to continue, its model and its prompt. */
@@ -318,6 +338,10 @@ export class AntigravityEngine implements Engine {
   readonly #lockRecovery: string | undefined;
   readonly #now: () => number;
   readonly #schedule: AntigravitySchedule;
+  readonly #logDir: string;
+  readonly #openPage: ((url: string) => unknown) | undefined;
+  /** The verification pages already opened: a Loop that keeps failing opens each one once. */
+  readonly #opened = new Set<string>();
   /** The last sign-in check, and when it was made: `status()` runs often and each check starts the CLI. */
   #signIn: SignIn | null = null;
   /** The check in flight, shared by every caller that asks meanwhile. */
@@ -338,6 +362,8 @@ export class AntigravityEngine implements Engine {
     this.#lockRecovery = options.lockRecovery;
     this.#now = options.now ?? Date.now;
     this.#schedule = options.schedule ?? realSchedule;
+    this.#logDir = options.logDir ?? path.join(antigravityHome(), "antigravity-cli", "log");
+    this.#openPage = options.openPage;
   }
 
   async status(): Promise<EngineStatus> {
@@ -376,6 +402,20 @@ export class AntigravityEngine implements Engine {
   }
 
   catalogSnapshot = () => this.#catalog.snapshot();
+
+  /**
+   * The plan the signed-in account is on, for the composer's limits panel. Antigravity's session
+   * names the plan and no limit of it, so the plan comes with none; null while no account is
+   * signed in.
+   */
+  async readUsage(): Promise<ProviderUsage | null> {
+    const cli = await this.#resolveCli();
+    if (!cli.ready) return null;
+    const signIn = await this.#account(cli);
+    if (!signIn.signedIn) return null;
+    const plan = signIn.tier?.name;
+    return { measuredAt: new Date(this.#now()).toISOString(), ...(plan ? { plan } : {}), windows: [] };
+  }
 
   async models(): Promise<EngineModel[]> {
     void this.refreshModels().catch(() => {});
@@ -509,6 +549,43 @@ export class AntigravityEngine implements Engine {
       .catch(() => {});
   }
 
+  /**
+   * A turn whose whole reply is the CLI's notice of Google's account check was refused, though the
+   * CLI ended it as finished: it fails with what the person can do, and Google's page (from the
+   * CLI's log of the turn) opens in the browser, once.
+   */
+  async #refusedByNotice(run: AntigravityRun, startedAt: number): Promise<void> {
+    // Only a notice Genex knows: a model's own one-line reply may start with the sign too.
+    if (antigravityNotice(run.summary) !== AntigravityNotice.VerificationRequired) return;
+    const page = await this.#verificationPage(startedAt).catch(() => null);
+    const opens = page !== null && this.#openPage !== undefined;
+    if (opens && !this.#opened.has(page)) {
+      this.#opened.add(page);
+      await Promise.resolve(this.#openPage?.(page)).catch(() => {});
+    }
+    throw new EngineError(EngineFailureKind.Other, this.id, opens ? MESSAGE.VerifyOpened : MESSAGE.Verify);
+  }
+
+  /** Google's verification page as the CLI's newest logs since `since` name it, or null. */
+  async #verificationPage(since: number): Promise<string | null> {
+    const names = (await readdir(this.#logDir)).filter((name) => SESSION_LOG.test(name));
+    const logs = await Promise.all(
+      names.map(async (name) => {
+        const file = path.join(this.#logDir, name);
+        return { file, at: (await stat(file)).mtimeMs };
+      }),
+    );
+    const recent = logs
+      .filter((log) => log.at >= since - NOTICE_LOG_SLACK_MS)
+      .sort((a, b) => b.at - a.at)
+      .slice(0, NOTICE_LOGS);
+    for (const log of recent) {
+      const page = verificationPage(await logTail(log.file));
+      if (page) return page;
+    }
+    return null;
+  }
+
   /** A sign-in or a sign-out happened outside a check: the next status asks the CLI again. */
   forgetSignIn(): void {
     this.#asked += 1;
@@ -559,6 +636,7 @@ export class AntigravityEngine implements Engine {
       );
       applyTranslated(request, run, flushAntigravityStream(run.stream));
       noteAnswer(run, answer);
+      await this.#refusedByNotice(run, startedAt);
     } catch (err) {
       return this.#endingAfterThrow(err, run, request, partial);
     } finally {
@@ -591,8 +669,10 @@ export class AntigravityEngine implements Engine {
       return request.signal?.aborted ? new EngineError(EngineFailureKind.Aborted, this.id, STOPPED_BY_USER) : null;
     };
     let run: AntigravityRun;
+    const startedAt = Date.now();
     try {
       run = await this.#answer(request, controller.signal);
+      await this.#refusedByNotice(run, startedAt);
     } catch (err) {
       throw stopped() ?? failure(err);
     } finally {
@@ -692,8 +772,9 @@ export class AntigravityEngine implements Engine {
       return {
         argv: [...ANTIGRAVITY_SESSION_ARGV],
         cwd: ctx.runDir,
-        // The studio's toolchain PATH, which a sandboxed session gets from its sandbox (`toolPath`).
-        env: this.#toolPath ? { PATH: await this.#toolPath() } : {},
+        // The sign-in Genex's own sign-in keeps, as every boxed session reads it (`antigravityPersonEnv`),
+        // and the studio's toolchain PATH, which a sandboxed session gets from its sandbox (`toolPath`).
+        env: { ...antigravityPersonEnv(), ...(this.#toolPath ? { PATH: await this.#toolPath() } : {}) },
         sandbox: null,
         domains: [...ANTIGRAVITY_HOSTS],
       };
@@ -990,19 +1071,27 @@ const ANTIGRAVITY_FILE_STORE = {
 /**
  * What a boxed Antigravity process is told on top of its own variables.
  *
- * On a Mac the box denies the Keychain, so the CLI falls back to its file by itself. On Windows the
- * sandbox runs it as its own user, whose Credential Manager the CLI would use: every Windows
- * sandbox runs as that user and could read the sign-in there (seen on a real PC). On Linux the
- * Secret Service may be within reach. So off a Mac it is told to use its file, and on Windows its
- * home is the person's, so that file is the person's `~/.gemini`, which this sandbox alone may
- * reach (`antigravityHomes`), never the sandbox user's profile, which every Windows sandbox shares.
+ * Every box is told to use the CLI's file, never the operating system's store. A Mac's box denies
+ * the Keychain anyway, but the CLI then tries it first and logs a failed save; on Windows the
+ * sandbox runs it as its own user, whose Credential Manager every Windows sandbox shares (seen on a
+ * real PC); on Linux the Secret Service may be within reach. On Windows its home is the person's,
+ * so that file is the person's `~/.gemini`, which this sandbox alone may reach (`antigravityHomes`),
+ * never the sandbox user's profile.
  */
 export function antigravityBoxEnv(
   platform: NodeJS.Platform = process.platform,
   home: string = os.homedir(),
 ): Record<string, string> {
-  if (platform === StudioPlatform.Mac) return {};
   if (platform === StudioPlatform.Windows) return { ...ANTIGRAVITY_FILE_STORE, USERPROFILE: home };
+  return { ...ANTIGRAVITY_FILE_STORE };
+}
+
+/**
+ * What a session that runs as the person (their Bypass) is told: to keep to the CLI's file too.
+ * Outside the box the CLI would read the operating system's store instead, which may hold another
+ * Google account than the one Genex signed in: its plan, its models and its quota.
+ */
+export function antigravityPersonEnv(): Record<string, string> {
   return { ...ANTIGRAVITY_FILE_STORE };
 }
 
@@ -1219,6 +1308,20 @@ function ended(
     ...(run.sessionId ? { sessionId: run.sessionId } : {}),
     ...(studioToolCalls.length ? { studioToolCalls } : {}),
   };
+}
+
+/** The last `NOTICE_LOG_BYTES` of a log: Google's refusal is near its end. */
+async function logTail(file: string): Promise<string> {
+  const handle = await open(file, "r");
+  try {
+    const { size } = await handle.stat();
+    const length = Math.min(size, NOTICE_LOG_BYTES);
+    const buffer = Buffer.alloc(length);
+    await handle.read(buffer, 0, length, size - length);
+    return buffer.toString("utf8");
+  } finally {
+    await handle.close();
+  }
 }
 
 /** The CLI's state for its account row: working, installed but unusable, or missing. */

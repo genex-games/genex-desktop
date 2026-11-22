@@ -63,5 +63,13 @@ export function noteMaking(project: string, files: string[], at: number): void {
   if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(DESIGN_MAKING_EVENT));
 }
 
+/**
+ * Forget the list a game's agent gave at `at`, once it ended (`makingEnded`), so a later turn of
+ * the game does not bring it back. A newer list stays.
+ */
+export function forgetMaking(project: string, at: number): void {
+  if (making.get(project)?.at === at) making.delete(project);
+}
+
 /** What a game's agent last said it is making; null when it said nothing. */
 export const makingOn = (project: string): MakingSaid | null => making.get(project) ?? null;

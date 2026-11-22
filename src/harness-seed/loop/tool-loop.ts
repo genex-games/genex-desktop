@@ -11,6 +11,7 @@ import { EngineFailure, StopReason } from "./outage.ts";
 import { HostMethod } from "./host-methods.ts";
 import { EventKind, RunEvent } from "./run-events.ts";
 import { TurnFailureCode, TurnStop, sayInTurn, withTurnFailure } from "./turn-record.ts";
+import { GenexLine, sayGenexLine } from "./genex-lines.ts";
 import { lookAtPictures } from "./turn-prompts.ts";
 import { OUTPUT_LIMIT_NOTE } from "./tool-loop-prompts.ts";
 import { picturesNotShown } from "./unseen-pictures-prompts.ts";
@@ -306,6 +307,11 @@ async function completionFailed(
   if (fallbackReady && inRun) {
     await switchEngine(ctx, turnId, state, fallbacks[0], kind, err?.message);
     return {};
+  }
+  // A model too big for this computer's free memory is no outage: a resend meets the same wall.
+  if (kind === EngineFailure.OutOfMemory) {
+    await sayGenexLine(ctx, turnId, GenexLine.ModelOutOfMemory);
+    return { outcome: { stopped: TurnStop.EngineLimited, round, engine } };
   }
   if (isThrottle(kind)) {
     await sayInTurn(ctx, turnId, MESSAGE.notSwitched(engine, kind, err?.message));
