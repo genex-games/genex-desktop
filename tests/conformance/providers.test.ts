@@ -5,6 +5,7 @@
  * keeps its own role tables, held to it here.
  */
 import assert from "node:assert/strict";
+import { OPEN_SETTINGS_EVENT, SettingsSection } from "../../src/renderer/settings-navigation.ts";
 import { describe, it } from "node:test";
 import * as seedRoles from "../../src/harness-seed/loop/model-roles.ts";
 import { SUBSCRIPTION_ENGINES as mainSubscriptions } from "../../src/main/core/subscription-engines.ts";
@@ -12,6 +13,7 @@ import {
   SUBSCRIPTION_ENGINES as rendererSubscriptions,
   SUBSCRIPTION_LABELS,
   signInPolling,
+  startSignIn,
   signInVendor,
 } from "../../src/renderer/subscription-auth.ts";
 import type { ClaudeLoginState } from "../../src/shared/claude-login.ts";
@@ -67,6 +69,7 @@ describe("provider table", () => {
       signInLine: "Connect your ChatGPT subscription to build games. Codex handles sign-in in your browser.",
     });
     assert.equal(signInVendor("claude-code").name, "Claude Code");
+    assert.equal(signInVendor("antigravity").name, "Antigravity", "a CLI's card names it as the provider table does");
     const unknown = signInVendor("gemini-cli");
     assert.equal(unknown.name, "gemini-cli");
     assert.equal(unknown.url, "", "no install page is guessed");
@@ -228,5 +231,42 @@ describe("sign-in polling", () => {
       ],
     ];
     for (const [name, input, expected] of rows) assert.deepEqual(signInPolling(input), expected, name);
+  });
+});
+
+describe("the chat's sign-in card", () => {
+  it("starts a CLI's own sign-in and opens Model Providers, where its terminal runs; a subscription signs in through main", async () => {
+    const scope = globalThis as { window?: unknown };
+    const hadWindow = "window" in scope;
+    const calls: string[] = [];
+    const opened: unknown[] = [];
+    const target = new EventTarget();
+    target.addEventListener(OPEN_SETTINGS_EVENT, (event) => opened.push((event as CustomEvent).detail.section));
+    scope.window = Object.assign(target, {
+      studio: {
+        antigravitySignIn: async () => {
+          calls.push("antigravity");
+          return { started: true };
+        },
+        grokSignIn: async () => {
+          calls.push("grok");
+          return { started: false, missingCli: true };
+        },
+        subscriptionSignIn: async (payload: { engine: string }) => {
+          calls.push(`subscription:${payload.engine}`);
+          return { started: true };
+        },
+      },
+    });
+    try {
+      assert.deepEqual(await startSignIn("antigravity"), { started: true });
+      assert.deepEqual(opened, [SettingsSection.Providers], "Settings opens where the sign-in runs");
+      assert.deepEqual(await startSignIn("grok"), { started: false, missingCli: true });
+      assert.equal(opened.length, 1, "nothing opens for a sign-in that did not start");
+      assert.deepEqual(await startSignIn("codex"), { started: true });
+      assert.deepEqual(calls, ["antigravity", "grok", "subscription:codex"], "never `unknown subscription engine`");
+    } finally {
+      if (!hadWindow) delete scope.window;
+    }
   });
 });

@@ -3236,6 +3236,7 @@ export const MESSAGES = [
   "Sign in again",
   "Sign in again…",
   "Sign in in browser",
+  "Sign in on Google's page in your browser, then paste the code it gives you here. Antigravity keeps the sign-in.",
   "Sign in to Antigravity from Settings › Model Providers.",
   "Sign in to Cursor from Settings › Model Providers.",
   "Sign in to Genex",

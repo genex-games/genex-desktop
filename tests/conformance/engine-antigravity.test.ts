@@ -25,6 +25,7 @@ import {
   type AntigravitySchedule,
   antigravityBoxEnv,
   antigravityPermission,
+  antigravityPersonEnv,
   antigravityProcess,
   antigravitySandbox,
   failure,
@@ -32,8 +33,12 @@ import {
 } from "../../src/substrate/engines/antigravity.ts";
 import {
   ANTIGRAVITY_HOSTS,
+  AntigravityNotice,
   antigravityModelId,
+  antigravityNotice,
+  googleSignInPage,
   parseAntigravitySession,
+  verificationPage,
 } from "../../src/substrate/engines/antigravity-cli.ts";
 import { antigravityHome, antigravityHomes, sandboxedCliHomes } from "../../src/substrate/credential-homes.ts";
 import { childEnv } from "../../src/substrate/child-env.ts";
@@ -89,7 +94,15 @@ interface Scripted {
 }
 
 /** An engine whose sessions are scripted agents, each recorded. */
-async function engineWith(script: Script = {}, options: { schedule?: AntigravitySchedule; now?: () => number } = {}) {
+async function engineWith(
+  script: Script = {},
+  options: {
+    schedule?: AntigravitySchedule;
+    now?: () => number;
+    logDir?: string;
+    openPage?: (url: string) => unknown;
+  } = {},
+) {
   const root = await tmpDir("antigravity-engine-");
   const agents: Scripted[] = [];
   const opened = await json("antigravity-session-new-1.5.7.json");
@@ -161,6 +174,8 @@ async function engineWith(script: Script = {}, options: { schedule?: Antigravity
     resolveCli: async () => ({ ready: true, path: "/Users/me/.local/bin/agy", version: "1.5.7", detail: "ok" }),
     ...(options.schedule ? { schedule: options.schedule } : {}),
     ...(options.now ? { now: options.now } : {}),
+    logDir: options.logDir ?? path.join(root, "agy-log"),
+    ...(options.openPage ? { openPage: options.openPage } : {}),
   });
   return { engine, agents, root };
 }
@@ -760,7 +775,7 @@ describe("Antigravity's box", () => {
     );
   });
 
-  it("off a Mac its box keeps the sign-in in its own file, and on Windows that file is in the person's home", () => {
+  it("every box keeps the sign-in in the CLI's own file, and on Windows that file is in the person's home", () => {
     const home = "C:\\Users\\Ada";
     // The CLI uses its file, not the credential store, when it believes it runs over SSH (1.5.9).
     const fileStore = { SSH_CONNECTION: "127.0.0.1 0 127.0.0.1 0", SSH_CLIENT: "127.0.0.1 0 0" };
@@ -770,11 +785,8 @@ describe("Antigravity's box", () => {
       "not the shared sandbox user's store",
     );
     assert.deepEqual(antigravityBoxEnv("linux", home), fileStore, "not the Secret Service");
-    assert.deepEqual(
-      antigravityBoxEnv("darwin", home),
-      {},
-      "a Mac's box denies the Keychain, and the CLI uses its file",
-    );
+    // Flipped (one sign-in): a Mac's box is told to use the file too, not left to fall back to it.
+    assert.deepEqual(antigravityBoxEnv("darwin", home), fileStore, "the file, never a failed Keychain save first");
   });
 
   it("its session's sandbox keeps its own folder, where its sign-in file is, and never reaches the Keychain", async () => {
@@ -912,5 +924,113 @@ describe("the Antigravity process", { skip: os.platform() === "win32" && "proces
     } finally {
       await sandbox.dispose();
     }
+  });
+});
+
+describe("Google's refusals the CLI writes as a turn's reply", () => {
+  /** An engine whose every turn is Google's refusal as Antigravity CLI 1.5.9 says it, and the CLI's log of it. */
+  async function refusedEngine(options: { log?: string | null; openPage?: (url: string) => unknown } = {}) {
+    const recorded = await json("antigravity-verification-required-1.5.9.json");
+    const logDir = await tmpDir("antigravity-log-");
+    const prompt: Script["prompt"] = async (message, agent) => {
+      if (options.log !== null)
+        await writeFile(path.join(logDir, "acp-server-20261122_150700-23584.log"), options.log ?? String(recorded.log));
+      agent.say({
+        method: AcpMethod.SessionUpdate,
+        params: { sessionId: (message.params as Json).sessionId, update: recorded.update },
+      });
+      return recorded.answer as Json;
+    };
+    return engineWith({ prompt }, { logDir, ...(options.openPage ? { openPage: options.openPage } : {}) });
+  }
+
+  it("a reply that is only the CLI's notice is no answer: a game is never named by it", () => {
+    assert.equal(antigravityNotice("\n⚠ Verification Required\n"), AntigravityNotice.VerificationRequired);
+    assert.equal(antigravityNotice("⚠️ Something Else"), "Something Else");
+    for (const reply of ["Done: the paddle moves.", "⚠ Careful:\nthe build changed three files", "⚠", ""])
+      assert.equal(antigravityNotice(reply), null, JSON.stringify(reply));
+    assert.equal(antigravityNotice(`⚠ ${"x".repeat(81)}`), null, "a notice is one short line");
+  });
+
+  it("Google's verification fails the turn and opens Google's page from the CLI's log, once", async () => {
+    const opened: string[] = [];
+    const { engine } = await refusedEngine({ openPage: (url) => opened.push(url) });
+    const cwd = await game();
+    for (const _ of [1, 2]) {
+      const result = await engine.delegate({ cwd, prompt: "make pong" });
+      assert.equal(result.ok, false, "not a finished build");
+      assert.equal(result.stopReason, StopReason.Error);
+      assert.match(result.errorText ?? "", /verify your Google account/);
+      assert.match(result.errorText ?? "", /opened Google's page/);
+    }
+    assert.deepEqual(opened, [
+      "https://accounts.google.com/v3/signin/continue?plt=TEST-PLT&continue=https://developers.google.com/gemini-code-assist/auth/auth_success_gemini&flowName=GlifWebSignIn",
+    ]);
+    await assert.rejects(
+      engine.complete({ messages: [{ role: "user", content: "Name this game" }] }),
+      (err: unknown) => err instanceof EngineError && /verify your Google account/.test(err.message),
+      "a one-shot answer (the game's name) fails too",
+    );
+    assert.equal(opened.length, 1, "the same page is not opened again");
+  });
+
+  it("without the page in a log, or with no browser to open, the turn says where to sign in again", async () => {
+    for (const options of [{ log: null }, { log: "nothing of Google's here\n" }, {}]) {
+      const opened: string[] = [];
+      const withBrowser = "log" in options;
+      const { engine } = await refusedEngine({
+        ...options,
+        ...(withBrowser ? { openPage: (url) => opened.push(url) } : {}),
+      });
+      const result = await engine.delegate({ cwd: await game(), prompt: "go" });
+      assert.equal(result.ok, false);
+      assert.match(result.errorText ?? "", /Settings › Model Providers/);
+      assert.deepEqual(opened, []);
+    }
+  });
+
+  it("opens only Google's own sign-in host over https, whatever the log names", () => {
+    const log = (url: string) => `"validation_url": "${url}"`;
+    for (const url of [
+      "http://accounts.google.com/v3/signin",
+      "https://accounts.google.com.evil.example/v3",
+      "https://evil.example/?accounts.google.com",
+      "https://user:pass@accounts.google.com/v3",
+      "https://accounts.google.com:8443/v3",
+      "javascript:alert(1)",
+      "file:///etc/passwd",
+      "not a url",
+    ])
+      assert.equal(verificationPage(log(url)), null, url);
+    assert.equal(
+      verificationPage(log("https://accounts.google.com/v3/signin?a=1\\u0026b=2")),
+      "https://accounts.google.com/v3/signin?a=1&b=2",
+    );
+    assert.equal(
+      googleSignInPage("https://accounts.google.com/o/oauth2/auth?x=1"),
+      "https://accounts.google.com/o/oauth2/auth?x=1",
+    );
+  });
+
+  it("names the plan for the limits panel, with no limit Google would not share", async () => {
+    const { engine } = await engineWith();
+    const usage = await engine.readUsage();
+    assert.equal(usage?.plan, "Antigravity Starter Quota");
+    assert.deepEqual(usage?.windows, []);
+    const signedOut = await engineWith({ session: refusal });
+    assert.equal(await signedOut.engine.readUsage(), null);
+  });
+
+  it("a Bypass build runs on the same sign-in as the boxed sessions: the CLI's own file", async () => {
+    const { engine, agents } = await engineWith();
+    const bypass = { mode: PermissionMode.Bypass, ask: async () => ({ allow: true }) };
+    await engine.delegate({ cwd: await game(), prompt: "go", permissions: bypass as never });
+    const build = agents.find((agent) => agent.invocation.sandbox === null);
+    assert.ok(build, "the build ran as the person");
+    assert.deepEqual(
+      { SSH_CONNECTION: build.invocation.env.SSH_CONNECTION, SSH_CLIENT: build.invocation.env.SSH_CLIENT },
+      antigravityPersonEnv(),
+      "never the Keychain, which may hold another Google account",
+    );
   });
 });

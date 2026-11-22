@@ -458,6 +458,11 @@ export interface StudioCoreOptions {
   localPlays?: { play(project: string, engine: string | null): Promise<LocalPlayAnswer> };
   /** Notes each boot step as it finishes (`main/performance.ts`); a launch without diagnostics passes nothing. */
   markBoot?: (step: string) => void;
+  /**
+   * Open a page in the person's browser: the page Google names for verifying an Antigravity
+   * account. Absent in tests, where nothing opens.
+   */
+  openPage?: (url: string) => unknown;
   engines?: Engine[];
   executionPolicy?: { allowedProjectRoot?: string };
   paths: StudioPaths;
@@ -1696,6 +1701,7 @@ export class StudioCore {
       toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
       lockRecovery: path.join(this.layout.engineHomes, LOCK_RECOVERY_DIR),
       onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.Antigravity }),
+      ...(this.options.openPage ? { openPage: this.options.openPage } : {}),
     });
   }
 

@@ -17,7 +17,7 @@ export type CliProvider =
 /** One CLI's sign-in terminal, its sign-in call, and its sign-out call when Genex signs it out. */
 export interface CliSignIn {
   terminal: TerminalKind;
-  signIn: () => Promise<{ started: boolean }>;
+  signIn: () => Promise<{ started: boolean; missingCli?: boolean }>;
   signOut?: () => Promise<unknown>;
 }
 
@@ -36,3 +36,6 @@ export const CLI_SIGN_IN: Record<CliProvider, CliSignIn> = {
     signIn: () => window.studio.antigravitySignIn(),
   },
 };
+
+/** Whether `engine` signs in in its own terminal, as a Settings row runs it. */
+export const isCliProvider = (engine: string): engine is CliProvider => Object.hasOwn(CLI_SIGN_IN, engine);

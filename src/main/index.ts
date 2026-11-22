@@ -859,7 +859,7 @@ function subscription(id: string): SubscriptionEngine | null {
  * renderer is pushed (`core/provider-usage.ts`).
  */
 const providerUsage = createProviderUsage({
-  engines: [...SUBSCRIPTION_ENGINES, EngineId.Genex],
+  engines: [...SUBSCRIPTION_ENGINES, EngineId.Antigravity, EngineId.Genex],
   source: (id) => {
     if (!core?.engines.has(id)) return null;
     return engineUsageSource(core.engines.get(id), subscription(id)?.accounts ?? null);
@@ -1029,6 +1029,8 @@ async function createCore(userData: string): Promise<StudioCore> {
   const launch = launchCoreOptions();
   const studio: StudioCore = new StudioCore({
     renderGameCover,
+    // Google's page for verifying an Antigravity account (a fixture profile's engines open none).
+    openPage: (url: string) => shell.openExternal(url),
     // Read at send time, once the core exists: Play's catalog and account hang off it.
     mentionSources: mentionSourcesFor(() => studio),
     ...optionalLocalPlays(localPlaysFor(() => studio)),

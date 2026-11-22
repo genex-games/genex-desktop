@@ -450,13 +450,17 @@ bill, but the provider is `metered` in the table so the app never picks a Beta o
 
 Settings › Model Providers has its row (`CliSignInRow`): Install, Sign in (`agy acp --login` in a
 terminal inside the row, started in the box a session runs in (`antigravitySignInLaunch`,
-`ProcessSandbox.terminalLaunch`): it prints Google's page for Open sign-in page and takes the code
-that page gives; `studio:antigravity.signin`, native; on Windows the terminal reaches the boxed CLI
+`ProcessSandbox.terminalLaunch`): it prints Google's page and takes the code that page gives. The
+boxed CLI cannot hand the page to the browser itself (macOS refuses its `open` from the box), so
+Genex opens the first `https://accounts.google.com` page the terminal prints, once, and Open
+sign-in page stays for a second look; `studio:antigravity.signin`, native; on Windows the terminal reaches the boxed CLI
 through the sandbox's input relay: Git Bash starts a feeder (written in the person's own temp
 folder, which no box can write, since it runs outside every box) under the studio's own Node, which
 starts the box and hands it what the person types, because Electron started straight in a Windows
 terminal reads and prints nothing; the box is made under the engine's own scratch folder), and once
-connected Check connection, Sign in again and Update. The CLI has no command that says whether it
+connected Check connection, Sign in again and Update. The chat's sign-in card for a CLI that signs
+in in its own terminal (Antigravity, Grok Build, Cursor, OpenCode, Pi) starts that same sign-in and
+opens Settings › Model Providers, where its terminal runs; it names the provider by its table label. The CLI has no command that says whether it
 is signed in, so the engine asks by opening a session in an empty folder, at most once a minute:
 the answer lists the models the account can run and its plan, or refuses with ACP's sign-in code
 (`-32000`). While a boxed session of a turn is open it is the proof and nothing is asked, and a
@@ -468,9 +472,12 @@ Antigravity keeps its Google sign-in in the operating system's own store (the Ke
 Credential Manager, the Secret Service) when it can reach it, and in
 `~/.gemini/antigravity-cli/antigravity-oauth-token` when it cannot or when it believes it runs over
 SSH. Genex never reads either. Its sign-in runs in the session's box, so the sign-in lands in the
-file every session reads: on a Mac the box denies the Keychain; off a Mac the box sets
-`SSH_CONNECTION` and `SSH_CLIENT` (`antigravityBoxEnv`), because on Windows the boxed CLI otherwise
-saved the sign-in in the sandbox user's Credential Manager, which every Windows sandbox runs as. On
+file every session reads: every box sets `SSH_CONNECTION` and `SSH_CLIENT` (`antigravityBoxEnv`;
+a Mac's box denies the Keychain anyway), because on Windows the boxed CLI otherwise saved the
+sign-in in the sandbox user's Credential Manager, which every Windows sandbox runs as. A Bypass
+build, which runs as the person, is told the same (`antigravityPersonEnv`): outside the box the CLI
+read the Keychain, which held another Google account than the one Genex signed in, so the chat's
+model (from the boxed account's list) was unknown to it ("Unknown model ID"). On
 Windows the box also sets `USERPROFILE` to the person's home, so that file is in the person's
 `~/.gemini`, not the sandbox user's profile. A box is given Antigravity's own variables alone
 (`vendorEnv`) and builds the rest from its allow-list: Windows' env file refuses a name like
@@ -492,7 +499,13 @@ sandbox, and every other sandbox still denies `~/.gemini` and opens no extra ser
 
 A failed turn is named by ACP's code (`-32000` a sign-in failure) or by Google's status name in
 the error (`RESOURCE_EXHAUSTED` a usage limit; `UNAVAILABLE`, `INTERNAL`, `DEADLINE_EXCEEDED`
-unavailable); anything else ends the build with the CLI's words. Stop sends `session/cancel` and
+unavailable); anything else ends the build with the CLI's words. When Google refuses a turn the
+CLI does not say so over ACP: it writes one notice as the whole reply ("⚠ Verification Required")
+and ends the turn as finished. A reply that is nothing but such a notice (`antigravityNotice`)
+fails the turn and a one-shot answer, so a game is never named by it. For Google's account check
+(`PERMISSION_DENIED` with `VALIDATION_REQUIRED`) the engine reads the page Google named from the
+CLI's newest logs since the turn began (`verificationPage`, only `https://accounts.google.com`),
+opens it in the browser once (`openPage`), and the turn says to verify there and send again. Stop sends `session/cancel` and
 gives the CLI five seconds to answer before it is stopped; a turn that says nothing for 10 minutes
 (30 while a tool call is open) is stopped with its process group. Compact now is refused.
 A live run on a signed-in Mac (CLI 1.5.7, free plan) reads the sign-in, builds in the game and
@@ -889,7 +902,9 @@ windows. Codex starts `codex app-server` with the login's `CODEX_HOME` and profi
 sends `initialize` and one `account/rateLimits/read`, then closes stdin; `normalizeCodexUsage`
 names windows by length and scopes non-default buckets. Claude sessions at work never read plan
 usage (see Native context telemetry). `readUsage()` answers null when the plan shares no limits and
-throws when they could not be read; each engine reuses a reading under a minute old and shares an
+throws when they could not be read; a plan named with no limit is `not_shared` and keeps its name.
+Antigravity's plan is listed too: its session names the plan (`_meta.antigravity.tier`) and no
+limit, so it shows by name with the note that it shares none, and no account switch. Each engine reuses a reading under a minute old and shares an
 in-flight read; a Recheck clears it. The composer asks when its ring panel opens or the ring is
 hovered, and every minute while open; until the first answer it draws each plan this setup uses
 at full size with shimmering bars, and a plan being read with no numbers yet does the same. A

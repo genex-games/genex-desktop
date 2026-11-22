@@ -6301,8 +6301,8 @@ export default {
     "Antigravity CLI를 설치하면 Google AI 요금제로 만들 수 있어요.",
   "Installing Antigravity. This can take a minute.": "Antigravity를 설치하는 중이에요. 1분 정도 걸릴 수 있어요.",
   "Not signed in to Antigravity.": "Antigravity에 로그인되어 있지 않아요.",
-  "Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in.":
-    "로그인 페이지를 열고, 거기서 받은 코드를 여기에 붙여 넣어 주세요. 로그인 정보는 Antigravity가 보관해요.",
+  "Sign in on Google's page in your browser, then paste the code it gives you here. Antigravity keeps the sign-in.":
+    "브라우저에 열린 Google 페이지에서 로그인하고, 거기서 받은 코드를 여기에 붙여 넣어 주세요. 로그인 정보는 Antigravity가 보관해요.",
   "Sign in to Antigravity from Settings › Model Providers.": "설정 › 모델 제공자에서 Antigravity에 로그인해 주세요.",
   "Sign in with your Google account to build with your plan.": "Google 계정으로 로그인하면 요금제로 만들 수 있어요.",
   "Switch to another Google account": "다른 Google 계정으로 전환",

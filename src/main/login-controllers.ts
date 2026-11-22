@@ -10,6 +10,7 @@ import { requireCodingCli } from "../substrate/engines/external-cli.ts";
 import { openCodeSignInArgs } from "../substrate/engines/opencode-cli.ts";
 import { PI_DISCOVERY_ARGS } from "../substrate/engines/pi-cli.ts";
 import { antigravitySignInLaunch } from "../substrate/engines/antigravity.ts";
+import { googleSignInPage } from "../substrate/engines/antigravity-cli.ts";
 import { CURSOR_FILE_STORE, CursorCommand } from "../substrate/engines/cursor-cli.ts";
 import { childEnv, vendorEnv } from "../substrate/child-env.ts";
 import { grokHome } from "../substrate/credential-homes.ts";
@@ -218,6 +219,7 @@ export function createLoginControllers({
   const cursorLogin = cursorSignIn({ terminals, requireCli, onCursorSignedIn });
   const antigravityLogin = antigravitySignIn({
     terminals,
+    openExternal,
     requireCli,
     onAntigravitySignedIn,
     boxAntigravitySignIn,
@@ -267,11 +269,12 @@ function piSignIn({
  */
 function antigravitySignIn({
   terminals,
+  openExternal,
   requireCli,
   onAntigravitySignedIn,
   boxAntigravitySignIn,
   antigravityScratch,
-}: Pick<LoginControllerDeps, "terminals" | "onAntigravitySignedIn"> & {
+}: Pick<LoginControllerDeps, "terminals" | "openExternal" | "onAntigravitySignedIn"> & {
   requireCli: typeof requireCodingCli;
   boxAntigravitySignIn: typeof antigravitySignInLaunch;
   antigravityScratch: () => string | undefined;
@@ -289,6 +292,9 @@ function antigravitySignIn({
         ...(scratchRoot ? { scratchRoot } : {}),
       });
       const before = new Set(terminals.list().map((session) => session.id));
+      // The boxed CLI cannot hand its page to the browser (macOS refuses it from the box), so Genex
+      // opens Google's sign-in page itself, once: Open sign-in page stays for a second look.
+      let opened = false;
       const launch = {
         file: boxed.file,
         args: boxed.args,
@@ -296,6 +302,12 @@ function antigravitySignIn({
         env: boxed.env,
         title: t("Antigravity sign-in"),
         kind: TerminalKind.AntigravityLogin,
+        onUrl: (url: string) => {
+          const page = googleSignInPage(url);
+          if (opened || !page) return;
+          opened = true;
+          void Promise.resolve(openExternal(page)).catch(() => {});
+        },
         onExit: () => {
           void boxed.release();
           void onAntigravitySignedIn?.()?.catch(() => {});

@@ -6452,8 +6452,8 @@ export default {
   "Installing Antigravity. This can take a minute.":
     "Antigravityをインストールしています。1分ほどかかることがあります。",
   "Not signed in to Antigravity.": "Antigravityにサインインしていません。",
-  "Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in.":
-    "サインインページを開き、表示されたコードをここに貼り付けてください。サインイン情報はAntigravityが保持します。",
+  "Sign in on Google's page in your browser, then paste the code it gives you here. Antigravity keeps the sign-in.":
+    "ブラウザで開いたGoogleのページでサインインし、表示されたコードをここに貼り付けてください。サインイン情報はAntigravityが保持します。",
   "Sign in to Antigravity from Settings › Model Providers.":
     "設定 › モデルプロバイダーからAntigravityにサインインしてください。",
   "Sign in with your Google account to build with your plan.":

@@ -108,7 +108,9 @@ export function createProviderUsage({ engines, source, push }: ProviderUsageDeps
         set(id, { engine: id, state: last ? UsageState.Failed : UsageState.Checking, account: now, usage: null });
         return !last;
       }
-      set(id, { engine: id, state: usage ? UsageState.Ready : UsageState.NotShared, account, usage });
+      // A plan named with no limit (Antigravity's) shares none: its name stays for the panel's title.
+      const shares = Boolean(usage?.windows.length);
+      set(id, { engine: id, state: shares ? UsageState.Ready : UsageState.NotShared, account, usage });
     } catch {
       set(id, { engine: id, state: UsageState.Failed, account, usage: kept });
     }

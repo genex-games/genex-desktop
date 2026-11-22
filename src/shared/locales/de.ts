@@ -6602,8 +6602,8 @@ export default {
     "Installiere die CLI von Antigravity, um mit deinem Google-AI-Tarif zu bauen.",
   "Installing Antigravity. This can take a minute.": "Antigravity wird installiert. Das kann eine Minute dauern.",
   "Not signed in to Antigravity.": "Nicht bei Antigravity angemeldet.",
-  "Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in.":
-    "Öffne die Anmeldeseite und füge den Code, den sie dir gibt, hier ein. Antigravity behält die Anmeldung.",
+  "Sign in on Google's page in your browser, then paste the code it gives you here. Antigravity keeps the sign-in.":
+    "Melde dich auf Googles Seite in deinem Browser an und füge den Code, den sie dir gibt, hier ein. Antigravity behält die Anmeldung.",
   "Sign in to Antigravity from Settings › Model Providers.":
     "Melde dich unter Einstellungen › Modellanbieter bei Antigravity an.",
   "Sign in with your Google account to build with your plan.":
