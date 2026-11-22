@@ -5189,6 +5189,7 @@ export const MESSAGES = [
   "{name} needs a sign-in",
   "{name} opens in Unreal {to} from now on.",
   "{name} settings",
+  "{name} still isn't signed in.",
   "{name} was never saved to a file, so Genex can't open it. Open it in Roblox Studio, or choose another place.",
   "{name} · try {number}",
   "{name}, Genex account",

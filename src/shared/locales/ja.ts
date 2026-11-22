@@ -5547,6 +5547,7 @@ export default {
     "{name}はまだGenex用にセットアップされていません。先にセットアップしてください。",
   "{name} isn’t on this computer any more.": "{name}はもうこのコンピューターにありません。",
   "{name} needs Studio {version} or newer": "{name}にはStudio {version}以降が必要です",
+  "{name} still isn't signed in.": "{name}はまだサインインしていません。",
   "{name} needs a sign-in": "{name}へのサインインが必要です",
   "{name} opens in Unreal {to} from now on.": "{name} は今後 Unreal {to} で開きます。",
   "{name} settings": "{name}の設定",

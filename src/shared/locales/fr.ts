@@ -5646,6 +5646,7 @@ export default {
     "{name} n’est pas encore configuré pour Genex. Configure-le d’abord.",
   "{name} isn’t on this computer any more.": "{name} n’est plus sur cet ordinateur.",
   "{name} needs Studio {version} or newer": "{name} nécessite Studio {version} ou plus récent",
+  "{name} still isn't signed in.": "{name} n’est toujours pas connecté.",
   "{name} needs a sign-in": "{name} demande une connexion",
   "{name} opens in Unreal {to} from now on.": "{name} s’ouvre désormais dans Unreal {to}.",
   "{name} settings": "Réglages de {name}",

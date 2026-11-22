@@ -5418,6 +5418,7 @@ export default {
     "{name} 프로젝트는 아직 Genex용으로 설정되지 않았어요. 먼저 설정하세요.",
   "{name} isn’t on this computer any more.": "{name} 파일은 이제 이 컴퓨터에 없어요.",
   "{name} needs Studio {version} or newer": "{name}에는 Studio {version} 이상이 필요해요",
+  "{name} still isn't signed in.": "{name}에 아직 로그인되지 않았어요.",
   "{name} needs a sign-in": "{name} 로그인 필요",
   "{name} opens in Unreal {to} from now on.": "{name}은(는) 이제부터 Unreal {to}에서 열려요.",
   "{name} settings": "{name} 설정",

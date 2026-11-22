@@ -5578,6 +5578,7 @@ export default {
     "Проект {name} ещё не настроен для Genex. Сначала настрой его.",
   "{name} isn’t on this computer any more.": "Файла {name} больше нет на этом компьютере.",
   "{name} needs Studio {version} or newer": "Для {name} нужна Studio версии {version} или новее",
+  "{name} still isn't signed in.": "{name} всё ещё не подключён.",
   "{name} needs a sign-in": "{name}: нужен вход",
   "{name} opens in Unreal {to} from now on.": "{name} теперь будет открываться в Unreal {to}.",
   "{name} settings": "Настройки {name}",

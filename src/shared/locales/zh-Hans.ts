@@ -5240,6 +5240,7 @@ export default {
   "{name} isn't set up for Genex yet. Set it up first.": "{name} 尚未为 Genex 设置。请先设置。",
   "{name} isn’t on this computer any more.": "{name} 已不在这台电脑上。",
   "{name} needs Studio {version} or newer": "{name} 需要 Studio {version} 或更高版本",
+  "{name} still isn't signed in.": "{name} 仍未登录。",
   "{name} needs a sign-in": "{name} 需要登录",
   "{name} opens in Unreal {to} from now on.": "{name} 今后会在 Unreal {to} 中打开。",
   "{name} settings": "{name} 设置",
