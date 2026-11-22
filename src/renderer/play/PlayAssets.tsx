@@ -313,9 +313,10 @@ function FeedTiles({ online, scroller }: { online: boolean; scroller: RefObject<
   const tiles = useMemo(() => gameTiles(feed.games, KindChoice.All), [feed.games]);
   const things = thingsOf(KindChoice.All);
   const reload = () => void play.loadFeed(PlayCategory.Assets, { force: true });
-  useTriesAgain({ failed: feed.status === FeedStatus.Failed, read: feed.status === FeedStatus.Ready }, reload);
-  if (feed.status === FeedStatus.Failed) return <Failed things={things} online={online} onRetry={reload} />;
-  if (feed.status === FeedStatus.Loading && tiles.length === 0) return <Loading things={things} />;
+  const failed = feed.status === FeedStatus.Failed;
+  const failureShown = useTriesAgain({ failed, read: feed.status === FeedStatus.Ready }, reload);
+  if (failureShown) return <Failed things={things} online={online} onRetry={reload} />;
+  if ((failed || feed.status === FeedStatus.Loading) && tiles.length === 0) return <Loading things={things} />;
   if (tiles.length === 0) return <Notice text={PLAY_WORDS.empty(things)} />;
   return (
     <>
@@ -332,9 +333,11 @@ function CatalogTiles({ kind, online }: { kind: KindChoice; online: boolean }): 
   const tiles = useMemo(() => catalogTiles(catalog.items, kind), [catalog.items, kind]);
   const things = thingsOf(kind);
   const reload = () => void studio().play.loadAssetCatalog({ force: true });
-  useTriesAgain({ failed: catalog.status === FeedStatus.Failed, read: catalog.status === FeedStatus.Ready }, reload);
-  if (catalog.status === FeedStatus.Failed) return <Failed things={things} online={online} onRetry={reload} />;
-  if (catalog.status === FeedStatus.Loading && catalog.items.length === 0) return <Loading things={things} />;
+  const failed = catalog.status === FeedStatus.Failed;
+  const failureShown = useTriesAgain({ failed, read: catalog.status === FeedStatus.Ready }, reload);
+  if (failureShown) return <Failed things={things} online={online} onRetry={reload} />;
+  if ((failed || catalog.status === FeedStatus.Loading) && catalog.items.length === 0)
+    return <Loading things={things} />;
   if (tiles.length === 0) return <Notice text={PLAY_WORDS.empty(things)} />;
   return <AssetGrid tiles={tiles} placeholders={0} />;
 }
@@ -422,10 +425,11 @@ function MineTiles({
   const shown = sameLibraryKey(feed, key);
   const reload = () => void play.loadLibrary(key, { force: true });
   const failed = signedIn && shown && feed.status === FeedStatus.Failed;
-  useTriesAgain({ failed, read: feed.status === FeedStatus.Ready }, reload);
+  const failureShown = useTriesAgain({ failed, read: feed.status === FeedStatus.Ready }, reload);
   if (account !== null && !signedIn) return <SignInNotice />;
-  if (shown && feed.status === FeedStatus.Failed) return <Failed things={things} online={online} onRetry={reload} />;
-  if (!shown || (feed.status === FeedStatus.Loading && tiles.length === 0)) return <Loading things={things} />;
+  if (failureShown) return <Failed things={things} online={online} onRetry={reload} />;
+  const waiting = failed || feed.status === FeedStatus.Loading;
+  if (!shown || (waiting && tiles.length === 0)) return <Loading things={things} />;
   if (tiles.length === 0) return <Notice text={mineEmpty(key)} />;
   return (
     <>

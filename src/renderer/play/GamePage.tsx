@@ -721,10 +721,14 @@ export function GamePage({
     void studio().play.loadNative();
   }, [slug]);
   const game = entry?.game ?? null;
-  // A page that could not be read is read again by itself, as Try again does.
-  useTriesAgain({ failed: !game && entry?.status === FeedStatus.Failed, read: game !== null }, () => {
-    void studio().play.loadGame(slug);
-  });
+  // A page that could not be read is read again by itself, as Try again does, and reads as loading
+  // while its first tries run.
+  const failureShown = useTriesAgain(
+    { failed: !game && entry?.status === FeedStatus.Failed, read: game !== null },
+    () => {
+      void studio().play.loadGame(slug);
+    },
+  );
   // Pictures that failed to load leave the top's run; a new page (keyed by slug) starts afresh.
   const [failed, setFailed] = useState<ReadonlySet<string>>(() => new Set());
   const frames = useMemo(() => (game ? heroFrames(game, failed) : []), [game, failed]);
@@ -742,7 +746,7 @@ export function GamePage({
       {game && (
         <GameSheet game={game} frames={frames} onFailed={(src) => setFailed((current) => new Set(current).add(src))} />
       )}
-      {!game && entry?.status === FeedStatus.Failed && (
+      {failureShown && (
         <div className="people-note">
           {WORDS.failedToLoad}
           <Button variant="secondary" onClick={() => void studio().play.loadGame(slug)}>

@@ -87,6 +87,9 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   game's page, a profile, and the Assets catalog or library that still failed are read again after
   3 s, 10 s, 30 s and then each minute (never on the timer while offline), and at once when the Mac
   is back online or Genex's window comes forward (`useTriesAgain` in `renderer/ui/use-online.ts`).
+  Until its first try again also failed (`QUIET_TRIES`, about 10 s), the failure stays out of sight
+  and the screen shows it loading; then "Couldn't load" and Try again show. Offline, the offline
+  notice shows at once.
 - A card's ⋯ (on the cover's corner while hovered or focused, or a right-click on the card) is
   genex.games' card menu (`src/renderer/play/card-menu/`). The game's owner gets Copy link,
   remixing off or on, Rename, Change link, Change cover, Unpublish and Delete game; an account `/api/me` names

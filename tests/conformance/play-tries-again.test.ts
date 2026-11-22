@@ -1,11 +1,12 @@
 /**
  * A Play read that failed (a tab's games, a game's page, a profile, the asset catalog or library) is
  * tried again by itself: after a wait that grows with each failure in a row, at once when the Mac
- * comes back online or Genex comes forward, and never on a timer while the Mac is offline.
+ * comes back online or Genex comes forward, and never on a timer while the Mac is offline. Its
+ * failure stays out of sight (the screen loading) until its first tries are spent.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { failedRead, type TryAgainClock } from "../../src/renderer/ui/use-online.ts";
+import { failedRead, failureShown, QUIET_TRIES, type TryAgainClock } from "../../src/renderer/ui/use-online.ts";
 
 /** A clock whose timers and events the test runs by hand. */
 function handClock() {
@@ -108,5 +109,28 @@ describe("A failed Play read tried again", () => {
     assert.equal(tried, 0);
     assert.deepEqual(hand.pending(), []);
     assert.equal(hand.listening(), 0);
+  });
+
+  it("keeps a failure out of sight while its first tries run, and shows it with Try again after", () => {
+    const hand = handClock();
+    const counted: number[] = [];
+    const reads = failedRead(hand.clock, WAITS, (tries) => counted.push(tries));
+    const shown: boolean[] = [failureShown(0, true)];
+    for (let failure = 0; failure < QUIET_TRIES + 1; failure++) {
+      const stop = reads.watch(() => {});
+      hand.fire();
+      stop();
+      shown.push(failureShown(counted.at(-1) ?? 0, true));
+    }
+    const expected = shown.map((_, tries) => tries >= QUIET_TRIES);
+    assert.deepEqual(shown, expected);
+    assert.equal(shown.at(0), false, "the first failure stays out of sight");
+    assert.equal(shown.at(-1), true, "a failure past its quiet tries shows");
+    reads.reset();
+    assert.equal(counted.at(-1), 0, "a read that succeeds hides the next failure again");
+  });
+
+  it("shows a failure at once while the Mac is offline, where the offline notice says why", () => {
+    assert.equal(failureShown(0, false), true);
   });
 });

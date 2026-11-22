@@ -7,6 +7,12 @@ import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 
 /** How long a failed read waits before it tries again by itself, failure after failure: soon, then once a minute. */
 export const TRY_AGAIN_WAITS_MS: readonly number[] = [3 * SECOND_MS, 10 * SECOND_MS, 30 * SECOND_MS, MINUTE_MS];
+/**
+ * How many of those tries a failure stays out of sight for, the screen still loading: past them
+ * (about 10 s, with main's own tries of each read) the failure and its Try again show, and the
+ * tries go on.
+ */
+export const QUIET_TRIES = 1;
 
 const listen = (changed: () => void): (() => void) => {
   window.addEventListener("online", changed);
@@ -66,7 +72,11 @@ const WINDOW_CLOCK: TryAgainClock = {
  * `waits` (the last once they run out) and tries again, unless the Mac is offline, and tries at once
  * when it comes back online or the window comes forward; `reset` starts the waits over.
  */
-export function failedRead(clock: TryAgainClock, waits: readonly number[] = TRY_AGAIN_WAITS_MS) {
+export function failedRead(
+  clock: TryAgainClock,
+  waits: readonly number[] = TRY_AGAIN_WAITS_MS,
+  tried: (tries: number) => void = () => {},
+) {
   let tries = 0;
   return {
     /** Try `again` while the read stays failed; answers the stop, for when it no longer is. */
@@ -76,6 +86,7 @@ export function failedRead(clock: TryAgainClock, waits: readonly number[] = TRY_
         clock.after(waitMs, () => {
           if (!clock.online()) return;
           tries += 1;
+          tried(tries);
           again();
         }),
         clock.on("online", again),
@@ -85,14 +96,21 @@ export function failedRead(clock: TryAgainClock, waits: readonly number[] = TRY_
         for (const stop of stops) stop();
       };
     },
-    /** The read succeeded: the next failure waits the first wait again. */
+    /** The read succeeded: the next failure waits the first wait again, out of sight again. */
     reset(): void {
       tries = 0;
+      tried(tries);
     },
   };
 }
 
-/** Where a read stands for `useTriesAgain`: failed (its notice is shown), or read (the waits start over). */
+/**
+ * Whether a failed read's notice shows after `tries` tries again by itself: offline at once (the
+ * offline notice), else once its quiet tries are spent; until then the screen shows it loading.
+ */
+export const failureShown = (tries: number, online: boolean): boolean => !online || tries >= QUIET_TRIES;
+
+/** Where a read stands for `useTriesAgain`: failed, or read (the waits start over). */
 export interface ReadStanding {
   failed: boolean;
   read: boolean;
@@ -101,15 +119,19 @@ export interface ReadStanding {
 /**
  * Try a read that failed again by itself, so a failure that passes (a network not up yet as Genex
  * starts, a server restarting) is never left on screen until someone presses Try again
- * (`failedRead`, over the window's own clock).
+ * (`failedRead`, over the window's own clock). Answers whether the failure shows: until its quiet
+ * tries are spent the screen keeps loading (`failureShown`).
  */
-export function useTriesAgain(standing: ReadStanding, retry: () => void): void {
+export function useTriesAgain(standing: ReadStanding, retry: () => void): boolean {
   const latest = useRef(retry);
   latest.current = retry;
-  const [reads] = useState(() => failedRead(WINDOW_CLOCK));
+  const [tries, setTries] = useState(0);
+  const [reads] = useState(() => failedRead(WINDOW_CLOCK, TRY_AGAIN_WAITS_MS, setTries));
+  const online = useOnline();
   const { failed, read } = standing;
   useEffect(() => {
     if (read) reads.reset();
   }, [reads, read]);
   useEffect(() => (failed ? reads.watch(() => latest.current()) : undefined), [reads, failed]);
+  return failed && failureShown(tries, online);
 }
