@@ -1311,6 +1311,13 @@ function attachPreviews(studio: StudioCore, win: BrowserWindow): void {
  * The app's Genex account for this core: the Genex plugin's account, kept while Genex is off, or a
  * fixture launch's own (signed in as the fixture account it asked for).
  */
+/** Genex's API over the network: a read that fails says so in the log, and one that passes is tried again. */
+function apiRequest(): GalleryRequest {
+  return networkRequest(globalThis.fetch, playOrigin.api, {
+    note: (line) => studioLog.write("main", `genex api ${line}`),
+  });
+}
+
 function genexAccountFor(studio: StudioCore): GenexAccount {
   genexAccount ??= createGenexAccount({
     port: genexAccountPort(studio),
@@ -1326,7 +1333,7 @@ function genexAccountFor(studio: StudioCore): GenexAccount {
 function genexAccountPort(studio: StudioCore): GenexAccountPort {
   if (fixtureNativePolicy) return fixtureAccountPort(fixtureGenexAccount, Date.now);
   if (playOrigin.api !== PLAY_ORIGIN.api) {
-    const request = networkRequest(globalThis.fetch, playOrigin.api);
+    const request = apiRequest();
     return devStandAccountPort({ request, now: Date.now, web: playOrigin.web });
   }
   return pluginAccountPort(studio.plugins);
@@ -1478,7 +1485,7 @@ function playsFor(studio: StudioCore): NonNullable<NativeSessionsDeps["presence"
   const account = genexAccountFor(studio);
   const plays = nativePlays({
     root: studio.layout.installedGames,
-    request: networkRequest(globalThis.fetch, playOrigin.api),
+    request: apiRequest(),
     token: account.token,
     refused: account.refused,
     log: (line) => studioLog.write("main", line),
@@ -1551,7 +1558,7 @@ async function libraryGameOf(studio: StudioCore): Promise<{ dir: string; title: 
 function playCatalogFor(studio: StudioCore): PlayGallery {
   const host = thisComputer();
   playCatalog ??= playGallery({
-    request: fixtureNativePolicy ? fixturePlayRequest : networkRequest(globalThis.fetch, playOrigin.api),
+    request: fixtureNativePolicy ? fixturePlayRequest : apiRequest(),
     token: genexAccountFor(studio).token,
     now: Date.now,
     localImages: fixtureNativePolicy,
@@ -1567,7 +1574,7 @@ function playCatalogFor(studio: StudioCore): PlayGallery {
 function playAccountFor(studio: StudioCore): NonNullable<typeof playAccount> {
   const account = genexAccountFor(studio);
   const deps: PeopleDeps = {
-    request: fixtureNativePolicy ? fixturePlayRequest : networkRequest(globalThis.fetch, playOrigin.api),
+    request: fixtureNativePolicy ? fixturePlayRequest : apiRequest(),
     token: account.token,
     now: Date.now,
     localImages: fixtureNativePolicy,
@@ -1596,7 +1603,7 @@ function playAccountFor(studio: StudioCore): NonNullable<typeof playAccount> {
  */
 function playManageFor(studio: StudioCore): PlayManage {
   const account = genexAccountFor(studio);
-  const request = fixtureNativePolicy ? fixturePlayRequest : networkRequest(globalThis.fetch, playOrigin.api);
+  const request = fixtureNativePolicy ? fixturePlayRequest : apiRequest();
   playManage ??= createPlayManage({
     // A 401 ends the sign-in as one to the account's own calls does.
     request: refusingRequest(request, account.refused),
@@ -1701,7 +1708,7 @@ function popShareMenu(url: string, at: PlayPoint | undefined): void {
 function playCommentsFor(studio: StudioCore): PlayComments {
   const account = genexAccountFor(studio);
   return playComments({
-    request: fixtureNativePolicy ? fixturePlayRequest : networkRequest(globalThis.fetch, playOrigin.api),
+    request: fixtureNativePolicy ? fixturePlayRequest : apiRequest(),
     token: account.token,
     now: Date.now,
     localImages: fixtureNativePolicy,
@@ -1717,7 +1724,7 @@ function playCommentsFor(studio: StudioCore): PlayComments {
 function playCoinFor(studio: StudioCore): PlayCoin {
   const account = genexAccountFor(studio);
   return playCoin({
-    request: fixtureNativePolicy ? fixturePlayRequest : networkRequest(globalThis.fetch, playOrigin.api),
+    request: fixtureNativePolicy ? fixturePlayRequest : apiRequest(),
     token: account.token,
     now: Date.now,
     localImages: fixtureNativePolicy,
@@ -1750,9 +1757,7 @@ function storeFor(studio: StudioCore): PlayStoreParts {
   if (playStoreDeps) return playStoreDeps;
   const account = genexAccountFor(studio);
   const deps = {
-    request: fixtureNativePolicy
-      ? createFixtureStore({ now: Date.now, fallback: fixturePlayRequest })
-      : networkRequest(globalThis.fetch, playOrigin.api),
+    request: fixtureNativePolicy ? createFixtureStore({ now: Date.now, fallback: fixturePlayRequest }) : apiRequest(),
     token: account.token,
     now: Date.now,
     localImages: fixtureNativePolicy,

@@ -26,7 +26,7 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu.tsx";
 import { Icon } from "../ui/icons.tsx";
-import { useBackOnline } from "../ui/use-online.ts";
+import { useBackOnline, useTriesAgain } from "../ui/use-online.ts";
 import { ViewSwitcher, type ViewSwitcherItem } from "../ui/view-switcher.tsx";
 import { type FeedThings, PLAY_ASSET_WORDS, PLAY_WORDS } from "../words.ts";
 import { KIND_GLYPH } from "../asset-library-view.ts";
@@ -313,6 +313,7 @@ function FeedTiles({ online, scroller }: { online: boolean; scroller: RefObject<
   const tiles = useMemo(() => gameTiles(feed.games, KindChoice.All), [feed.games]);
   const things = thingsOf(KindChoice.All);
   const reload = () => void play.loadFeed(PlayCategory.Assets, { force: true });
+  useTriesAgain({ failed: feed.status === FeedStatus.Failed, read: feed.status === FeedStatus.Ready }, reload);
   if (feed.status === FeedStatus.Failed) return <Failed things={things} online={online} onRetry={reload} />;
   if (feed.status === FeedStatus.Loading && tiles.length === 0) return <Loading things={things} />;
   if (tiles.length === 0) return <Notice text={PLAY_WORDS.empty(things)} />;
@@ -331,6 +332,7 @@ function CatalogTiles({ kind, online }: { kind: KindChoice; online: boolean }): 
   const tiles = useMemo(() => catalogTiles(catalog.items, kind), [catalog.items, kind]);
   const things = thingsOf(kind);
   const reload = () => void studio().play.loadAssetCatalog({ force: true });
+  useTriesAgain({ failed: catalog.status === FeedStatus.Failed, read: catalog.status === FeedStatus.Ready }, reload);
   if (catalog.status === FeedStatus.Failed) return <Failed things={things} online={online} onRetry={reload} />;
   if (catalog.status === FeedStatus.Loading && catalog.items.length === 0) return <Loading things={things} />;
   if (tiles.length === 0) return <Notice text={PLAY_WORDS.empty(things)} />;
@@ -417,10 +419,12 @@ function MineTiles({
   const more = useCallback(() => void play.loadLibrary(key, { more: true }), [play, key]);
   const tiles = useMemo(() => feed.assets.map(libraryTile), [feed.assets]);
   const things = thingsOf(kind);
-  if (account !== null && !signedIn) return <SignInNotice />;
   const shown = sameLibraryKey(feed, key);
-  if (shown && feed.status === FeedStatus.Failed)
-    return <Failed things={things} online={online} onRetry={() => void play.loadLibrary(key, { force: true })} />;
+  const reload = () => void play.loadLibrary(key, { force: true });
+  const failed = signedIn && shown && feed.status === FeedStatus.Failed;
+  useTriesAgain({ failed, read: feed.status === FeedStatus.Ready }, reload);
+  if (account !== null && !signedIn) return <SignInNotice />;
+  if (shown && feed.status === FeedStatus.Failed) return <Failed things={things} online={online} onRetry={reload} />;
   if (!shown || (feed.status === FeedStatus.Loading && tiles.length === 0)) return <Loading things={things} />;
   if (tiles.length === 0) return <Notice text={mineEmpty(key)} />;
   return (

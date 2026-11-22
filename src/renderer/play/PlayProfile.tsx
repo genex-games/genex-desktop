@@ -23,7 +23,7 @@ import { LoadStatus } from "../state/people.ts";
 import { studio } from "../state/studio.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
-import { useBackOnline, useOnline } from "../ui/use-online.ts";
+import { useBackOnline, useOnline, useTriesAgain } from "../ui/use-online.ts";
 import { PLAY_WORDS } from "../words.ts";
 import { AddTone, FriendButton } from "./FriendButton.tsx";
 import { PeopleCarousel, PersonTile } from "./PeopleCarousel.tsx";
@@ -182,6 +182,10 @@ export function PlayProfile({
   // Offline it shows what was read last; back online it reads again by itself.
   useBackOnline(() => void studio().people.loadProfile(userId, { force: true }));
   const profile = entry?.profile ?? null;
+  // A profile that could not be read is read again by itself, as Try again does.
+  useTriesAgain({ failed: !profile && entry?.status === LoadStatus.Failed, read: profile !== null }, () => {
+    void studio().people.loadProfile(userId, { force: true });
+  });
   const own = me?.id === userId;
   return (
     <PlayPageFrame

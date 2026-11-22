@@ -23,7 +23,7 @@ import { studio } from "../state/studio.ts";
 import { Icon } from "../ui/icons.tsx";
 import { withViewTransition } from "../ui/view-transition.ts";
 import { type FeedThings, PLAY_WORDS } from "../words.ts";
-import { useBackOnline, useOnline } from "../ui/use-online.ts";
+import { useBackOnline, useOnline, useTriesAgain } from "../ui/use-online.ts";
 import { gridColumns, setClipsCovered, topRowClip } from "./clip-playback.ts";
 import { ClipsToggle } from "./CoverClip.tsx";
 import { AssetSwitchers, AssetsBody } from "./PlayAssets.tsx";
@@ -275,6 +275,7 @@ function FeedBody({
   const more = useCallback(() => void play.loadFeed(category, { more: true }), [play, category]);
   const reload = () => void play.loadFeed(category, { force: true });
   useOnlineCounts(category, feed.status === FeedStatus.Ready);
+  useTriesAgain({ failed: feed.status === FeedStatus.Failed, read: feed.status === FeedStatus.Ready }, reload);
   if (feed.status === FeedStatus.Failed && !online)
     return <OfflineNotice text={WORDS.offline.shelf(shelf)} onRetry={reload} />;
   if (feed.status === FeedStatus.Failed) return <Notice text={WORDS.failed(shelf)} onRetry={reload} />;

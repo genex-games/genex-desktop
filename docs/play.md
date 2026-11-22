@@ -79,6 +79,13 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   idle moment, staggered, only while half in view and the window shows (none under the viewer);
   out of view for 10 s a clip lets its decoder go. One pause after the tabs stops every clip and is
   remembered; Reduce Motion, a failed clip or a refused play stops them for the session.
+- A read that fails is tried again by itself, so a network not up yet as Genex starts, or genex.games
+  restarting, never leaves Play empty until a press. Main reads a GET again after 1 s and 3 s when its
+  connection fails or the edge answers 502, 503, 504, 52x or 530 (never a write, never after a
+  timeout) and logs each failed read in `studio.log` (`genex api <route>: …`). A tab's games, a
+  game's page, a profile, and the Assets catalog or library that still failed are read again after
+  3 s, 10 s, 30 s and then each minute (never on the timer while offline), and at once when the Mac
+  is back online or Genex's window comes forward (`useTriesAgain` in `renderer/ui/use-online.ts`).
 - A card's ⋯ (on the cover's corner while hovered or focused, or a right-click on the card) is
   genex.games' card menu (`src/renderer/play/card-menu/`). The game's owner gets Copy link,
   remixing off or on, Rename, Change link, Change cover, Unpublish and Delete game; an account `/api/me` names
