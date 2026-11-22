@@ -4201,9 +4201,15 @@ working dot; none for a game Genex doesn't know) comes from
   answer with practice answers (`source: 'practice'`), which the game wires as real answers, and the
   person can switch Live to real models ([Builds and Live](product/builds-live.md#the-two-views)), so
   the final message says so and gives the draft's link; the game labels its written lines whenever
-  they play instead; and a game that listens declares `microphone` in its `package.json` (Live then
-  asks the person for it) and keeps a typed input, since speech recognition is missing in Firefox
-  and does not recognise speech in Studio's preview. That advice, reworded as optional, is the bundled
+  they play instead; and a game that listens or speaks is built on Genex voice (the card's
+  `references/voice.md`, vendored from CLI 1.45.0 ahead of the pin: `getVoiceCatalog`, `voice` on
+  the budget request, `createVoiceRecorder` with `transcribe`, `createSpeaker`), never on the
+  browser's speech recognition, which hears nothing in Studio's preview. Such a game is whole
+  where the catalog answers `enabled: false`: it takes typed input and shows its lines as text.
+  Its build is given the microphone when a publish sees the recorder in its source (else it
+  declares `microphone` in its `package.json`), and Live asks the person for it. Until the pinned
+  CLI is 1.45.0 the preview's practice helper serves no voice, so the catalog there is disabled
+  and the text path is what runs. That advice, reworded as optional, is the bundled
   `genex-recommendations` plugin (skills only: multiplayer patterns, cover craft, asset sources, shop
   design, player experience, play-time models), which works under the hood of Genex (see
   [First-party privileges](#first-party-privileges)). Genex's currency is Nex (the cards

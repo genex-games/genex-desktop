@@ -557,8 +557,8 @@
       "with": ""
     },
     {
-      "replace": ", prompt and memory design, multiplayer rooms, local practice and every refusal.",
-      "with": " and every refusal."
+      "replace": ", voice, prompt design, multiplayer, practice and every refusal.",
+      "with": ", voice and every refusal."
     },
     {
       "replace": "Declare the printed numbers. Never guess them, never work them out from a\nvendor's price list, never add a margin of your own.",
@@ -587,6 +587,19 @@
   "genex-llm-in-games/references/multiplayer.md": "drop",
   "genex-llm-in-games/references/practice.md": "drop",
   "genex-llm-in-games/references/sponsor.md": "drop",
+  "genex-llm-in-games/references/voice.md": [
+    {
+      "replace": "This is not `npx genex voice` (`$genex-ai-voice`), which bakes fixed lines into\nthe game while you BUILD it, on your own credits.",
+      "with": "This is not `npx genex voice` (`$genex-tool-audio`), which bakes fixed lines into\nthe game while you BUILD it, on the user's credits."
+    },
+    {
+      "section": "## Practice"
+    },
+    {
+      "replace": "- [ ] Watched in practice mode, then on the owner's test build",
+      "with": "- [ ] Watched in Studio's preview, then on the owner's test build"
+    }
+  ],
   "genex-monetization/SKILL.md": [
     {
       "replace": "Load this when the user asks to sell something or add payments. Build the game\nloop before adding commerce.",

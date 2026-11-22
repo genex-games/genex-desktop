@@ -129,6 +129,31 @@ real question.
   code over game state, or from a `judge()` question over that state.
 - After `content_blocked` the authored line plays; the same text rearranged is refused again.
 
+### A spoken conversation
+
+Where the stand serves voice, a player can talk and characters can answer aloud (the calls are in
+`genex-llm-in-games`, `references/voice.md`). What tends to make it feel like talking to someone:
+
+- Push to talk beats an open microphone: a held button or key, a visible "listening" state and a
+  level meter. The player knows when they are heard, and nothing is recorded by accident.
+- What was heard appears on screen before the game acts on it. A misheard word the player can see
+  is a small thing; one they cannot see reads as a broken game.
+- The reply is spoken as it is written: the speaker fed from the stream starts about a second in.
+  One to three sentences a turn sounds like a person and costs a fraction of a monologue; the
+  length belongs in the `system`.
+- Every spoken line is also on screen. Sound can be off, late or refused.
+- The player can interrupt: starting to talk, or skipping, stops the speaker at once.
+- Each character keeps one voice for the whole game, picked from the catalog by its description. A
+  cast of several reads best when the voices differ in gender and manner, not only in name.
+- One tier for the whole cast is the plain choice. The dearest tier on the one character the game
+  is about, and a cheaper one for everyone else, spends where it is heard.
+- Speech is nearly all of a voice budget; listening costs a small fraction of it. Shorter lines
+  are the lever, not fewer questions.
+- A line the game repeats (a greeting, a catchphrase) can be spoken once and its audio kept for
+  the session.
+- Typed input stays beside the microphone, for a refused microphone, a noisy room or a player who
+  would rather type.
+
 ## When the feature cannot be a model call
 
 - When the person does not want a play-time model, or the lane is off on the stand, an authored

@@ -79,6 +79,17 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   idle moment, staggered, only while half in view and the window shows (none under the viewer);
   out of view for 10 s a clip lets its decoder go. One pause after the tabs stops every clip and is
   remembered; Reduce Motion, a failed clip or a refused play stops them for the session.
+- A read that fails is tried again by itself, so a network not up yet as Genex starts, or genex.games
+  restarting, never leaves Play empty until a press. Main reads a GET again after 1 s and 3 s when its
+  connection fails or the edge answers 502, 503, 504, 52x or 530 (never a write, never after a
+  timeout, never while the computer is offline, and never the store's reads, which a purchase's
+  `STORE_SHEET_OPEN_MS` bounds) and logs each failed read in `studio.log` (`genex api <route>: …`). A tab's games, a
+  game's page, a profile, and the Assets catalog or library that still failed are read again after
+  3 s, 10 s, 30 s and then each minute (never on the timer while offline), and at once when the Mac
+  is back online or Genex's window comes forward (`useTriesAgain` in `renderer/ui/use-online.ts`).
+  Until its first try again also failed (`QUIET_TRIES`, about 10 s), the failure stays out of sight
+  and the screen shows it loading; then "Couldn't load" and Try again show. Offline, the offline
+  notice shows at once.
 - A card's ⋯ (on the cover's corner while hovered or focused, or a right-click on the card) is
   genex.games' card menu (`src/renderer/play/card-menu/`). The game's owner gets Copy link,
   remixing off or on, Rename, Change link, Change cover, Unpublish and Delete game; an account `/api/me` names
@@ -378,10 +389,13 @@ is.
     (`directGenexEnv`: an https origin, nothing after it) and reaches it, and the relays, authority
     servers and fast endpoints its answers name, over the internet (`internetClient`, outbound TCP
     and UDP); there "Genex only" is not enforced.
-  - **What goes through.** Requests and WebSockets go on to their own Genex host over TLS. Relay and
-    authority addresses in JSON answers (relay lists, `authorityUrls`, `authorityRegions`, a seat's
-    `publicAddress`) are rewritten to their local port, so region probes, joins and room sockets
-    come back through the gateway. An authority room names its fast@1 endpoint inside its WebSocket
+  - **What goes through.** Requests and WebSockets go on to their own Genex host over TLS, on the
+    port its address named (443 when none; the API names authority regions on 2053, 2083 and
+    8443). Relay and authority addresses in JSON answers (relay lists, `authorityUrls`,
+    `authorityRegions`, a seat's `publicAddress`) are rewritten to their local port, which replaces
+    the named one, so region probes, joins and room sockets come back through the gateway. Each
+    host and port gets a local port of its own; an address naming a port Cloudflare doesn't proxy
+    HTTPS on is left as it was. An authority room names its fast@1 endpoint inside its WebSocket
     (`__fast`, multiplayer PROTOCOL.md §17.12): the gateway reads the room's frames (never the
     game's), rewrites that url to a datagram port (`gateway-frames.ts`) and drops the compression
     offer so it can. Each game socket on a datagram port gets its own UDP socket to the endpoint, so

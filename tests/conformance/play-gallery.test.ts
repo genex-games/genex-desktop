@@ -25,6 +25,8 @@ import { PlayCategory, PlayShelf } from "../../src/shared/play.ts";
 import { FIXTURE_BUILD_HOST, NativeArch, type NativeHost, NativePlatform } from "../../src/shared/play-native.ts";
 
 const TOKEN = "genex-cli-token";
+/** A network request that reads once and never waits. */
+const NO_WAIT = { retryWaitsMs: [] } as const;
 
 /** An item as the gallery serves it. */
 function item(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -680,10 +682,99 @@ describe("Play's network request", () => {
   it("reads a body that is not JSON as none, whatever the status", async () => {
     for (const status of [200, 502]) {
       const { fetchImpl } = fetchAnswering(status, "<html>gateway</html>");
-      assert.deepEqual(await networkRequest(fetchImpl, "https://api.genex.games")("/api/gallery", {}), {
+      assert.deepEqual(await networkRequest(fetchImpl, "https://api.genex.games", NO_WAIT)("/api/gallery", {}), {
         status,
         body: null,
       });
+    }
+  });
+});
+
+describe("Play's network request after a failure that passes", () => {
+  /** A fetch that plays `steps` in turn (a status, or an error it throws), keeping each method it was asked. */
+  const fetchPlaying = (steps: Array<number | Error>) => {
+    const asked: string[] = [];
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      asked.push(init?.method ?? "GET");
+      const step = steps[Math.min(asked.length - 1, steps.length - 1)];
+      if (step instanceof Error) throw step;
+      return new Response(JSON.stringify({ items: [] }), { status: step });
+    }) as typeof fetch;
+    return { fetchImpl, asked };
+  };
+  /** A request whose waits are recorded, not waited, and whose log lines are kept. */
+  const recorded = (fetchImpl: typeof fetch) => {
+    const waits: number[] = [];
+    const lines: string[] = [];
+    const request = networkRequest(fetchImpl, "https://api.genex.games", {
+      retryWaitsMs: [10, 30],
+      wait: async (ms) => waits.push(ms),
+      note: (line) => lines.push(line),
+    });
+    return { request, waits, lines };
+  };
+  const dropped = () =>
+    new TypeError("fetch failed", { cause: Object.assign(new Error("connect"), { code: "ECONNRESET" }) });
+
+  it("reads again when the connection dropped, and Play gets the page", async () => {
+    const { fetchImpl, asked } = fetchPlaying([dropped(), 200]);
+    const { request, waits, lines } = recorded(fetchImpl);
+    assert.deepEqual(await request(`${PlayRoute.Feed}?category=featured`, {}), { status: 200, body: { items: [] } });
+    assert.deepEqual(asked, ["GET", "GET"]);
+    assert.deepEqual(waits, [10]);
+    assert.deepEqual(lines, ["/api/gallery: TypeError ECONNRESET, trying again"]);
+  });
+
+  it("reads again while the API's edge answers for an API that restarts", async () => {
+    for (const status of [502, 503, 504, 521, 530]) {
+      const { fetchImpl, asked } = fetchPlaying([status, status, 200]);
+      const { request, waits } = recorded(fetchImpl);
+      assert.equal((await request(PlayRoute.world("genex-strike"), {})).status, 200, `after ${status}`);
+      assert.equal(asked.length, 3);
+      assert.deepEqual(waits, [10, 30]);
+    }
+  });
+
+  it("stops after its waits, and the last failure stands and is logged", async () => {
+    const answered = recorded(fetchPlaying([503]).fetchImpl);
+    assert.equal((await answered.request(PlayRoute.Counts, {})).status, 503);
+    assert.deepEqual(answered.lines.at(-1), "/api/gallery/counts: HTTP 503");
+    const thrown = recorded(fetchPlaying([dropped()]).fetchImpl);
+    await assert.rejects(thrown.request(PlayRoute.Counts, {}), TypeError);
+    assert.deepEqual(thrown.lines.at(-1), "/api/gallery/counts: TypeError ECONNRESET");
+  });
+
+  it("fails at once while the computer is offline, without waiting to try again", async () => {
+    const { fetchImpl, asked } = fetchPlaying([dropped(), 200]);
+    const waits: number[] = [];
+    const lines: string[] = [];
+    const request = networkRequest(fetchImpl, "https://api.genex.games", {
+      retryWaitsMs: [10, 30],
+      wait: async (ms) => waits.push(ms),
+      note: (line) => lines.push(line),
+      online: () => false,
+    });
+    await assert.rejects(request(PlayRoute.Feed, {}), TypeError);
+    assert.equal(asked.length, 1);
+    assert.deepEqual(waits, []);
+    assert.deepEqual(lines, ["/api/gallery: TypeError ECONNRESET"]);
+  });
+
+  it("never sends a write twice, and never reads again after a timeout or an answer of its own", async () => {
+    const cases: Array<{ step: number | Error; init: Parameters<GalleryRequest>[1] }> = [
+      { step: dropped(), init: { method: "PUT", token: TOKEN } },
+      { step: 503, init: { method: "POST", body: {}, token: TOKEN } },
+      { step: new DOMException("timed out", "TimeoutError"), init: {} },
+      { step: 404, init: {} },
+      { step: 500, init: {} },
+      { step: 429, init: {} },
+    ];
+    for (const { step, init } of cases) {
+      const { fetchImpl, asked } = fetchPlaying([step, 200]);
+      const { request, waits } = recorded(fetchImpl);
+      await request(PlayRoute.like("g1"), init).catch(() => {});
+      assert.equal(asked.length, 1, `${String(step)} ${init.method ?? "GET"}`);
+      assert.deepEqual(waits, []);
     }
   });
 });

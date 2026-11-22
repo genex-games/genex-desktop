@@ -77,22 +77,44 @@ it shows a small visible label saying so and why, for example "Written lines: no
 an error, and never a silent swap that reads as a broken AI. A practice answer is not a fallback and
 gets no such label.
 
-## A game that listens
+## A game that listens and speaks
 
-- A game that hears the player (speech recognition, `getUserMedia({ audio })`, voice chat)
-  declares the microphone for its Genex page in its `package.json`:
-  `"genex": { "capabilities": ["microphone"] }`. An undeclared build is refused the microphone on
-  its Genex page without the player being asked. A draft or gallery publish prints what the build is
-  given (`On its Genex page this build is given: microphone.`); the rules are in
+- When the person wants the player to talk to the game, or its characters to speak aloud, build it
+  on Genex voice. Read
+  `genex__skill {"name":"genex-llm-in-games","file":"skills/genex-llm-in-games/references/voice.md"}`
+  first: `getVoiceCatalog()`, `voice` on the budget request, `createVoiceRecorder()` and
+  `transcribe()` for listening, `createSpeaker()` for speech.
+- Never the browser's own `SpeechRecognition`, `webkitSpeechRecognition` or `speechSynthesis`. In
+  Studio's preview the recognition object exists but hears nothing (it needs Google's speech
+  service, which Studio's browser does not have), the Genex app has none, and where it works it
+  sends the player's voice to a company the approval sheet never named.
+- Voice is an upgrade of a text conversation that already works. `getVoiceCatalog()` answers
+  `enabled: false` wherever voice is not served; the game then takes typed input and shows its
+  lines as text, with the small visible label this preface asks for ("Voice: not available here").
+  Build and check that path first.
+- Where Studio's preview serves voice (its catalog says `enabled: true`), the practice helper
+  answers it free: `transcribe()` returns made-up words and `speak()` a soft placeholder babble as
+  long as the line. That proves the wiring (the recording, the queue, the subtitles, an
+  interruption), never how a voice sounds. In Live, once the person presses Use real AI, real voices
+  answer inside the same credit cap; a real voice call there costs at least one credit.
+- Until a bench has run, the provisional budget covers voice as it stands: `perCallMaxCredits` 16
+  holds one spoken line of any length the catalog allows, on any tier. Keep a spoken line to one to
+  three sentences, ask for the `standard` tier unless the person asks for the best voice, and
+  estimate honestly: `estimatedCharactersPerPeriod` is the lines a period holds times their length,
+  `estimatedSecondsPerPeriod` the seconds a player talks.
+- A game that records the player declares the microphone for its Genex page. A draft or gallery
+  publish reads `createVoiceRecorder(` in the game's source and prints what the build is given
+  (`On its Genex page this build is given: microphone.`); when that line is missing, declare it in
+  the game's `package.json`: `"genex": { "capabilities": ["microphone"] }`. An undeclared build is
+  refused the microphone on its Genex page without the player being asked. The rules are in
   `genex__skill {"name":"genex-threejs-embed-auth","file":"skills/genex-threejs-embed-auth/references/shells.md"}`.
 - Studio's Live preview grants the microphone to a game that declares it, once the person allows it
-  in Live's bar (`getUserMedia({ audio: true })` then works; video never does). Your own preview
-  windows never get it, and the Genex app never grants it. Browser speech recognition
-  (`SpeechRecognition`, `webkitSpeechRecognition`) exists in Chrome, Edge and Safari, not Firefox; in
-  Studio's preview the object exists but does not recognise speech (it needs Google's speech service,
-  which Studio's browser does not have), so build listening on the microphone's audio, or on
-  recognition with a fallback. A game that listens always also takes typed input, shown whenever
-  recognition or the microphone is missing or refused.
+  in Live's bar. Your own preview windows never get it and the Genex app never grants it, so you
+  cannot record there: check the listening path through the typed input, and check speech by
+  calling the speaker from a click.
+- The final message for a game with voice says in one line that talking to it needs Live with the
+  microphone allowed, that the preview's voice is a placeholder until Use real AI is on, and that
+  the game also takes typed input.
 
 ## Not in Studio yet
 

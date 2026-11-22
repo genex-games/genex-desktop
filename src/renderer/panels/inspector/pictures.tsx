@@ -2,6 +2,7 @@
 import type { JSX, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { useRef, useState } from "react";
 import { t } from "../../../shared/i18n.ts";
+import { assetMaker } from "../../asset-making.ts";
 import { clamp } from "../../canvas-view.ts";
 import { type IterationNode, type RunGraph as RunGraphModel, roundShot } from "../../run-graph.ts";
 import { TRY_GLYPH, tryWord } from "../../round-status.ts";
@@ -18,6 +19,25 @@ const SPLIT_STEP = 0.05;
 
 /** The thin ring every picture of the panel wears. */
 export const IMAGE_OUTLINE = "0 0 0 1px var(--image-outline)";
+
+/**
+ * The mark of the tool an asset was made with (Tripo, Meshy, Blender…), on its picture's bottom-left
+ * corner; nothing for a plugin whose tool has no mark. The picture's frame is `relative`.
+ */
+export function MadeWith({ job }: { job: { source: string; operation: string | null } }): JSX.Element | null {
+  const tool = assetMaker(job);
+  if (!tool?.mark) return null;
+  return (
+    <img
+      data-made-with={tool.name}
+      data-light-mark={tool.light || undefined}
+      src={tool.mark}
+      alt=""
+      draggable={false}
+      className="made-with-mark"
+    />
+  );
+}
 
 function Chip({ children, side }: { children: ReactNode; side: "left" | "right" }): JSX.Element {
   return (

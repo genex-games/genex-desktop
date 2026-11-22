@@ -33,7 +33,7 @@ import { DeliveredPicture } from "../inspector/AssetsPanel.tsx";
 import { blenderRender, firstImage } from "../inspector/asset-jobs.ts";
 import { OPEN_EDGE, UnderRowHeader } from "../inspector/chrome.tsx";
 import { formatTime } from "../inspector/format.ts";
-import { IMAGE_OUTLINE } from "../inspector/pictures.tsx";
+import { IMAGE_OUTLINE, MadeWith } from "../inspector/pictures.tsx";
 import { ScreenWords, useFrameSrc, usePartFrame } from "../inspector/screen.tsx";
 import { GraphSelection } from "../inspector/selection.ts";
 import { StateGlyph } from "../inspector/tone.tsx";
@@ -91,6 +91,7 @@ function Picture({
   live = false,
   loading = false,
   screen = null,
+  made = null,
   children = null,
 }: {
   src?: string | null;
@@ -98,6 +99,8 @@ function Picture({
   loading?: boolean;
   /** the agent's window this picture shows, for the smoke */
   screen?: string | null;
+  /** the asset it shows, whose tool's mark sits on its corner */
+  made?: AssetInfo | null;
   children?: ReactNode;
 }): JSX.Element {
   return (
@@ -111,6 +114,7 @@ function Picture({
       ) : null}
       {!src && loading ? <Skeleton width="100%" height={60} radius={10} className="absolute inset-0" /> : null}
       {!src && !loading ? children : null}
+      {made ? <MadeWith job={made} /> : null}
     </span>
   );
 }
@@ -119,9 +123,10 @@ function Picture({
 function MadePicture({ project, card }: { project: string | null; card: AssetCard }): JSX.Element {
   const still = useWorkerStill(project, card.picture, ROW_PICTURE_PX);
   const sound = madeKind(card) === "audio";
-  if (still.src || still.loading) return <Picture src={still.src} loading={still.loading} />;
+  const made = card.versions.at(-1) ?? null;
+  if (still.src || still.loading) return <Picture src={still.src} loading={still.loading} made={made} />;
   return (
-    <Picture>
+    <Picture made={made}>
       {project && still.asset ? (
         <AssetThumbnail project={project} asset={still.asset} companions={[]} fallback={null} quiet />
       ) : (
@@ -165,6 +170,8 @@ interface Tile {
   name: string;
   /** the game's record of a sound it can play; null for anything else, or a sound not in the game */
   sound: ProjectAsset | null;
+  /** the asset it is, whose tool's mark sits on a sound's corner (a picture's own carries it) */
+  made: AssetInfo | null;
   /** the whole picture, for the lightbox; null for a sound, a model or a picture with none */
   full: StillSource | null;
   picture: JSX.Element;
@@ -192,6 +199,7 @@ function TileView({ tile, tiles, actions }: { tile: Tile; tiles: readonly Tile[]
     return (
       <span className={PICTURE_CLASS} style={{ boxShadow: IMAGE_OUTLINE }}>
         <AudioThumb project={actions.project} asset={tile.sound} className="absolute inset-0 rounded-[10px]" />
+        {tile.made ? <MadeWith job={tile.made} /> : null}
       </span>
     );
   const full = tile.full;
@@ -275,6 +283,7 @@ function madeTiles(project: string | null, cards: readonly AssetCard[]): Tile[] 
     key: card.id,
     name: card.name,
     sound: madeSound(card),
+    made: card.versions.at(-1) ?? null,
     full: workerStillSource(project, card.picture, null, LIGHTBOX_PX),
     picture: <MadePicture key={card.id} project={project} card={card} />,
   }));
@@ -324,9 +333,10 @@ function AssetsPictures({ jobs, actions }: { jobs: AssetInfo[]; actions: TileAct
       key,
       name: job.name,
       sound: job.preview?.kind === "audio" ? job.preview : null,
+      made: job,
       full: jobFull(job, actions.project),
       picture: (
-        <Picture key={key}>
+        <Picture key={key} made={job}>
           <DeliveredPicture job={job} project={actions.project} />
         </Picture>
       ),

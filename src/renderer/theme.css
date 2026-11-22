@@ -6710,6 +6710,23 @@ a:focus-visible {
   object-fit: contain;
   background: #1d1e21;
 }
+/* The tool an asset was made with, on its picture's bottom-left corner in Builds (inspector/pictures.tsx): the
+   bare logo, a soft shadow keeping it readable on any picture. A mark drawn light (OpenAI,
+   ElevenLabs, Genex) turns dark in the light theme, where a tile with no picture is light. */
+.made-with-mark {
+  position: absolute;
+  bottom: 5px;
+  left: 5px;
+  z-index: 1;
+  width: 12px;
+  height: 12px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 1.5px rgb(0 0 0 / 70%)) drop-shadow(0 1px 2px rgb(0 0 0 / 45%));
+  pointer-events: none;
+}
+:root[data-theme="light"] .made-with-mark[data-light-mark] {
+  filter: invert(0.9) drop-shadow(0 0 1.5px rgb(255 255 255 / 85%)) drop-shadow(0 1px 2px rgb(255 255 255 / 50%));
+}
 .making-corner {
   position: absolute;
   top: 12px;
