@@ -744,6 +744,22 @@ describe("Play's network request after a failure that passes", () => {
     assert.deepEqual(thrown.lines.at(-1), "/api/gallery/counts: TypeError ECONNRESET");
   });
 
+  it("fails at once while the computer is offline, without waiting to try again", async () => {
+    const { fetchImpl, asked } = fetchPlaying([dropped(), 200]);
+    const waits: number[] = [];
+    const lines: string[] = [];
+    const request = networkRequest(fetchImpl, "https://api.genex.games", {
+      retryWaitsMs: [10, 30],
+      wait: async (ms) => waits.push(ms),
+      note: (line) => lines.push(line),
+      online: () => false,
+    });
+    await assert.rejects(request(PlayRoute.Feed, {}), TypeError);
+    assert.equal(asked.length, 1);
+    assert.deepEqual(waits, []);
+    assert.deepEqual(lines, ["/api/gallery: TypeError ECONNRESET"]);
+  });
+
   it("never sends a write twice, and never reads again after a timeout or an answer of its own", async () => {
     const cases: Array<{ step: number | Error; init: Parameters<GalleryRequest>[1] }> = [
       { step: dropped(), init: { method: "PUT", token: TOKEN } },

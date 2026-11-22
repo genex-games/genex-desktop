@@ -184,6 +184,7 @@ import { fixtureDownload, fixtureFileResponse } from "./dev/fixture-asset-librar
 import {
   buildHostsFor,
   type GalleryRequest,
+  type NetworkRequestOptions,
   mintedTicket,
   networkRequest,
   type PlayGallery,
@@ -1311,19 +1312,24 @@ function attachPreviews(studio: StudioCore, win: BrowserWindow): void {
  * The app's Genex account for this core: the Genex plugin's account, kept while Genex is off, or a
  * fixture launch's own (signed in as the fixture account it asked for).
  */
-/** Genex's API over the network: a read that fails says so in the log, and one that passes is tried again. */
-function apiRequest(): GalleryRequest {
-  return networkRequest(globalThis.fetch, playOrigin.api, {
-    note: (line) => studioLog.write("main", `genex api ${line}`),
-  });
-}
-
 function genexAccountFor(studio: StudioCore): GenexAccount {
   genexAccount ??= createGenexAccount({
     port: genexAccountPort(studio),
     openSignIn: (url) => openGenexPage(fixtureNativePolicy, url, playOrigin.web),
   });
   return genexAccount;
+}
+
+/**
+ * Genex's API over the network: a read that fails says so in the log, and one that fails in a way
+ * that passes is tried again while the Mac is online (`retryWaitsMs: []` reads once).
+ */
+function apiRequest(options: Pick<NetworkRequestOptions, "retryWaitsMs"> = {}): GalleryRequest {
+  return networkRequest(globalThis.fetch, playOrigin.api, {
+    ...options,
+    online: () => net.isOnline(),
+    note: (line) => studioLog.write("main", `genex api ${line}`),
+  });
 }
 
 /**
@@ -1757,7 +1763,11 @@ function storeFor(studio: StudioCore): PlayStoreParts {
   if (playStoreDeps) return playStoreDeps;
   const account = genexAccountFor(studio);
   const deps = {
-    request: fixtureNativePolicy ? createFixtureStore({ now: Date.now, fallback: fixturePlayRequest }) : apiRequest(),
+    // Read once: a started purchase's sheet must open within STORE_SHEET_OPEN_MS, which allows one
+    // bounded wait for the read back and one for the balance, not their tries again.
+    request: fixtureNativePolicy
+      ? createFixtureStore({ now: Date.now, fallback: fixturePlayRequest })
+      : apiRequest({ retryWaitsMs: [] }),
     token: account.token,
     now: Date.now,
     localImages: fixtureNativePolicy,

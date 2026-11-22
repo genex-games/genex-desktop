@@ -743,6 +743,8 @@ export interface NetworkRequestOptions {
   wait?: (ms: number) => Promise<unknown>;
   /** A line for the log about a read that failed: its route, never its token or body. */
   note?: (line: string) => void;
+  /** Whether the computer is online: offline, a read fails at once instead of trying again. */
+  online?: () => boolean;
 }
 
 /** What one call of a request is asked. */
@@ -779,7 +781,7 @@ export function networkRequest(
   origin: string,
   options: NetworkRequestOptions = {},
 ): GalleryRequest {
-  const { timeoutMs = REQUEST_TIMEOUT_MS, retryWaitsMs = READ_RETRY_WAITS_MS, wait = sleep, note } = options;
+  const { timeoutMs = REQUEST_TIMEOUT_MS, retryWaitsMs = READ_RETRY_WAITS_MS, wait = sleep, note, online } = options;
   const once: GalleryRequest = async (route, init) => {
     const res = await fetchImpl(origin + route, {
       method: init.method ?? "GET",
@@ -804,7 +806,7 @@ export function networkRequest(
   const read = async (route: string, init: CallInit, waits: readonly number[]): Promise<GalleryAnswer> => {
     const outcome = await settle(route, init);
     const [waitMs, ...rest] = waits;
-    const again = waitMs !== undefined && passes(outcome);
+    const again = waitMs !== undefined && passes(outcome) && online?.() !== false;
     if (failed(outcome)) note?.(`${route.split("?")[0]}: ${outcomeWords(outcome)}${again ? ", trying again" : ""}`);
     if (again) {
       await wait(waitMs);

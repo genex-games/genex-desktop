@@ -82,7 +82,8 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
 - A read that fails is tried again by itself, so a network not up yet as Genex starts, or genex.games
   restarting, never leaves Play empty until a press. Main reads a GET again after 1 s and 3 s when its
   connection fails or the edge answers 502, 503, 504, 52x or 530 (never a write, never after a
-  timeout) and logs each failed read in `studio.log` (`genex api <route>: …`). A tab's games, a
+  timeout, never while the computer is offline, and never the store's reads, which a purchase's
+  `STORE_SHEET_OPEN_MS` bounds) and logs each failed read in `studio.log` (`genex api <route>: …`). A tab's games, a
   game's page, a profile, and the Assets catalog or library that still failed are read again after
   3 s, 10 s, 30 s and then each minute (never on the timer while offline), and at once when the Mac
   is back online or Genex's window comes forward (`useTriesAgain` in `renderer/ui/use-online.ts`).
