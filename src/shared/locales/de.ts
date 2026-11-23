@@ -4161,6 +4161,7 @@ export default {
   "This game has more files than the canvas lists.": "Dieses Spiel hat mehr Dateien, als die Arbeitsfläche zeigt.",
   "This game has no Mac, Windows or Linux app ready to publish":
     "Dieses Spiel hat keine Mac-, Windows- oder Linux-App, die zum Veröffentlichen bereit ist",
+  "This game could not be added to your Genex account": "Dieses Spiel ließ sich nicht zu deinem Genex-Konto hinzufügen",
   "This game has no Mac, Windows or Linux app ready to publish.":
     "Dieses Spiel hat keine Mac-, Windows- oder Linux-App, die bereit zum Veröffentlichen ist.",
   "This game has no Unity project": "Dieses Spiel hat kein Unity-Projekt",
@@ -6650,8 +6651,10 @@ export default {
   "Most credits this play session may spend": "Höchstens so viele Credits in dieser Spielsitzung",
   "Practice answers (free, made up)": "Übungsantworten (kostenlos, ausgedacht)",
   "Practice answers could not start: {error}": "Übungsantworten konnten nicht starten: {error}",
-  "Real AI is billed to this game's draft on Genex, and it has none yet. Ask the chat to publish a draft, then try again. Practice answers go on.":
-    "Echte KI wird dem Entwurf dieses Spiels auf Genex berechnet, und es hat noch keinen. Bitte den Chat, einen Entwurf zu veröffentlichen, und versuch es nochmal. Übungsantworten laufen weiter.",
+  "Real AI could not start: this game could not be added to your Genex account. Practice answers go on.":
+    "Echte KI konnte nicht starten: Dieses Spiel ließ sich nicht zu deinem Genex-Konto hinzufügen. Übungsantworten laufen weiter.",
+  "Real AI needs Genex's updated terms accepted. Review them on genex.games, then try again. Practice answers go on.":
+    "Echte KI braucht deine Zustimmung zu den aktualisierten Genex-Bedingungen. Sieh sie dir auf genex.games an und versuch es nochmal. Übungsantworten laufen weiter.",
   "Real AI is not available in this test profile. Practice answers go on.":
     "Echte KI gibt es in diesem Testprofil nicht. Übungsantworten laufen weiter.",
   "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
@@ -6660,6 +6663,8 @@ export default {
   "Real AI · {spent} of {cap} credits": "Echte KI · {spent} von {cap} Credits",
   "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
     "In dieser Vorschau antworten echte Modelle, bezahlt mit deinen Genex-Credits: höchstens {cap} Credits ({dollars}) für diese Spielsitzung.",
+  "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session. The game is added to your Genex account as a private draft; none of its files are uploaded.":
+    "In dieser Vorschau antworten echte Modelle, bezahlt mit deinen Genex-Credits: höchstens {cap} Credits ({dollars}) für diese Spielsitzung. Das Spiel wird als privater Entwurf zu deinem Genex-Konto hinzugefügt; keine seiner Dateien wird hochgeladen.",
   Start: "Starten",
   "Starting real AI…": "Echte KI startet…",
   "The cap is used up": "Das Limit ist aufgebraucht",

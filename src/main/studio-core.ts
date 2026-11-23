@@ -66,7 +66,7 @@ import {
 } from "../shared/plugins.ts";
 import { EngineHostAction, type EngineLinkUndo, type EngineUndoSetUpArgs } from "../shared/game-engine.ts";
 import { viewStill, type ViewStillOptions } from "./core/view-still.ts";
-import { renameOnGenex } from "./core/genex-publish.ts";
+import { hostOnGenex, renameOnGenex } from "./core/genex-publish.ts";
 import { ToolPermissionBy } from "../shared/permissions.ts";
 import { type JobRecord, JobScopeKind, JobStopper } from "../shared/jobs.ts";
 import { recordJobEnded, recordJobStarted } from "./core/job-records.ts";
@@ -1440,6 +1440,7 @@ export class StudioCore {
         spawn: (request) => this.sandbox.spawnLongLived(request),
         signedIn: () => cli().signedIn(),
         hasDraft: (project) => cli().hasHostedProject(project),
+        host: (project) => hostOnGenex(this, project),
         liveAllowed: () => this.options.previewAiLive === true,
         emit: (state) => this.emit(UiEvent.PreviewAi, state),
         reloadLive: (project) => this.#previews.reloadLiveFor(project),

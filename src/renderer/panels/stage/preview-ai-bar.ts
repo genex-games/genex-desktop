@@ -35,11 +35,16 @@ export function capDollars(credits: number): string {
 export const PREVIEW_AI_WORDS = {
   practice: () => t("Practice answers (free, made up)"),
   realAi: () => t("Use real AI"),
-  confirm: (cap: number) =>
-    t(
-      "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.",
-      { cap: String(cap), dollars: capDollars(cap) },
-    ),
+  confirm: (cap: number, onGenex = true) =>
+    onGenex
+      ? t(
+          "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.",
+          { cap: String(cap), dollars: capDollars(cap) },
+        )
+      : t(
+          "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session. The game is added to your Genex account as a private draft; none of its files are uploaded.",
+          { cap: String(cap), dollars: capDollars(cap) },
+        ),
   capChoice: () => t("Most credits this play session may spend"),
   capOption: (cap: number) => String(cap),
   start: () => t("Start"),
@@ -62,8 +67,10 @@ const UNAVAILABLE_WORDS = {
   [PreviewAiUnavailable.SignedOut]: () =>
     t("Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on."),
   [PreviewAiUnavailable.NoDraft]: () =>
+    t("Real AI could not start: this game could not be added to your Genex account. Practice answers go on."),
+  [PreviewAiUnavailable.Terms]: () =>
     t(
-      "Real AI is billed to this game's draft on Genex, and it has none yet. Ask the chat to publish a draft, then try again. Practice answers go on.",
+      "Real AI needs Genex's updated terms accepted. Review them on genex.games, then try again. Practice answers go on.",
     ),
   [PreviewAiUnavailable.LaneOff]: () => t("Genex's real models are switched off right now. Practice answers go on."),
   [PreviewAiUnavailable.HelperFailed]: () => t("Real AI stopped. Practice answers go on."),
@@ -74,6 +81,7 @@ const UNAVAILABLE_WORDS = {
 const RETRIES: ReadonlySet<PreviewAiUnavailable> = new Set([
   PreviewAiUnavailable.SignedOut,
   PreviewAiUnavailable.NoDraft,
+  PreviewAiUnavailable.Terms,
   PreviewAiUnavailable.LaneOff,
   PreviewAiUnavailable.HelperFailed,
 ]);

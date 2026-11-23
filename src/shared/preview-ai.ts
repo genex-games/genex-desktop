@@ -2,7 +2,8 @@
  * Play-time models in Live (docs/product/builds-live.md): a game whose code calls Genex's models gets
  * a practice helper beside its preview (`genex llm practice`), which answers every call with made-up
  * text for free. In Live only, the person can switch that game to real models, paid from their own
- * Genex credits up to a cap they chose; the microphone is asked for in the same bar.
+ * Genex credits up to a cap they chose; a game that is not on their Genex account yet is put there
+ * on that Start, as a draft nobody sees. The microphone is asked for in the same bar.
  */
 
 /** How Live's model calls are answered now. Wire values: never rename one. */
@@ -26,8 +27,10 @@ export type PreviewAiMode = (typeof PreviewAiMode)[keyof typeof PreviewAiMode];
 export const PreviewAiUnavailable = {
   /** The app is not signed in to Genex. */
   SignedOut: "signed_out",
-  /** The game has no published draft on Genex, which real calls are billed to. */
+  /** The game is not on the person's Genex account, which real calls are billed to, and could not be put there. */
   NoDraft: "no_draft",
+  /** Genex's terms are still to accept, so the game could not be put on the person's account. */
+  Terms: "terms",
   /** Genex's model lane is off. */
   LaneOff: "lane_off",
   /** The helper failed to start or stopped; `error` holds the CLI's words or code. */
@@ -77,6 +80,8 @@ export interface PreviewAiState {
   heldCredits: number;
   /** The microphone's ask for this game. */
   mic: PreviewMicAsk;
+  /** Whether the game is on the person's Genex account. False: their Start for real models puts it there. */
+  onGenex: boolean;
 }
 
 /** A game's state before anything is known: no bar. */
@@ -89,4 +94,5 @@ export const noPreviewAi = (project: string): PreviewAiState => ({
   chargedCredits: 0,
   heldCredits: 0,
   mic: PreviewMicAsk.None,
+  onGenex: true,
 });

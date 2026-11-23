@@ -34,7 +34,13 @@ import {
   withBuild,
 } from "../../src/plugins/genex/cloud-build.ts";
 import { GenexTools } from "../../src/plugins/genex/adapter.ts";
-import { CloudBuildFailure, CloudBuildState, CloudSendState, type GenexCloudBuild } from "../../src/shared/genex.ts";
+import {
+  CloudBuildFailure,
+  CloudBuildState,
+  CloudSendState,
+  type GenexCloudBuild,
+  GenexHosting,
+} from "../../src/shared/genex.ts";
 import { type GenexFixtureApi, type GenexHandler, startGenexFixtureApi } from "../helpers/genex-fixture-api.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -1127,5 +1133,32 @@ describe("an app Genex builds and keeps for a publish", () => {
       genex.publishAppsOnly("seyda", [], "Seyda Neen", {}, undefined, ["mac"]),
       /no app for that system/,
     );
+  });
+});
+
+describe("a game put on Genex for real models in its preview", () => {
+  it("makes the game's project once, with nothing built, sent or published", async () => {
+    const { make, runs, workspace } = await toolsWithBuildCli({ api: await fixtureApi() });
+    const genex = make();
+    assert.deepEqual(await genex.host("seyda"), { hosting: GenexHosting.Hosted });
+    assert.deepEqual(words(await runs()), ["init"], "only the project is made");
+    const link = JSON.parse(await readFile(path.join(workspace, ".genex", "project.json"), "utf8")) as { id?: string };
+    assert.equal(link.id, "p1", "the publish workspace names the project real calls are billed to");
+    assert.deepEqual(await genex.host("seyda"), { hosting: GenexHosting.Hosted });
+    assert.equal(words(await runs()).length, 1, "a game already on Genex is asked nothing more");
+    assert.equal((await genex.publishView("seyda")).job, undefined, "no publish ran");
+  });
+
+  it("makes nothing before Genex's terms are accepted, or signed out", async () => {
+    const refusing = await fixtureApi((req, reply) => {
+      if (req.url.includes("legal")) return reply.json({ accepted: false });
+    });
+    const { make, runs } = await toolsWithBuildCli({ api: refusing });
+    assert.deepEqual(await make().host("seyda"), { hosting: GenexHosting.TermsPending });
+    assert.deepEqual(await runs(), [], "nothing made on Genex");
+    const signedOut = new GenexTools(path.join(await tmpDir("host-out"), "host"), refusing, {
+      credentials: { get: async () => null, set: async () => {}, clear: async () => {} },
+    });
+    await assert.rejects(signedOut.host("seyda"), /Connect the Genex plugin first/);
   });
 });

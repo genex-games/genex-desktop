@@ -12,6 +12,7 @@ import { describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { PreviewAiService, withPracticeKey } from "../../src/main/core/preview-ai.ts";
 import type { PracticeLaunch } from "../../src/main/core/genex-cli.ts";
+import { GenexHosting } from "../../src/shared/genex.ts";
 import { PreviewAiMode, type PreviewAiState, PreviewAiUnavailable } from "../../src/shared/preview-ai.ts";
 import { withGenexSdkImport } from "../../src/shared/genex-page.ts";
 import { codeCallsPlayTimeModels, gameCallsPlayTimeModels } from "../../src/substrate/project-shape.ts";
@@ -43,15 +44,27 @@ const listening = (port: number, mode: "mock" | "live") => ({
   mode,
 });
 
-/** A service whose helpers are scripted per kind, with what it launched, emitted and reloaded. */
+/** What the service is told when it asks Genex for a game's project: an outcome, or the error thrown. */
+type Hosting = GenexHosting | Error;
+
+/** A service whose helpers are scripted per kind, with what it launched, emitted, reloaded and put on Genex. */
 async function service(
-  options: { live?: Script; mock?: Script; allowed?: boolean; signedIn?: boolean; draft?: boolean } = {},
+  options: {
+    live?: Script;
+    mock?: Script;
+    allowed?: boolean;
+    signedIn?: boolean;
+    draft?: boolean;
+    hosting?: Hosting;
+  } = {},
 ) {
   const scratch = await tmpDir("studio-preview-ai-");
   const launches: Array<{ project: string; live: { maxCredits: number } | null }> = [];
   const states: PreviewAiState[] = [];
   const reloads: string[] = [];
   const pids: number[] = [];
+  const hosted: string[] = [];
+  let onGenex = options.draft ?? true;
   const ai = new PreviewAiService(
     {
       launch: async (project, live) => {
@@ -74,7 +87,14 @@ async function service(
         return { child, input: child.stdin };
       },
       signedIn: async () => options.signedIn ?? true,
-      hasDraft: async () => options.draft ?? true,
+      hasDraft: async () => onGenex,
+      host: async (project) => {
+        hosted.push(project);
+        const hosting = options.hosting ?? GenexHosting.Hosted;
+        if (hosting instanceof Error) throw hosting;
+        onGenex = hosting === GenexHosting.Hosted;
+        return hosting;
+      },
       liveAllowed: () => options.allowed ?? true,
       emit: (state) => states.push(state),
       reloadLive: async (project) => {
@@ -84,7 +104,7 @@ async function service(
     },
     LIVE,
   );
-  return { ai, launches, states, reloads, pids };
+  return { ai, launches, states, reloads, pids, hosted };
 }
 
 describe("practice answers in every preview", () => {
@@ -207,20 +227,64 @@ describe("real models in Live, approved once with a cap", () => {
     const cases = [
       { options: { allowed: false }, reason: PreviewAiUnavailable.NotHere },
       { options: { signedIn: false }, reason: PreviewAiUnavailable.SignedOut },
-      { options: { draft: false }, reason: PreviewAiUnavailable.NoDraft },
+      {
+        options: { draft: false, hosting: GenexHosting.TermsPending },
+        reason: PreviewAiUnavailable.Terms,
+      },
+      {
+        options: { draft: false, hosting: new Error("Genex did not answer") },
+        reason: PreviewAiUnavailable.NoDraft,
+        error: "Genex did not answer",
+      },
     ];
-    for (const { options, reason } of cases) {
+    for (const { options, reason, error = null } of cases) {
       const { ai, launches, reloads } = await service(options);
       try {
         const state = await ai.startRealModels("inn", 100);
         assert.equal(state.mode, PreviewAiMode.Unavailable);
         assert.equal(state.reason, reason);
+        assert.equal(state.error, error, `${reason}: Genex's own words, when it gave any`);
+        assert.equal(state.capCredits, null);
         await ai.keyFor(LIVE, "inn");
         assert.ok(
           launches.every((launch) => launch.live === null),
           `${reason}: nothing spends`,
         );
         assert.deepEqual(reloads, []);
+      } finally {
+        await ai.stopAll();
+      }
+    }
+  });
+
+  it("puts a game that is not on Genex there on the person's Start, then starts real models", async () => {
+    const { ai, launches, reloads, hosted, states } = await service({ draft: false });
+    try {
+      await ai.keyFor(LIVE, "inn");
+      assert.deepEqual(hosted, [], "practice answers ask Genex for nothing");
+      assert.equal(ai.state("inn").onGenex, false, "the bar knows its confirmation has to say so");
+      await ai.startRealModels("inn", 300);
+      assert.deepEqual(hosted, ["inn"], "the game's project is made once the person pressed Start");
+      assert.equal(await ai.keyFor(LIVE, "inn"), `genex_llm_practice=41001.${HEX}`, "Live plays on real models");
+      assert.equal(ai.state("inn").mode, PreviewAiMode.Live);
+      assert.equal(ai.state("inn").onGenex, true);
+      assert.deepEqual(launches.at(-1), { project: "inn", live: { maxCredits: 300 } });
+      assert.deepEqual(reloads, ["inn"]);
+      const starting = states.findIndex((state) => state.mode === PreviewAiMode.Starting);
+      assert.ok(starting !== -1, "the bar says real AI is starting while Genex is asked");
+      await ai.startRealModels("inn", 300);
+      assert.deepEqual(hosted, ["inn"], "a game already on Genex is not put there again");
+    } finally {
+      await ai.stopAll();
+    }
+  });
+
+  it("asks Genex for nothing where real models cannot start anyway", async () => {
+    for (const options of [{ allowed: false }, { signedIn: false }]) {
+      const { ai, hosted } = await service({ ...options, draft: false });
+      try {
+        await ai.startRealModels("inn", 100);
+        assert.deepEqual(hosted, []);
       } finally {
         await ai.stopAll();
       }

@@ -3826,6 +3826,7 @@ export default {
   "This game has an unlisted draft page": "此游戏有一个不公开列出的草稿页面",
   "This game has more files than the canvas lists.": "此游戏的文件比画布列出的更多。",
   "This game has no Mac, Windows or Linux app ready to publish": "这个游戏还没有可发布的 Mac、Windows 或 Linux 应用",
+  "This game could not be added to your Genex account": "无法把这个游戏添加到你的 Genex 账号",
   "This game has no Mac, Windows or Linux app ready to publish.": "此游戏没有可发布的 Mac、Windows 或 Linux 应用。",
   "This game has no Unity project": "这个游戏没有 Unity 项目",
   "This game has no Unity project.": "这个游戏没有 Unity 项目。",
@@ -6125,8 +6126,10 @@ export default {
   "Most credits this play session may spend": "这次游戏最多可用的积分",
   "Practice answers (free, made up)": "练习回答（免费、编的）",
   "Practice answers could not start: {error}": "练习回答没能启动：{error}",
-  "Real AI is billed to this game's draft on Genex, and it has none yet. Ask the chat to publish a draft, then try again. Practice answers go on.":
-    "真实 AI 会计费到这个游戏在 Genex 上的草稿，但它还没有草稿。让聊天发布一个草稿，然后再试一次。练习回答会继续。",
+  "Real AI could not start: this game could not be added to your Genex account. Practice answers go on.":
+    "真实 AI 没能启动：无法把这个游戏添加到你的 Genex 账号。练习回答会继续。",
+  "Real AI needs Genex's updated terms accepted. Review them on genex.games, then try again. Practice answers go on.":
+    "使用真实 AI 需要先接受更新后的 Genex 条款。在 genex.games 上查看后再试一次。练习回答会继续。",
   "Real AI is not available in this test profile. Practice answers go on.":
     "这个测试配置里不能用真实 AI。练习回答会继续。",
   "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
@@ -6135,6 +6138,8 @@ export default {
   "Real AI · {spent} of {cap} credits": "真实 AI · {spent} / {cap} 积分",
   "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
     "这个预览里由真实模型回答，用你的 Genex 积分付费：这次游戏最多 {cap} 积分（{dollars}）。",
+  "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session. The game is added to your Genex account as a private draft; none of its files are uploaded.":
+    "这个预览里由真实模型回答，用你的 Genex 积分付费：这次游戏最多 {cap} 积分（{dollars}）。游戏会作为私密草稿添加到你的 Genex 账号；它的文件一个都不会上传。",
   Start: "开始",
   "Starting real AI…": "正在启动真实 AI…",
   "The cap is used up": "额度用完了",

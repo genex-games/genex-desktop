@@ -10,7 +10,7 @@
  */
 import { CoreFact, hasFact } from "../../shared/project-facts.ts";
 import { publishesAsWebGame } from "../../shared/project-workspace.ts";
-import { cleanGenexTitle, GENEX_PLUGIN_ID, GenexAction } from "../../shared/genex.ts";
+import { cleanGenexTitle, GENEX_PLUGIN_ID, GenexAction, GenexHosting } from "../../shared/genex.ts";
 import { type ExportReview, type PluginBinding, PluginSourceKind } from "../../shared/plugins.ts";
 import type { StudioCore } from "../studio-core.ts";
 import { CLOUD_PLATFORMS } from "../../plugins/genex/cloud-build.ts";
@@ -28,6 +28,7 @@ const MESSAGE = {
   NotWebGame: (title: string) => t("{title} isn't a web game, so Genex can't publish it yet.", { title }),
   NoApps: () => t("This game has no Mac, Windows or Linux app ready to publish"),
   NoCloudPlatform: () => t("Genex builds only Windows apps on its own computers"),
+  NotHosted: () => t("This game could not be added to your Genex account"),
 } as const;
 
 /** Why a game can't be published at all, by code: callers act on it, never on its words. */
@@ -219,6 +220,25 @@ export async function cloudBuildFromDialog(
   const binding = await boundGame(core, project);
   const args = { platform, ...(keep === true ? { keep: true } : {}) };
   await core.plugins.action(GENEX_PLUGIN_ID, GenexAction.CloudBuild, args, binding);
+}
+
+/** How putting a game on Genex went, when the plugin's answer says so in a word Studio knows. */
+function hostingOf(answer: unknown): GenexHosting | null {
+  if (typeof answer !== "object" || answer === null || !("hosting" in answer)) return null;
+  return Object.values(GenexHosting).find((hosting) => hosting === answer.hosting) ?? null;
+}
+
+/**
+ * Put `project` on the person's Genex account for real play-time models in Live: a draft nobody
+ * sees, with none of the game's files sent, which those calls are billed to. Start in Live's AI bar
+ * is the consent, as the confirmation above it says. Refused for a game Studio does not open, signed
+ * out, or when Genex's answer says neither that the game is there nor that its terms wait.
+ */
+export async function hostOnGenex(core: BindingCore, project: unknown): Promise<GenexHosting> {
+  const binding = await boundGame(core, project);
+  const hosting = hostingOf(await core.plugins.action(GENEX_PLUGIN_ID, GenexAction.Host, {}, binding));
+  if (hosting === null) throw new Error(MESSAGE.NotHosted());
+  return hosting;
 }
 
 /**

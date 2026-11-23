@@ -388,6 +388,7 @@ const ACTIONS: Record<string, Action> = {
     if (!ctx.project) throw new Error(MESSAGE.OpenProject());
     return genex.cloudBuild(ctx.project, args.platform, ctx.directory, args.keep === true);
   },
+  [GenexAction.Host]: withProject((genex, project) => genex.host(project)),
   [GenexAction.PublishRemoveWeb]: withProject((genex, project) => genex.publishRemoveWeb(project)),
   [GenexAction.PublishRemoveApp]: withProject((genex, project, args) => genex.publishRemoveApp(project, args.platform)),
   [GenexAction.PublishName]: withProject((genex, project, args) =>
