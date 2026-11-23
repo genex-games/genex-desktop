@@ -92,8 +92,7 @@ gets no such label.
   `enabled: false` wherever voice is not served; the game then takes typed input and shows its
   lines as text, with the small visible label this preface asks for ("Voice: not available here").
   Build and check that path first.
-- Where Studio's preview serves voice (its catalog says `enabled: true`), the practice helper
-  answers it free: `transcribe()` returns made-up words and `speak()` a soft placeholder babble as
+- Studio's preview serves voice through the practice helper, free: `transcribe()` returns made-up words and `speak()` a soft placeholder babble as
   long as the line. That proves the wiring (the recording, the queue, the subtitles, an
   interruption), never how a voice sounds. In Live, once the person presses Use real AI, real voices
   answer inside the same credit cap; a real voice call there costs at least one credit.
@@ -102,11 +101,12 @@ gets no such label.
   three sentences, ask for the `standard` tier unless the person asks for the best voice, and
   estimate honestly: `estimatedCharactersPerPeriod` is the lines a period holds times their length,
   `estimatedSecondsPerPeriod` the seconds a player talks.
-- A game that records the player declares the microphone for its Genex page. A draft or gallery
-  publish reads `createVoiceRecorder(` in the game's source and prints what the build is given
-  (`On its Genex page this build is given: microphone.`); when that line is missing, declare it in
-  the game's `package.json`: `"genex": { "capabilities": ["microphone"] }`. An undeclared build is
-  refused the microphone on its Genex page without the player being asked. The rules are in
+- A game that records the player always declares the microphone in its `package.json`:
+  `"genex": { "capabilities": ["microphone"] }`. Studio's Live reads that line to offer the person
+  the microphone, so without it `createVoiceRecorder().start()` is refused in Live however the game
+  is written. A draft or gallery publish prints what the build is given
+  (`On its Genex page this build is given: microphone.`); an undeclared build is refused the
+  microphone on its Genex page without the player being asked. The rules are in
   `genex__skill {"name":"genex-threejs-embed-auth","file":"skills/genex-threejs-embed-auth/references/shells.md"}`.
 - Studio's Live preview grants the microphone to a game that declares it, once the person allows it
   in Live's bar. Your own preview windows never get it and the Genex app never grants it, so you
@@ -118,7 +118,7 @@ gets no such label.
 
 ## Not in Studio yet
 
-These parts of Genex CLI 1.44.0 are left out of the card below because Studio cannot run them yet:
+These parts of Genex CLI 1.45.2 are left out of the card below because Studio cannot run them yet:
 
 - `llm bench` takes no `system` or `messages` option here. Put the system text and a typical
   history into the bench prompt itself, so the measured size is the real call's.
@@ -143,7 +143,7 @@ player text) is `play-time-models` in the `genex-recommendations` plugin.
 
 Other commands map onto Studio tools as the `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream genex-demo@30b905bf4/templates/skills/genex-llm-in-games/SKILL.md v1.45.2 sha256 a82075f1266ce9225eaa99c7aa558f1d72e8cd3571efc8327bcafc9ca4060546 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-llm-in-games/SKILL.md v1.45.2 sha256 a82075f1266ce9225eaa99c7aa558f1d72e8cd3571efc8327bcafc9ca4060546 -->
 ---
 name: genex-llm-in-games
 description: Call a language model from a running game — NPCs that answer in their own words, AI opponents, teammates and agents that plan and act, a narrator or game master, a judge of what the player typed, quests written per save — and let players talk to characters that answer aloud. The PLAYER pays and approves on a Genex surface. Covers one-time calls and standing budgets, the ceiling, streaming, the judge, voice and every refusal.
