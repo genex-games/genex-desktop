@@ -8,7 +8,7 @@
  */
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { mkdir, readFile, realpath, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -155,7 +155,9 @@ describe("sandboxed spawn", () => {
     assert.equal(after.stdout.trim(), "403", "the domain closes again when the run ends");
   });
 
-  it("a run's domain stays open while another sandbox opens, closes and goes away", async () => {
+  it("a run's domain stays open while another sandbox opens, closes and goes away", {
+    skip: process.platform === "win32" ? "Windows' grant session unions its members (windows-sandbox.test.ts)" : false,
+  }, async () => {
     // Antigravity's sign-in waits in a sandbox of its own with Google open; a status check in
     // another sandbox opened and closed the same host, and the pasted code met the proxy's 403.
     const host = "studio-shared-probe.invalid";
@@ -179,6 +181,7 @@ describe("sandboxed spawn", () => {
       await writeFile(path.join(workspace, "ask"), "");
     }
     const result = await waiting;
+    await rm(path.join(workspace, "ask"), { force: true });
     assert.equal(
       result.stdout.trim(),
       "502",

@@ -1379,9 +1379,9 @@ export class ProcessSandbox {
    * runs never close one another's, and every change pushes the whole effective config, with every
    * other sandbox's domains too (`#sharedConfig`).
    *
-   * Process-wide also means any other sandboxed process running meanwhile can reach the domain.
-   * The one caller is the package install the user pressed a button for, against the npm
-   * registry; that exposure is accepted (see "Residual risks" in docs/agent/architecture.md).
+   * Process-wide also means any other sandboxed process running meanwhile can reach the domain:
+   * a package install's registry, a Genex CLI call's API, a coding CLI's hosts for its session.
+   * That exposure is accepted (see "Residual risks" in docs/agent/architecture.md).
    */
   async #openDomains(policy: Partial<SandboxPolicy> | undefined): Promise<() => void> {
     const extra = [...new Set(policy?.allowedDomains ?? [])].filter(

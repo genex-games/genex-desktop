@@ -224,6 +224,8 @@ describe("sandboxes sharing one proxy keep each other's domains", () => {
       timeoutMs: 30_000,
       policy: { allowedDomains: [GOOGLE] },
     });
+    const code = () => writeFile(path.join(signIn.root, "code"), "");
+    t.after(code);
     await fake.firstWrap;
     const check = await sandboxWith(t, fake);
     assert.deepEqual(fake.domains(), [GOOGLE], "a new sandbox's start keeps the open sign-in's domain");
@@ -231,7 +233,7 @@ describe("sandboxes sharing one proxy keep each other's domains", () => {
     assert.deepEqual(fake.domains(), [GOOGLE], "the check's close leaves the sign-in's domain open");
     await check.sandbox.dispose();
     assert.deepEqual(fake.domains(), [GOOGLE], "and so does the check's sandbox going away");
-    await writeFile(path.join(signIn.root, "code"), "");
+    await code();
     assert.equal((await waiting).code, 0);
     assert.deepEqual(fake.domains(), [], "closed once the sign-in ends");
   });
@@ -246,13 +248,15 @@ describe("sandboxes sharing one proxy keep each other's domains", () => {
       timeoutMs: 30_000,
       policy: { allowedDomains: [GOOGLE] },
     });
+    const code = () => writeFile(path.join(signIn.root, "code"), "");
+    t.after(code);
     await fake.firstWrap;
     const other = await sandboxWith(t, fake);
     other.sandbox.allowWrite(path.join(other.root, "later"));
     assert.deepEqual(fake.domains(), [GOOGLE], "another sandbox's new folder keeps it");
     await other.sandbox.run({ command: "true", cwd: other.root, policy: { allowedDomains: [REGISTRY] } });
     assert.deepEqual(fake.domains(), [GOOGLE], "another sandbox's install keeps it, and closes its own");
-    await writeFile(path.join(signIn.root, "code"), "");
+    await code();
     await waiting;
     other.sandbox.allowWrite(path.join(other.root, "later-still"));
     assert.deepEqual(fake.domains(), [], "closed once the sign-in ends");
