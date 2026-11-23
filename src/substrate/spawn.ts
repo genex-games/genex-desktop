@@ -829,7 +829,13 @@ export class ProcessSandbox {
     }
     const runtime = this.#manager;
     const hold = runtime ? runtimeHolds.get(runtime) : undefined;
-    if (!runtime || !hold?.holders.delete(this) || hold.holders.size > 0) return;
+    if (!runtime || !hold?.holders.delete(this)) return;
+    // The domains only this instance held close with it; the sandboxes left keep theirs.
+    const left = [...hold.holders].at(-1);
+    if (left) {
+      left.#pushConfig();
+      return;
+    }
     // A sandbox created meanwhile joins before it waits for this, and so keeps the runtime.
     hold.released = hold.released.then(async () => {
       if (hold.holders.size === 0) await runtime.reset().catch(() => {});
@@ -885,7 +891,7 @@ export class ProcessSandbox {
     // Join first, then let a reset the last sandbox out already started finish.
     hold.holders.add(this);
     await hold.released;
-    const config = this.toRuntimeConfig(this.policy);
+    const config = this.#sharedConfig(hold);
     await SandboxManager.initialize(config).catch((error: unknown) => {
       hold.holders.delete(this);
       throw asSetupProblem(error);
@@ -894,7 +900,25 @@ export class ProcessSandbox {
     // necessarily replace the first one's policy. Push the config explicitly, and — more
     // importantly — pass this instance's policy as a per-spawn overlay (see `#overlay`), so an
     // instance is always authoritative for the processes it starts.
-    SandboxManager.updateConfig?.(config);
+    SandboxManager.updateConfig?.(this.#sharedConfig(hold));
+  }
+
+  /**
+   * macOS and Linux: this instance's policy for the process-wide runtime, its network the domains
+   * of every sandbox sharing it. The proxy judges every request against that one list, so an
+   * instance that pushed only its own would close another's in flight: a status check ending
+   * while Antigravity's sign-in waited for its code took Google's token server from it. Windows'
+   * grant session unions its members' the same way.
+   */
+  #sharedConfig(hold: RuntimeHold | undefined): import("@anthropic-ai/sandbox-runtime").SandboxRuntimeConfig {
+    const holders = hold?.holders.size ? [...hold.holders] : [this];
+    const domains = [...new Set(holders.flatMap((holder) => holder.#ownDomains()))];
+    return this.toRuntimeConfig({ ...this.policy, allowedDomains: domains });
+  }
+
+  /** This instance's own domains: its policy's and every one a run in flight has opened. */
+  #ownDomains(): string[] {
+    return [...this.policy.allowedDomains, ...this.#opened.keys()];
   }
 
   /**
@@ -964,7 +988,7 @@ export class ProcessSandbox {
   #windowsSessionConfig(): import("@anthropic-ai/sandbox-runtime").SandboxRuntimeConfig {
     const config = this.toRuntimeConfig({
       ...this.policy,
-      allowedDomains: [...this.policy.allowedDomains, ...this.#opened.keys()],
+      allowedDomains: this.#ownDomains(),
     });
     return { ...config, windows: { srtWin: { path: srtWinPath() } } };
   }
@@ -1351,7 +1375,8 @@ export class ProcessSandbox {
    * PH-3: open a run's extra domains at the filtering proxy for as long as the run lasts. The
    * proxy judges every request against sandbox-runtime's process-wide config, never the per-spawn
    * overlay, so the overlay alone never opened anything. Openings are counted, so overlapping
-   * runs never close one another's, and every change pushes the whole effective config.
+   * runs never close one another's, and every change pushes the whole effective config, with every
+   * other sandbox's domains too (`#sharedConfig`).
    *
    * Process-wide also means any other sandboxed process running meanwhile can reach the domain.
    * The one caller is the package install the user pressed a button for, against the npm
@@ -1384,9 +1409,8 @@ export class ProcessSandbox {
       this.#windows.session.network(this, this.#windowsSessionConfig());
       return;
     }
-    this.#manager?.updateConfig?.(
-      this.toRuntimeConfig({ ...this.policy, allowedDomains: [...this.policy.allowedDomains, ...this.#opened.keys()] }),
-    );
+    const runtime = this.#manager;
+    runtime?.updateConfig?.(this.#sharedConfig(runtimeHolds.get(runtime)));
   }
 
   async #runInside(request: RunRequest): Promise<RunResult> {

@@ -139,6 +139,10 @@ scope: Codex's cover pre-existing files, never directories; the Claude hook matc
   install's length (counted, restored in `finally`). The Install packages button, `genex__package`
   (an exact-pinned `GENEX_GAME_PACKAGES` entry) and a remix's script-free `installGuarded` open
   it. No build starts meanwhile; agents' commands still reach it.
+- **A coding CLI's hosts are open to every sandboxed process while one of its sandboxes runs.**
+  The allow-list is the union of every running sandbox's on macOS and Linux, as Windows' grant
+  session's is, so a sandbox that ends never closes a host another still needs (Antigravity's
+  sign-in waiting for its code beside a status check).
 - **A remix's setup scripts run** once trusted (Run setup scripts).
 - **Builds are confined on macOS and Linux only, and for writes**: a build can copy home files
   into the output Publish uploads.

@@ -155,6 +155,35 @@ describe("sandboxed spawn", () => {
     assert.equal(after.stdout.trim(), "403", "the domain closes again when the run ends");
   });
 
+  it("a run's domain stays open while another sandbox opens, closes and goes away", async () => {
+    // Antigravity's sign-in waits in a sandbox of its own with Google open; a status check in
+    // another sandbox opened and closed the same host, and the pasted code met the proxy's 403.
+    const host = "studio-shared-probe.invalid";
+    const waiting = sandbox.run({
+      command: `sleep 2; curl -s -m 8 -o /dev/null -w '%{http_code}' http://${host}/`,
+      cwd: workspace,
+      timeoutMs: 30_000,
+      policy: { allowedDomains: [host] },
+    });
+    const root = await tmpDir("studio-sandbox-check-");
+    const check = await ProcessSandbox.create({
+      writableRoots: [root],
+      scratchDir: path.join(root, "scratch"),
+      secretPaths: [],
+    });
+    try {
+      await check.run({ command: "true", cwd: root, timeoutMs: 30_000, policy: { allowedDomains: [host] } });
+    } finally {
+      await check.dispose();
+    }
+    const result = await waiting;
+    assert.equal(
+      result.stdout.trim(),
+      "502",
+      `the waiting run still reaches its host: ${result.stdout} ${result.stderr}`,
+    );
+  });
+
   it("SEC-2: a sandboxed command sees none of the studio's credentials", async () => {
     process.env.STUDIO_SANDBOX_PROBE_TOKEN = "sandbox-token-leak";
     try {
