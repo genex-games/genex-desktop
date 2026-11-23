@@ -830,10 +830,11 @@ export class ProcessSandbox {
     const runtime = this.#manager;
     const hold = runtime ? runtimeHolds.get(runtime) : undefined;
     if (!runtime || !hold?.holders.delete(this)) return;
-    // The domains only this instance held close with it; the sandboxes left keep theirs.
+    // The domains only this instance held close with it; the sandboxes left keep theirs. Pushed
+    // straight to the runtime: one still starting has no manager of its own yet.
     const left = [...hold.holders].at(-1);
     if (left) {
-      left.#pushConfig();
+      runtime.updateConfig?.(left.#sharedConfig(hold));
       return;
     }
     // A sandbox created meanwhile joins before it waits for this, and so keeps the runtime.

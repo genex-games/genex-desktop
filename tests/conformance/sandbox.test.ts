@@ -160,7 +160,8 @@ describe("sandboxed spawn", () => {
     // another sandbox opened and closed the same host, and the pasted code met the proxy's 403.
     const host = "studio-shared-probe.invalid";
     const waiting = sandbox.run({
-      command: `sleep 2; curl -s -m 8 -o /dev/null -w '%{http_code}' http://${host}/`,
+      // It asks only once the test says so: after the other sandbox has gone.
+      command: `while [ ! -f ask ]; do sleep 0.05; done; curl -s -m 8 -o /dev/null -w '%{http_code}' http://${host}/`,
       cwd: workspace,
       timeoutMs: 30_000,
       policy: { allowedDomains: [host] },
@@ -175,6 +176,7 @@ describe("sandboxed spawn", () => {
       await check.run({ command: "true", cwd: root, timeoutMs: 30_000, policy: { allowedDomains: [host] } });
     } finally {
       await check.dispose();
+      await writeFile(path.join(workspace, "ask"), "");
     }
     const result = await waiting;
     assert.equal(

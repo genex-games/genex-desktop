@@ -10,6 +10,7 @@
  * through `%TEMP%` and held other test files' folders open while they removed them.
  */
 import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it, type TestContext } from "node:test";
 import { ProcessSandbox, type SandboxRuntime } from "../../src/substrate/spawn.ts";
@@ -216,9 +217,11 @@ describe("sandboxes sharing one proxy keep each other's domains", () => {
   }, async (t) => {
     const fake = fakeRuntime();
     const signIn = await sandboxWith(t, fake);
+    // The sign-in waits for the code, here a file the test writes once it has looked.
     const waiting = signIn.sandbox.run({
-      command: "sleep 0.4",
+      command: "while [ ! -f code ]; do sleep 0.05; done",
       cwd: signIn.root,
+      timeoutMs: 30_000,
       policy: { allowedDomains: [GOOGLE] },
     });
     await fake.firstWrap;
@@ -228,6 +231,7 @@ describe("sandboxes sharing one proxy keep each other's domains", () => {
     assert.deepEqual(fake.domains(), [GOOGLE], "the check's close leaves the sign-in's domain open");
     await check.sandbox.dispose();
     assert.deepEqual(fake.domains(), [GOOGLE], "and so does the check's sandbox going away");
+    await writeFile(path.join(signIn.root, "code"), "");
     assert.equal((await waiting).code, 0);
     assert.deepEqual(fake.domains(), [], "closed once the sign-in ends");
   });
@@ -235,9 +239,11 @@ describe("sandboxes sharing one proxy keep each other's domains", () => {
   it("another sandbox's new folder or install keeps a running sign-in's domain open", { skip }, async (t) => {
     const fake = fakeRuntime();
     const signIn = await sandboxWith(t, fake);
+    // The sign-in waits for the code, here a file the test writes once it has looked.
     const waiting = signIn.sandbox.run({
-      command: "sleep 0.4",
+      command: "while [ ! -f code ]; do sleep 0.05; done",
       cwd: signIn.root,
+      timeoutMs: 30_000,
       policy: { allowedDomains: [GOOGLE] },
     });
     await fake.firstWrap;
@@ -246,6 +252,7 @@ describe("sandboxes sharing one proxy keep each other's domains", () => {
     assert.deepEqual(fake.domains(), [GOOGLE], "another sandbox's new folder keeps it");
     await other.sandbox.run({ command: "true", cwd: other.root, policy: { allowedDomains: [REGISTRY] } });
     assert.deepEqual(fake.domains(), [GOOGLE], "another sandbox's install keeps it, and closes its own");
+    await writeFile(path.join(signIn.root, "code"), "");
     await waiting;
     other.sandbox.allowWrite(path.join(other.root, "later-still"));
     assert.deepEqual(fake.domains(), [], "closed once the sign-in ends");
