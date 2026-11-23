@@ -24,6 +24,9 @@ folder listing wins. Rules for tests are in [tests/AGENTS.md](../AGENTS.md).
   model provider, no sign-in), a command that may ask to run outside the sandbox, and a one-shot
   answer (`startFakeAnswer`, an Auto check's verdict). `fake-xai-responses.ts`: the same for the real Grok Build CLI over
   xAI's (Grok's session service stood in for, signed in with a made-up token in a test's own home).
+  `fake-openai-chat.ts`: the same for the real Pi CLI over OpenAI's chat completions (a provider in
+  a test's own Pi folder, signed in with a made-up key), and for the real OpenCode 2.x CLI (a
+  provider in a test's own OpenCode config).
 - `snapshot-fixtures.ts`: dirty, untracked and nested user repositories.
 - `unreal-moment-bus.ts`: a fake of Genex's hook bus that plans each moment from a plugin manifest;
   `unreal-editor-stand-in.ts`: the editor the Unreal plugin's queue talks to;
@@ -113,6 +116,9 @@ folder listing wins. Rules for tests are in [tests/AGENTS.md](../AGENTS.md).
 - `failure-codes.ts`: the analytics failure-code suites' hostile inputs (words, paths, Node codes
   and ids that must never reach an event property, thrown values that must read as no code) and
   `crossed`, a failure carried across IPC as the app carries it (main's `handle`, then the preload).
+- `links.ts`: `linkFolder` and `linkFile` for a test that must also run on Windows, where a folder
+  is linked with a junction (no privilege needed) and a linked file can be made only where
+  `FILE_LINKS` says so; a case about a linked file joins its table behind that check.
 - `processes.ts`: `running(pid)`, whether a process still runs. A test that proves a stop left
   nothing behind asks it, not `process.kill(pid, 0)`, which also finds a process that exited but
   is not reaped yet.

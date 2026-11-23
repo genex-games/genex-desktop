@@ -138,3 +138,19 @@ export function useWidthGlide(ref: RefObject<HTMLElement | null>, text: string):
     };
   }, [text]);
 }
+
+/** The shimmer's keyframes (theme.css `.chat-status-shimmer`). */
+const SWEEP_ANIMATION = "shimmer-sweep";
+
+/**
+ * Keeps every shimmer inside `ref` on one clock, the page's: a sweep that starts (its line drawn
+ * anew, or shimmering again after a wait) carries on from where every other one is, never back
+ * from its start. Runs after each render, since a render is what starts one.
+ */
+export function useSharedSweep(ref: RefObject<HTMLElement | null>): void {
+  useLayoutEffect(() => {
+    for (const animation of ref.current?.getAnimations({ subtree: true }) ?? [])
+      if (animation instanceof CSSAnimation && animation.animationName === SWEEP_ANIMATION && animation.startTime !== 0)
+        animation.startTime = 0;
+  });
+}

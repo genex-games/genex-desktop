@@ -213,6 +213,13 @@ export interface SandboxOptions {
    */
   ownHome?: readonly string[];
   /**
+   * The sign-in home of the one CLI that runs inside this sandbox and reads it (Pi, whose settings,
+   * models and extensions a session must never rewrite): out of the credential read and write
+   * denies, and never a write grant — what a session writes there (Pi's transcripts and the
+   * folder that stands for Pi's own) it must name in `writableRoots`.
+   */
+  readableHome?: readonly string[];
+  /**
    * macOS: system services the one CLI that runs inside this sandbox needs beyond sandbox-runtime's
    * own list. Only a name in `SandboxMachService` is opened; any other is dropped.
    */
@@ -397,6 +404,8 @@ function windowsGapProblem(gaps: readonly WindowsSetupGap[]): SandboxProblem | n
  * check does not explain, or a check that fails itself, stays the error it was.
  */
 async function asWindowsSetupProblem(error: unknown, setupGaps: () => Promise<WindowsSetupGap[]>): Promise<unknown> {
+  // The session already named what Set up does (a sandbox user Windows will not sign in).
+  if (error instanceof SandboxUnavailableError) return error;
   const typed = asSetupProblem(error);
   if (typed !== error) return typed;
   const problem = windowsGapProblem(await setupGaps().catch((): WindowsSetupGap[] => []));
@@ -604,6 +613,22 @@ export function claudeFoldersIn(folders: readonly string[]): string[] {
 }
 
 /**
+ * Write denies on a game's own settings for a provider's CLI (`.grok`, `.cursor`, `opencode.json`,
+ * `.opencode`, `.agents`, `.pi`): a later session in the game loads them, so no session may plant them.
+ * On Linux sandbox-runtime guards a deny path that is not there with a stand-in device file in its
+ * place while the session runs, and the build's `git add -A` refuses a path that is no regular
+ * file: so there only a path that exists now is denied, as {@link claudeFolderDenyWrites} names
+ * `.claude`, and nothing there stops a session making settings a game does not have yet.
+ */
+export function gameSettingsDenyWrites(
+  paths: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+  exists: (p: string) => boolean = existsSync,
+): string[] {
+  return platform === StudioPlatform.Linux ? paths.filter((p) => exists(p)) : [...paths];
+}
+
+/**
  * The macOS system services a sandbox may be given on top of sandbox-runtime's own list. A value is
  * the service's own name: never rename one.
  */
@@ -633,6 +658,30 @@ function ownCredentialHomes(named: readonly string[], secretPaths: readonly stri
     .filter((dir) => path.isAbsolute(dir))
     .map((dir) => path.resolve(dir))
     .filter((dir) => homes.includes(dir) && !secretPaths.includes(dir));
+}
+
+/**
+ * The policy a sandbox starts with: its write grants, its named denies, and the credential homes it
+ * exempts — the ones a CLI writes (`ownHome`) or only reads (`readableHome`).
+ */
+function sandboxPolicy(options: SandboxOptions, scratchDir: string, platform: NodeJS.Platform): SandboxPolicy {
+  const own = ownCredentialHomes(options.ownHome ?? [], options.secretPaths);
+  const readable = ownCredentialHomes(options.readableHome ?? [], options.secretPaths);
+  const exempt = [...own, ...readable];
+  const notExempt = (dir: string) => !exempt.includes(dir);
+  return {
+    allowedDomains: [],
+    allowLocalBinding: true,
+    allowWrite: [...options.writableRoots, scratchDir, ...own],
+    allowRead: options.readableRoots ?? [],
+    denyRead: [...baseDenyRead(os.homedir(), platform).filter(notExempt), ...options.secretPaths],
+    denyWrite: [
+      ...baseDenyWrite(os.homedir(), platform).filter(notExempt),
+      ...options.secretPaths,
+      ...(options.denyWrite ?? []),
+    ],
+    machServices: ownMachServices(options.machServices),
+  };
 }
 
 export class ProcessSandbox {
@@ -670,21 +719,7 @@ export class ProcessSandbox {
     await mkdir(options.scratchDir, { recursive: true });
     // Windows: the long path, since srt-win and Git Credential Manager trip over 8.3 short names.
     const scratchDir = longPath(options.scratchDir, platform);
-    const own = ownCredentialHomes(options.ownHome ?? [], options.secretPaths);
-    const notOwn = (dir: string) => !own.includes(dir);
-    const policy: SandboxPolicy = {
-      allowedDomains: [],
-      allowLocalBinding: true,
-      allowWrite: [...options.writableRoots, scratchDir, ...own],
-      allowRead: options.readableRoots ?? [],
-      denyRead: [...baseDenyRead(os.homedir(), platform).filter(notOwn), ...options.secretPaths],
-      denyWrite: [
-        ...baseDenyWrite(os.homedir(), platform).filter(notOwn),
-        ...options.secretPaths,
-        ...(options.denyWrite ?? []),
-      ],
-      machServices: ownMachServices(options.machServices),
-    };
+    const policy = sandboxPolicy(options, scratchDir, platform);
     const sandbox = new ProcessSandbox(policy, options.enabled ?? true, scratchDir, platform);
     sandbox.#toolPath = options.toolPath ?? null;
     sandbox.#runtime = options.runtime ?? null;
@@ -794,7 +829,14 @@ export class ProcessSandbox {
     }
     const runtime = this.#manager;
     const hold = runtime ? runtimeHolds.get(runtime) : undefined;
-    if (!runtime || !hold?.holders.delete(this) || hold.holders.size > 0) return;
+    if (!runtime || !hold?.holders.delete(this)) return;
+    // The domains only this instance held close with it; the sandboxes left keep theirs. Pushed
+    // straight to the runtime: one still starting has no manager of its own yet.
+    const left = [...hold.holders].at(-1);
+    if (left) {
+      runtime.updateConfig?.(left.#sharedConfig(hold));
+      return;
+    }
     // A sandbox created meanwhile joins before it waits for this, and so keeps the runtime.
     hold.released = hold.released.then(async () => {
       if (hold.holders.size === 0) await runtime.reset().catch(() => {});
@@ -850,7 +892,7 @@ export class ProcessSandbox {
     // Join first, then let a reset the last sandbox out already started finish.
     hold.holders.add(this);
     await hold.released;
-    const config = this.toRuntimeConfig(this.policy);
+    const config = this.#sharedConfig(hold);
     await SandboxManager.initialize(config).catch((error: unknown) => {
       hold.holders.delete(this);
       throw asSetupProblem(error);
@@ -859,7 +901,25 @@ export class ProcessSandbox {
     // necessarily replace the first one's policy. Push the config explicitly, and — more
     // importantly — pass this instance's policy as a per-spawn overlay (see `#overlay`), so an
     // instance is always authoritative for the processes it starts.
-    SandboxManager.updateConfig?.(config);
+    SandboxManager.updateConfig?.(this.#sharedConfig(hold));
+  }
+
+  /**
+   * macOS and Linux: this instance's policy for the process-wide runtime, its network the domains
+   * of every sandbox sharing it. The proxy judges every request against that one list, so an
+   * instance that pushed only its own would close another's in flight: a status check ending
+   * while Antigravity's sign-in waited for its code took Google's token server from it. Windows'
+   * grant session unions its members' the same way.
+   */
+  #sharedConfig(hold: RuntimeHold | undefined): import("@anthropic-ai/sandbox-runtime").SandboxRuntimeConfig {
+    const holders = hold?.holders.size ? [...hold.holders] : [this];
+    const domains = [...new Set(holders.flatMap((holder) => holder.#ownDomains()))];
+    return this.toRuntimeConfig({ ...this.policy, allowedDomains: domains });
+  }
+
+  /** This instance's own domains: its policy's and every one a run in flight has opened. */
+  #ownDomains(): string[] {
+    return [...this.policy.allowedDomains, ...this.#opened.keys()];
   }
 
   /**
@@ -929,7 +989,7 @@ export class ProcessSandbox {
   #windowsSessionConfig(): import("@anthropic-ai/sandbox-runtime").SandboxRuntimeConfig {
     const config = this.toRuntimeConfig({
       ...this.policy,
-      allowedDomains: [...this.policy.allowedDomains, ...this.#opened.keys()],
+      allowedDomains: this.#ownDomains(),
     });
     return { ...config, windows: { srtWin: { path: srtWinPath() } } };
   }
@@ -1316,11 +1376,12 @@ export class ProcessSandbox {
    * PH-3: open a run's extra domains at the filtering proxy for as long as the run lasts. The
    * proxy judges every request against sandbox-runtime's process-wide config, never the per-spawn
    * overlay, so the overlay alone never opened anything. Openings are counted, so overlapping
-   * runs never close one another's, and every change pushes the whole effective config.
+   * runs never close one another's, and every change pushes the whole effective config, with every
+   * other sandbox's domains too (`#sharedConfig`).
    *
-   * Process-wide also means any other sandboxed process running meanwhile can reach the domain.
-   * The one caller is the package install the user pressed a button for, against the npm
-   * registry; that exposure is accepted (see "Residual risks" in docs/agent/architecture.md).
+   * Process-wide also means any other sandboxed process running meanwhile can reach the domain:
+   * a package install's registry, a Genex CLI call's API, a coding CLI's hosts for its session.
+   * That exposure is accepted (see "Residual risks" in docs/agent/architecture.md).
    */
   async #openDomains(policy: Partial<SandboxPolicy> | undefined): Promise<() => void> {
     const extra = [...new Set(policy?.allowedDomains ?? [])].filter(
@@ -1349,9 +1410,8 @@ export class ProcessSandbox {
       this.#windows.session.network(this, this.#windowsSessionConfig());
       return;
     }
-    this.#manager?.updateConfig?.(
-      this.toRuntimeConfig({ ...this.policy, allowedDomains: [...this.policy.allowedDomains, ...this.#opened.keys()] }),
-    );
+    const runtime = this.#manager;
+    runtime?.updateConfig?.(this.#sharedConfig(runtimeHolds.get(runtime)));
   }
 
   async #runInside(request: RunRequest): Promise<RunResult> {

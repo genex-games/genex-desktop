@@ -1,6 +1,7 @@
 /**
- * A delivered sound, played where it is: one quiet row in the chat (`AudioStrip`) and a tile on the
- * Assets canvas (`AudioTile`), each with its waveform drawn in the theme's ink.
+ * A delivered sound, played where it is: one quiet row in the chat and in a Builds card
+ * (`AudioStrip`), a tile on the Assets canvas (`AudioTile`) and a small picture on a Builds row
+ * (`AudioThumb`), each with its waveform drawn in the theme's ink.
  */
 import { type RefObject, useEffect, useRef, useState } from "react";
 import { Pause, Play } from "lucide-react";
@@ -24,6 +25,8 @@ const WAVE_CACHE_CAP = 96;
 const MAX_WAVEFORM_BYTES = 20 * 1024 * 1024;
 /** How many samples each bar looks at, at most, to find its peak. */
 const SAMPLES_PER_BAR = 256;
+/** The bars of a Builds row's small sound picture. */
+const THUMB_BARS = 12;
 /** A minute, in the seconds the player's clock counts. */
 const SECONDS_PER_MINUTE = MINUTE_MS / SECOND_MS;
 
@@ -312,6 +315,72 @@ export function AudioTile({ project, asset, onOpen }: { project: string; asset: 
           </span>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** A waveform's peaks thinned to `count` bars, each the loudest of the bars it stands for. */
+function thinPeaks(peaks: readonly number[], count: number): number[] {
+  return Array.from({ length: count }, (_, i) => {
+    const start = Math.floor((i * peaks.length) / count);
+    const end = Math.max(start + 1, Math.floor(((i + 1) * peaks.length) / count));
+    return Math.max(...peaks.slice(start, end), 0);
+  });
+}
+
+/**
+ * A sound as a Builds row's picture: its shape at rest; under the pointer, its play button and
+ * length; while it plays, its shape filling as it goes, over its clock. Pressing it plays in place
+ * (the row does not open); pressing again pauses.
+ */
+export function AudioThumb({ project, asset, className }: { project: string; asset: ProjectAsset; className: string }) {
+  const host = useRef<HTMLDivElement>(null);
+  const sound = useSound(project, asset, host);
+  const name = assetTitle(asset.file);
+  const peaks = thinPeaks(sound.wave?.peaks ?? [], THUMB_BARS);
+  const { isPlaying, failed, progress, toggle, live } = sound;
+  return (
+    <div ref={host} data-audio-thumb={asset.file} data-playing={isPlaying || undefined} className={className}>
+      <button
+        type="button"
+        aria-label={isPlaying ? t("Pause {name}", { name }) : t("Play {name}", { name })}
+        title={failed ? ASSET_WORDS.playFailed : name}
+        disabled={failed}
+        onClick={(event) => {
+          event.stopPropagation();
+          void toggle();
+        }}
+        className="group/sound absolute inset-0 flex cursor-pointer items-center justify-center gap-2 rounded-[inherit] disabled:cursor-default focus-visible:outline-2 focus-visible:outline-accent"
+      >
+        <span
+          aria-hidden="true"
+          className={`flex h-5 w-[54px] items-center gap-0.5 ${live ? "-translate-y-2" : "group-hover/sound:hidden group-focus-visible/sound:hidden"}`}
+        >
+          {peaks.map((peak, i) => (
+            <span
+              // biome-ignore lint/suspicious/noArrayIndexKey: the bars are fixed and never reorder.
+              key={i}
+              data-played={i / THUMB_BARS < progress || undefined}
+              className="audio-bar flex-1 rounded-full"
+              style={{ height: `${Math.max(MIN_BAR_PCT, peak * 100)}%` }}
+            />
+          ))}
+        </span>
+        <span
+          aria-hidden="true"
+          className={`items-center gap-2 ${live ? "hidden" : "hidden group-hover/sound:flex group-focus-visible/sound:flex"}`}
+        >
+          <span className="audio-play grid size-7 place-items-center rounded-full">
+            <Play aria-hidden size={11} fill="currentColor" strokeWidth={0} className="translate-x-px" />
+          </span>
+          <span className="audio-time font-mono text-micro tabular-nums">{sound.clockText}</span>
+        </span>
+        {live ? (
+          <span data-live className="audio-time absolute bottom-1.5 font-mono text-micro tabular-nums">
+            {sound.clockText}
+          </span>
+        ) : null}
+      </button>
     </div>
   );
 }

@@ -19,7 +19,7 @@ export const OpenCodeRowState = {
   SignedOut: "signed_out",
   FreeOnly: "free_only",
   Connected: "connected",
-  /** The installed CLI is too old to run: the row offers its update. */
+  /** The installed CLI is too old to run: the row offers its update, or its guide where Genex cannot install it. */
   Outdated: "outdated",
   Unreachable: "unreachable",
 } as const;

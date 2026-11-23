@@ -475,6 +475,58 @@ starts the Loop after a first turn made it, or from a Godot start folder once lo
 have one. Genex lanes only (pick them with `--lanes`): every raw lane is told to build a static web game, so
 this draft has no raw counterpart until the owner decides one.
 
+## C19 · `play-time-model` — a character who thinks while someone plays *(draft: owner pins before first baseline)*
+
+**Mode:** `follow-up`
+**Exposure:** none
+
+> A small game on a snowed-in mountain railway platform at night. I am a traveller who missed the
+> last train. The stationmaster should answer whatever I type to her, in her own voice, and make up
+> her own mind about lending me her signal lamp so I can walk the line. If someone playing does not
+> want to pay for that, she still has to get by on lines you wrote for her.
+
+**Follow-ups:**
+
+1. Yes, do it the Genex way, where each player pays for their own.
+
+**Acceptance:**
+
+```
+[ ] there is a platform at night and a stationmaster to walk up to  <- "mountain railway platform at night"
+[ ] typing to her gets an answer in character                       <- "answer whatever I type to her"
+[ ] she decides about the lamp, and the game acts on it             <- "lending me her signal lamp"
+[ ] KEY: before building, the agent offered Genex's player-paid model feature in one line and
+    asked; it built neither version first
+[ ] the game ships no provider key, proxy or model vendor address: it calls Genex's SDK
+[ ] KEY: the game ships with its model calls on: no switch, flag or setting leaves them off
+[ ] the per-call ceiling in the game is a number a benchmark printed in the transcript; where no
+    benchmark ran (its card declined or unanswered, asked once), it is the provisional ceiling
+    (a call starts at `maxCredits` 4, a budget's `perCallMaxCredits` 16 and `perCallEstimateCredits`
+    1; a call cut off as `provider_token_limit` doubles its `maxCredits` up to 16), marked
+    provisional in the code, and the agent said so
+[ ] KEY: a player who declines the approval gets her written lines, and the game stays playable
+    <- "get by on lines you wrote for her"
+[ ] whenever her written lines play instead of a model, a small visible label says so and why
+[ ] the agent's final message says in one line that Live answers with practice answers until
+    the person presses Use real AI there (a published draft, their credits, up to their cap), and
+    gives the draft's link when there is one
+[ ] a practice answer (`source: 'practice'`) shows as her line in the preview, never as a refusal
+[ ] the model's answer is checked against the expected shape before the game uses it: a
+    malformed or off-shape answer never hands over the lamp
+```
+
+**Control:** the stationmaster is three owls in a greatcoat and the trains run on soup
+
+Lane setup the owner decides: a Genex lane with the Genex plugin on, signed in to a stand whose
+play-time model lane is live, and someone (or a rule) to answer the lane's consent cards, since a
+draft publish and a benchmark each ask. The first turn should stop at the one-line offer; the
+follow-up is the person's yes. Everything is graded from the transcript and the built game: the
+offer and the benchmark from the transcript, the key, the ceiling and the shape check from the
+game's source, and the declined approval and the label by playing it (Studio's preview runs the SDK
+in local test mode, where every model call is refused before anyone is asked, so the labelled
+written lines are what a grader meets there). Genex lanes only (pick them with `--lanes`): a raw lane has no player-paid
+feature to offer, so this draft has no raw counterpart until the owner decides one.
+
 ---
 
 # Rotation and holdouts
@@ -512,3 +564,4 @@ cases of the suite this one was ported from and are not ported; their numbers ar
 | C16 loop-finish-check | draft | — | — |
 | C17 timed-wrap-up | draft | — | — |
 | C18 godot-loop | draft | — | — |
+| C19 play-time-model | draft | — | — |

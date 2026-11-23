@@ -21,7 +21,13 @@ export const GENEX_CLI_PROMPT = {
   FreeTool: (command: string) => `\`genex ${command}\` spends nothing: call genex__cli.`,
   ReservedFlag: (name: string) => `--${name} is set by Studio and cannot be passed.`,
   UnknownOption: (command: string, name: string, allowed: readonly string[]) =>
-    `\`genex ${command}\` takes no ${name} option here. ${allowed.length ? `It takes: ${allowed.join(", ")}.` : "It takes no options."} Name flags without dashes; only image, model and package name a file or folder, inside this game.`,
+    `\`genex ${command}\` takes no ${name} option here. ${allowed.length ? `It takes: ${allowed.join(", ")}.` : "It takes no options."} Name flags without dashes; only image, model, package and schema name a file or folder, inside this game.`,
+  /** `llm price` reads a file the CLI left in its folder, and no Studio run folder outlives its call. */
+  NoSavedBench:
+    "`genex llm price` is not available in Studio: it reprints the bench the CLI saved in the folder it ran in, and Studio runs every command in a fresh folder it removes afterwards, so there is never one to reprint. The numbers to declare are in the answer of llm bench (genex__cli-paid): write them into the game when you read them, and bench again only when the prompt, the schema or the model changed.",
+  /** An option given under its current name and its old one, with two different values. */
+  OptionsDisagree: (command: string, name: string, older: string, value: string, olderValue: string) =>
+    `\`genex ${command}\` was given ${name} and its old name ${older} with different values (${value} and ${olderValue}). Pass ${name} alone; nothing was run.`,
   BudgetAllowance:
     "Studio does not set a Genex asset allowance: its own asset allowance and the user's consent govern asset spending. genex__cli budget shows the balance.",
   InvalidOptions: 'options must be an object of flags by name, for example {"all": true}.',
@@ -73,6 +79,13 @@ export const GENEX_CLI_PROMPT = {
     `${name} ${JSON.stringify(given)} is not a folder in this game: it takes the folder of files other games' agents read. Nothing was run.`,
   GamePathTooLarge: (name: string, files: number, megabytes: number) =>
     `${name} holds more than ${files} files or ${megabytes} MB, which Genex does not take for an item. Keep only what another game's agent needs; nothing was run.`,
+  /** A small file the CLI reads (a bench's answer shape) that is not one file of its kind, or holds too much. */
+  SmallFileNotFile: (name: string, given: string, extension: string) =>
+    `${name} ${JSON.stringify(given)} is not a file in this game: it takes one ${extension} file. Nothing was run.`,
+  SmallFileWrongKind: (name: string, given: string, extension: string) =>
+    `${name} ${JSON.stringify(given)} is not a ${extension} file in this game (it is a link to a file of another kind). Name the ${extension} file itself; nothing was run.`,
+  SmallFileTooLarge: (name: string, given: string, kilobytes: number) =>
+    `${name} ${JSON.stringify(given)} is larger than ${kilobytes} KB, the most Genex takes for it. Shorten it; nothing was run.`,
   /** `items add` ran, but its folder could not go into the game. */
   ItemNotDelivered: (itemId: string, why: string) =>
     `The item ${itemId} is added to this game on Genex, but Studio wrote nothing to genex-items/${itemId}/ in it: ${why} Fix that, then run items add ${itemId} again.`,
@@ -103,6 +116,8 @@ export const GENEX_VALUE_RULE = {
     `takes one text or a list of at most ${count}, each at most ${max} characters, with no line breaks or control characters, not starting with -`,
   GamePath: (target: string) =>
     `takes a ${target === "folder" ? "folder" : "file"} inside this game, relative to its folder (for example .genex/scratch/frost-axe.png), never an absolute path, ~ or ..`,
+  SmallGameFile: (extension: string) =>
+    `takes a ${extension} file inside this game, relative to its folder (for example answer.schema${extension}), never an absolute path, ~ or ..`,
   ItemId: "takes one store item id, as genex items search or Browse shows it (letters, digits, - and _)",
   LocalId: "takes one local draft id, as genex shop add printed it (local_ and 12 lowercase letters or digits)",
 } as const;

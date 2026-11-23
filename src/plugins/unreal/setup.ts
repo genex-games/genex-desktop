@@ -29,7 +29,7 @@ import {
   readRegularFile,
 } from "../../substrate/fsx.ts";
 import { containedReal } from "../../substrate/paths.ts";
-import { envValue, readRegistryVariable } from "../../substrate/toolchain.ts";
+import { envValue, readLoginVariable, readRegistryVariable } from "../../substrate/toolchain.ts";
 import { crashReporterHolds, editorHoldsLog, heldProjectNames } from "./editor-holds.ts";
 import { type EditorLog, editorLogPath, readEditorLog } from "./editor-log.ts";
 import { retargetProject } from "./cpp-module.ts";
@@ -419,6 +419,11 @@ export function systemSetupEnv(
       for (const name of EMSDK_VARIABLES) {
         const registry = platform === "win32" ? await readRegistryVariable(name, env).catch(() => null) : null;
         const value = registry ?? envValue(env, name);
+        if (value) return value;
+      }
+      // Genex started from the Dock or a desktop menu has none of the variables a terminal sets.
+      for (const name of EMSDK_VARIABLES) {
+        const value = await readLoginVariable(name, platform).catch(() => null);
         if (value) return value;
       }
       return undefined;

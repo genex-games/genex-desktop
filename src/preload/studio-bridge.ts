@@ -454,6 +454,7 @@ function accountCalls(bridge: BridgeCalls) {
     claudeLoginOpenBrowser: () => invoke("studio:claude-login.browser"),
     claudeLoginCancel: () => invoke("studio:claude-login.cancel"),
     openCodeSignIn: () => invoke("studio:opencode.signin"),
+    piSignIn: () => invoke("studio:pi.signin"),
     grokSignIn: () => invoke("studio:grok.signin"),
     cursorSignIn: () => invoke("studio:cursor.signin"),
     cursorSignOut: () => invoke("studio:cursor.signout"),
@@ -516,6 +517,10 @@ function previewCalls(bridge: BridgeCalls) {
     liveBehind: (project) => invoke("studio:live.behind", { project }),
     previewState: () => invoke("studio:preview.state"),
     previewLive: () => invoke("studio:preview.live"),
+    previewAi: (project) => invoke("studio:preview-ai.state", { project }),
+    previewAiReal: (project, capCredits) => invoke("studio:preview-ai.real", { project, capCredits }),
+    previewAiPractice: (project) => invoke("studio:preview-ai.practice", { project }),
+    previewMicAnswer: (project, allow) => invoke("studio:preview-ai.mic", { project, allow }),
     previewCoverStill: () => invoke("studio:preview.cover-still"),
   } satisfies Partial<StudioApi>;
 }

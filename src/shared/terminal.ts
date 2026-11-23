@@ -1,11 +1,12 @@
 /**
- * What a terminal session runs: the game's shell, a Claude Code, OpenCode, Grok Build, Cursor or Antigravity sign-in, or
- * one command a chat reply offered.
+ * What a terminal session runs: the game's shell, a Claude Code, OpenCode, Grok Build, Cursor, Pi or
+ * Antigravity sign-in, or one command a chat reply offered.
  */
 export const TerminalKind = {
   Shell: "shell",
   ClaudeLogin: "claude-login",
   OpenCodeLogin: "opencode-login",
+  PiLogin: "pi-login",
   GrokLogin: "grok-login",
   CursorLogin: "cursor-login",
   AntigravityLogin: "antigravity-login",
@@ -16,6 +17,7 @@ export type TerminalKind = (typeof TerminalKind)[keyof typeof TerminalKind];
 /** Sign-ins Settings shows in their own row: revealing the dock would close Settings over them. */
 const SETTINGS_TERMINALS: ReadonlySet<TerminalKind> = new Set([
   TerminalKind.OpenCodeLogin,
+  TerminalKind.PiLogin,
   TerminalKind.GrokLogin,
   TerminalKind.CursorLogin,
   TerminalKind.AntigravityLogin,

@@ -2288,12 +2288,26 @@ struct Impl {
     }
   }
 
+  /** Whether the state being read moves other entities: a snapshot the fast channel just applied, or any
+   *  reading of the state while that channel does not carry the motion (§17.12). A WebSocket patch decoded
+   *  while it does moves none: its motion fields are held back (GenexFastSeat.h MotionGuard), so the poses
+   *  in the state are still the last snapshot's, under a stamp that is the patch's own. */
+  bool PassMovesOthers() const {
+    if (fastPass && passLanded) return true;
+    return fastSeat == nullptr || !fastSeat->CarriesMotion();
+  }
+
   /** Once per patch, right after it decoded (the C state callback): note every entity's pose and time,
-   *  and every epoch bump. The port of session.ts notePatch, Godot _note_patches, Unity NotePatches. */
+   *  and every epoch bump. The port of session.ts notePatch, Godot _note_patches, Unity NotePatches. A state
+   *  that does not move other entities (PassMovesOthers) adds no pose to a record that has one, as Unity's
+   *  NotePatches(moves): the WebSocket's stamp runs ahead of a late snapshot's, and a pose noted under it
+   *  would be the snapshot before's, with the late snapshot's own pose then refused as older; and it runs
+   *  behind a snapshot's through a stall of the stream, where it is no change of clock axis. */
   void NotePatches() {
     aw::AuthorityRoomState* st = State();
     if (st == nullptr || st->entities == nullptr) return;
     const double at = PatchTime();
+    const bool moves = PassMovesOthers();
     // On the tick timeline the keyframe's sample is the one placed (SampleTicks).
     if (!DrawsOnTicks()) NoteRenderSample(at);
     std::unordered_set<std::string> present;
@@ -2332,8 +2346,8 @@ struct Impl {
       std::vector<AuthorityPose>& history = known.history;
       // Deviation (none of the sources has it): a stamp far behind the newest one is a change of clock
       // axis (local arrival before the first TIMED sample, then server time), never a patch to drop.
-      if (!history.empty() && at < history.back().t - kHistoryBackJumpMs) history.clear();
-      if (history.empty() || at > history.back().t) history.push_back(PoseOf(*e, at));
+      if (moves && !history.empty() && at < history.back().t - kHistoryBackJumpMs) history.clear();
+      if (history.empty() || (moves && at > history.back().t)) history.push_back(PoseOf(*e, at));
       while (history.size() > 2 && history[1].t < at - kRemoteHistoryMs) history.erase(history.begin());
     });
     for (auto it = remotes.begin(); it != remotes.end();) {

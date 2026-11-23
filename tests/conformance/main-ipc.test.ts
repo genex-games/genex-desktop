@@ -291,6 +291,12 @@ function loginFixture(
         return { started: true };
       },
     },
+    piLogin: {
+      start: async () => {
+        started.push("pi");
+        return { started: true };
+      },
+    },
     grokLogin: {
       start: async () => {
         started.push("grok");
@@ -544,6 +550,12 @@ describe("both sign-in paths go through the controllers", () => {
     assert.deepEqual(started, ["opencode"]);
   });
 
+  it("Pi signs in through its own TUI in the terminal, whatever else is running", async () => {
+    const { invoke, started } = loginFixture({}, true);
+    assert.deepEqual(await invoke("studio:pi.signin"), { ok: true, value: { started: true } });
+    assert.deepEqual(started, ["pi"]);
+  });
+
   it("Cursor signs in through its own CLI in its row's terminal, whatever else is running, and signs out through its engine", async () => {
     const { invoke, started } = loginFixture({}, true);
     assert.deepEqual(await invoke("studio:cursor.signin"), { ok: true, value: { started: true } });
@@ -603,13 +615,20 @@ describe("both sign-in paths go through the controllers", () => {
     assert.equal(signedIn, 1);
   });
 
-  it("the Antigravity sign-in runs `agy acp --login` in the sessions' box, gives the box back when it ends, and rechecks", async () => {
-    const opened: Array<{ file: string; args: string[]; kind: string; env: NodeJS.ProcessEnv }> = [];
+  it("the Antigravity sign-in runs `agy acp --login` in the sessions' box, opens Google's page, gives the box back when it ends, and rechecks", async () => {
+    const opened: Array<{
+      file: string;
+      args: string[];
+      kind: string;
+      env: NodeJS.ProcessEnv;
+      onUrl?: ((url: string) => void) | undefined;
+    }> = [];
     const boxed: Array<{ binary: string; env: Record<string, string>; scratchRoot?: string }> = [];
     let exit: ((code: number) => void) | undefined;
     let released = 0;
     let signedIn = 0;
     let open: TerminalSession[] = [];
+    const browsed: string[] = [];
     const { antigravityLogin } = createLoginControllers({
       terminals: {
         list: () => open,
@@ -629,7 +648,9 @@ describe("both sign-in paths go through the controllers", () => {
         },
         stop: async () => {},
       },
-      openExternal: async () => {},
+      openExternal: async (url) => {
+        browsed.push(url);
+      },
       subscription: () => null,
       pushUiEvent: () => {},
       showCodexState: () => {},
@@ -683,6 +704,20 @@ describe("both sign-in paths go through the controllers", () => {
     assert.equal(opened[0]?.file, "/usr/bin/sandbox-exec", "the terminal starts the boxed command");
     assert.deepEqual(opened[0]?.args.slice(-2), ["acp", "--login"]);
     assert.equal(opened[0]?.kind, "antigravity-login");
+    // The boxed CLI cannot hand its page to the browser: Genex opens Google's sign-in page itself,
+    // once, and never a page on another host the terminal prints.
+    const page =
+      "https://accounts.google.com/o/oauth2/auth?client_id=x&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback";
+    for (const url of [
+      "https://evil.example/o/oauth2/auth",
+      "http://accounts.google.com/o",
+      page,
+      page,
+      "https://accounts.google.com/other",
+    ])
+      opened[0]?.onUrl?.(url);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(browsed, [page]);
     assert.deepEqual(await antigravityLogin.start(), { started: true });
     assert.equal(opened.length, 1, "a sign-in already open is shown again");
     assert.equal(released, 1, "and the box made for the second one is given back");
@@ -851,6 +886,70 @@ describe("both sign-in paths go through the controllers", () => {
       ["auth", "login", "--standalone"],
       "2.x signs in on a server of its own, never by starting the shared background one",
     );
+  });
+
+  it("the Pi sign-in opens the TUI so the person can /login, and rechecks its models when it ends", async () => {
+    const opened: Array<{ file: string; args: string[]; kind: string; env: NodeJS.ProcessEnv }> = [];
+    let exit: ((code: number) => void) | undefined;
+    let signedIn = 0;
+    const { piLogin } = createLoginControllers({
+      terminals: {
+        open: (launch) => {
+          opened.push(launch);
+          exit = launch.onExit;
+          return { id: "t1", title: launch.title, kind: launch.kind, phase: "running" };
+        },
+        stop: async () => {},
+        list: () => [],
+      },
+      openExternal: async () => {},
+      subscription: () => null,
+      pushUiEvent: () => {},
+      showCodexState: () => {},
+      showClaudeState: () => {},
+      onPiSignedIn: async () => {
+        signedIn++;
+      },
+      requireCli: async (provider) => ({
+        path: `/bin/${provider}`,
+        env: { PATH: "/bin", ANTHROPIC_API_KEY: "sk-ant-not-for-pi", PI_HOME: "/pi" },
+        status: {
+          provider,
+          state: "ready",
+          selection: "automatic",
+          path: `/bin/${provider}`,
+          detail: "",
+          guidanceUrl: "",
+        },
+      }),
+    });
+    assert.deepEqual(await piLogin.start(), { started: true });
+    assert.equal(opened[0]?.file, "/bin/pi");
+    assert.deepEqual(opened[0]?.args, ["--no-extensions", "--offline"]);
+    assert.equal(opened[0]?.kind, "pi-login");
+    assert.equal(opened[0]?.env.ANTHROPIC_API_KEY, undefined, "no other vendor's key reaches the sign-in");
+    exit?.(0);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(signedIn, 1);
+
+    const missing = createLoginControllers({
+      terminals: {
+        open: () => {
+          throw new Error("no terminal without a CLI");
+        },
+        stop: async () => {},
+        list: () => [],
+      },
+      openExternal: async () => {},
+      subscription: () => null,
+      pushUiEvent: () => {},
+      showCodexState: () => {},
+      showClaudeState: () => {},
+      requireCli: async () => {
+        throw new Error("pi is not installed");
+      },
+    });
+    assert.deepEqual(await missing.piLogin.start(), { started: false, missingCli: true });
   });
 
   it("an unknown engine is refused", async () => {

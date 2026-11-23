@@ -21,7 +21,10 @@ import {
   createLaunchObservers,
   ErrorKind,
   errorType,
+  batchAdded,
   fingerprint,
+  frameAdded,
+  hiddenAdded,
   NO_STALLS,
   reportError,
   reportFirstScreen,
@@ -34,6 +37,7 @@ import {
   UpdateSurface,
 } from "../../src/renderer/analytics/events/launch.ts";
 import { CountBucket } from "../../src/renderer/analytics/properties.ts";
+import { afterTask, heapNow, type LongFrame, readLongFrame } from "../../src/renderer/analytics/stall-frames.ts";
 import { SessionStatus } from "../../src/renderer/state/session.ts";
 import type { Studio } from "../../src/renderer/state/studio.ts";
 import { createToastsStore } from "../../src/renderer/state/toasts.ts";
@@ -133,6 +137,13 @@ describe("errors", () => {
   });
 });
 
+const frame = (fields: Partial<LongFrame>): LongFrame => ({
+  startTime: 1_000,
+  duration: 0,
+  styleAndLayoutStart: 0,
+  ...fields,
+});
+
 describe("long tasks", () => {
   it("sums them and sends nothing when nothing was slow", () => {
     assert.equal(stallSummary(NO_STALLS, "/home"), null);
@@ -143,11 +154,77 @@ describe("long tasks", () => {
       total_ms: 786,
       max_ms: 611,
       chat_log_events: null,
+      held_records: null,
+      worst_batch_ms: null,
+      worst_batch_records: null,
+      worst_frame_ms: null,
+      worst_layout_ms: null,
+      heap_used_mb: null,
+      heap_limit_mb: null,
+      hidden_ms: 0,
     });
   });
-  it("says how long the open chat's log was, so a long Loop's stalls read against it", () => {
+  it("says how long the open chat's log was and every record the window held, so a long Loop's stalls read against them", () => {
     const tally = stallAdded(NO_STALLS, 140);
-    assert.equal(stallSummary(tally, "/game/builds", 36_800)?.chat_log_events, 36_800);
+    const summary = stallSummary(tally, "/game/builds", { chatLogEvents: 36_800, heldRecords: 151_000 });
+    assert.equal(summary?.chat_log_events, 36_800);
+    assert.equal(summary?.held_records, 151_000);
+  });
+  it("keeps the longest batch of records' work and its size, so a frozen window reads apart from a big catch-up", () => {
+    const batches = [
+      { ms: 12.2, records: 3 },
+      { ms: 47_169.4, records: 2_400 },
+      { ms: 300, records: 9_000 },
+    ];
+    const tally = batches.reduce(batchAdded, stallAdded(NO_STALLS, 47_169));
+    const summary = stallSummary(tally, "/game/builds");
+    assert.equal(summary?.worst_batch_ms, 47_169);
+    assert.equal(summary?.worst_batch_records, 2_400);
+  });
+  it("keeps the longest frame and how much of its end was style and layout", () => {
+    const frames = [
+      frame({ duration: 90, styleAndLayoutStart: 1_050 }),
+      frame({ startTime: 5_000, duration: 47_169.4, styleAndLayoutStart: 5_000 + 47_000 }),
+      frame({ duration: 300 }),
+    ];
+    const summary = stallSummary(frames.reduce(frameAdded, stallAdded(NO_STALLS, 47_169)), "/game/builds");
+    assert.equal(summary?.worst_frame_ms, 47_169);
+    assert.equal(summary?.worst_layout_ms, 169);
+    const unlaid = stallSummary(frameAdded(stallAdded(NO_STALLS, 60), frame({ duration: 60 })), "/game/live");
+    assert.equal(unlaid?.worst_layout_ms, 0);
+  });
+  it("reads only long-animation-frame entries, as plain numbers", () => {
+    assert.equal(readLongFrame({ entryType: "longtask", duration: 80 }), null);
+    assert.equal(readLongFrame(null), null);
+    assert.deepEqual(
+      readLongFrame({ entryType: "long-animation-frame", startTime: 5, duration: 75, styleAndLayoutStart: "soon" }),
+      { startTime: 5, duration: 75, styleAndLayoutStart: 0 },
+    );
+  });
+  it("says how much memory the window's JavaScript held, where the window tells it", () => {
+    const memory = { usedJSHeapSize: 1_610_612_736, jsHeapSizeLimit: 4_294_705_152 };
+    assert.deepEqual(heapNow({ memory }), { usedMb: 1536, limitMb: 4096 });
+    assert.equal(heapNow({}), null);
+    assert.equal(heapNow({ memory: { usedJSHeapSize: 0, jsHeapSizeLimit: 0 } }), null);
+    const summary = stallSummary(stallAdded(NO_STALLS, 60), "/game/builds", { heap: heapNow({ memory }) });
+    assert.equal(summary?.heap_used_mb, 1536);
+    assert.equal(summary?.heap_limit_mb, 4096);
+  });
+  it("adds up the time the window spent hidden, so a window behind another app reads apart", () => {
+    const tally = [1_200.4, 30_000, -5].reduce(hiddenAdded, stallAdded(NO_STALLS, 60));
+    assert.equal(stallSummary(tally, "/game/builds")?.hidden_ms, 31_200);
+  });
+  it("times a batch's work to the end of its task: what its microtasks queued counts", async () => {
+    const order: string[] = [];
+    const done = new Promise<void>((resolve) =>
+      afterTask(() => {
+        order.push("after");
+        resolve();
+      }),
+    );
+    queueMicrotask(() => order.push("microtask"));
+    await done;
+    assert.deepEqual(order, ["microtask", "after"]);
   });
 });
 

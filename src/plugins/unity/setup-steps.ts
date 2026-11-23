@@ -219,10 +219,13 @@ function editorRow(facts: SetupFacts): SetupRow {
   return { id, label: WORDS.InstallUnity(), detail: WORDS.InstallDetail(), done: false, ...action };
 }
 
+/** The Unity release line Genex installs, the one its Unity work was last measured on (Unity 6.6): its newest final release. */
+export const INSTALL_LINE = "6000.6";
+
 /** What the agent is told about an install that stopped: finish it in Hub with computer control, or tell the person. */
 function stuckOf(job: InstallJob | null): { stuckSays?: string } {
   if (job?.state !== JobState.Failed || job.stopped) return {};
-  const version = job.version && job.version !== "6" ? job.version : "6 (the newest final 6000.3 release)";
+  const version = job.version && job.version !== "6" ? job.version : `6 (the newest final ${INSTALL_LINE} release)`;
   const next = job.inHub ? TOLD.InHub(version) : TOLD.PersonOnly;
   return { stuckSays: `${TOLD.Stuck(job.why ?? "")}${next}` };
 }

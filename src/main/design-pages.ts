@@ -43,6 +43,11 @@ const STAMP_CHARS = 12;
 const HOST_BYTES = 12;
 /** How many of the files a page shows count toward its version; a page that names more reloads for its first. */
 const SHOWN_FILES_MAX = 64;
+/**
+ * How long an artboard's changed file must stand unchanged before the board shows the change: a
+ * picture being written again (a generation saving over it) would otherwise load half done.
+ */
+export const DESIGN_SETTLE_MS = 1500;
 
 /** The kinds of the game's media a page may show. */
 const MEDIA_KINDS: readonly AssetKind[] = ["image", "audio", "video"];
@@ -78,6 +83,18 @@ interface PageFacts {
  * read again. One per lister (`DesignBoardService`); a listing drops its board's pages that are gone.
  */
 export type DesignPageFacts = Map<string, PageFacts & { size: number; mtimeMs: number }>;
+
+/**
+ * What the board last showed of each artboard, by its path: a file being written again is shown as
+ * it was until it settles (`DESIGN_SETTLE_MS`). One per lister, like `DesignPageFacts`.
+ */
+export type DesignSettled = Map<string, { version: string; modifiedAt: number }>;
+
+/** What a listing that holds back files still being written needs: what it showed before, and the time now. */
+export interface DesignSettling {
+  settled: DesignSettled;
+  now: number;
+}
 
 /** What a request for a board's file gets: the file, or a refusal that read nothing. */
 export type DesignServed =
@@ -191,6 +208,27 @@ async function pageVersion(gameRoot: string, mark: string, shows: readonly strin
   return hash.digest("hex").slice(0, STAMP_CHARS);
 }
 
+/**
+ * The version and time an artboard is shown at: its own, unless the board showed it before and its
+ * file is being written again (it changed a moment ago; a time ahead of the clock counts as still),
+ * when it is shown as it was until the file stands still. A file the board has not shown yet shows
+ * at once: nothing was there to keep up.
+ */
+function settledVersion(
+  settling: DesignSettling,
+  at: string,
+  version: string,
+  modifiedAt: number,
+): { version: string; modifiedAt: number } {
+  const age = settling.now - modifiedAt;
+  const before = settling.settled.get(at);
+  const writing = age >= 0 && age < DESIGN_SETTLE_MS;
+  if (writing && before && before.version !== version) return before;
+  const shown = { version, modifiedAt };
+  settling.settled.set(at, shown);
+  return shown;
+}
+
 /** A file's name without its folder and its extension: an artboard's caption when it has no title. */
 const itemName = (file: string): string => path.posix.basename(file).replace(/\.[^.]+$/, "");
 
@@ -216,11 +254,13 @@ function byPlace(a: DesignItemFile, b: DesignItemFile): number {
  * A game's board: the pages, pictures and models at the top of its `docs/design/` and in each
  * folder of it, a section (never a link, never a hidden file, never the support folder), each with
  * its title and its version, and a stamp that changes when any file of the board or any artboard's
- * version does. `known` keeps what was read in a page between listings.
+ * version does. `known` keeps what was read in a page between listings; with `settling`, a file being
+ * written again is shown as it was before until it stands still (`settledVersion`).
  */
 export async function listDesignBoard(
   gameRoot: string,
   known: DesignPageFacts = new Map(),
+  settling?: DesignSettling,
 ): Promise<{ items: DesignItemFile[]; stamp: string }> {
   if (!(await boardIsFolder(gameRoot))) return { items: [], stamp: "" };
   const folder = boardFolder(gameRoot);
@@ -234,18 +274,39 @@ export async function listDesignBoard(
     if (!info) continue;
     const mark = `${below}\n${info.size}\n${info.mtimeMs}\n`;
     hash.update(mark);
-    const file = designItemFile(below);
-    const kind = file ? designItemKind(file) : null;
-    if (!file || !kind) continue;
+    const item = await boardItem({ gameRoot, below, at, mark, info }, known, settling);
+    if (!item) continue;
     listed.add(at);
-    const page = kind === DesignItemKind.Page ? await pageFacts(at, file, info, known) : { title: "", shows: [] };
-    const version = await pageVersion(gameRoot, mark, page.shows);
-    hash.update(version);
-    const section = designSection(file);
-    items.push({ file, name: itemName(file), title: page.title, kind, section, version, modifiedAt: info.mtimeMs });
+    hash.update(item.read);
+    items.push(item.item);
   }
-  for (const at of known.keys()) if (at.startsWith(folder + path.sep) && !listed.has(at)) known.delete(at);
+  forgetGone(known, folder, listed);
+  if (settling) forgetGone(settling.settled, folder, listed);
   return { items: items.sort(byPlace).slice(0, DESIGN_ITEMS_MAX), stamp: hash.digest("hex").slice(0, STAMP_CHARS) };
+}
+
+/** One listed file of the board: what it is on the board, with the version read from it; null for no artboard. */
+async function boardItem(
+  found: { gameRoot: string; below: string; at: string; mark: string; info: { size: number; mtimeMs: number } },
+  known: DesignPageFacts,
+  settling: DesignSettling | undefined,
+): Promise<{ item: DesignItemFile; read: string } | null> {
+  const file = designItemFile(found.below);
+  const kind = file ? designItemKind(file) : null;
+  if (!file || !kind) return null;
+  const page =
+    kind === DesignItemKind.Page ? await pageFacts(found.at, file, found.info, known) : { title: "", shows: [] };
+  const version = await pageVersion(found.gameRoot, found.mark, page.shows);
+  const shown = settling
+    ? settledVersion(settling, found.at, version, found.info.mtimeMs)
+    : { version, modifiedAt: found.info.mtimeMs };
+  const item = { file, name: itemName(file), title: page.title, kind, section: designSection(file), ...shown };
+  return { item, read: version };
+}
+
+/** Forget what was kept for a file of the board's `folder` that is no longer listed. */
+function forgetGone(kept: Map<string, unknown>, folder: string, listed: ReadonlySet<string>): void {
+  for (const at of kept.keys()) if (at.startsWith(folder + path.sep) && !listed.has(at)) kept.delete(at);
 }
 
 /** The font file a frame asks for at Genex's reserved folder of the scheme, or null for any other address. */

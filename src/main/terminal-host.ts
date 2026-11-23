@@ -167,6 +167,7 @@ function signal(pid: number, name: NodeJS.Signals): void {
 /** The CLI sign-ins that print the page to sign in on: its link is offered beside the terminal. */
 const SIGN_IN_PAGE_TERMINALS: ReadonlySet<TerminalKind> = new Set([
   TerminalKind.OpenCodeLogin,
+  TerminalKind.PiLogin,
   TerminalKind.GrokLogin,
   TerminalKind.CursorLogin,
   TerminalKind.AntigravityLogin,

@@ -277,6 +277,18 @@ export async function gitOrNull(dir: string, args: string[], env: Record<string,
   }
 }
 
+/**
+ * Whether any commit the repository at `dir` stands on has held `rel`. True when that cannot be
+ * read (no repository, no commit yet): a caller acts only on a clear "never".
+ */
+export async function pathEverCommitted(dir: string, rel: string): Promise<boolean> {
+  // The folder's own repository only: git would otherwise answer for one that holds it.
+  if (!(await pathExists(path.join(dir, ".git")))) return true;
+  // The path as written: a bracket or star in a file's name is not a pattern.
+  const held = await gitOrNull(dir, ["log", "-1", "--format=%H", "HEAD", "--", rel], { GIT_LITERAL_PATHSPECS: "1" });
+  return held === null || held.trim() !== "";
+}
+
 /** Why a revision was refused: it does not name a commit, or git would read it as an option. */
 export class NotACommitError extends Error {
   constructor(revision: string) {
@@ -735,7 +747,9 @@ export class SnapshotEngine {
    */
   async #resetTo(name: string, dir: string, commit: string): Promise<void> {
     const kept = name === HARNESS_WORKSPACE ? [] : (this.#ruleLines.get(dir) ?? []);
-    await git(dir, ["reset", "-q", "--hard", "--end-of-options", commit]);
+    // Not `--end-of-options`: Git 2.43.0 (Ubuntu 24.04's) refuses it on `reset`. The resolved hash
+    // cannot be read as an option, and the closing `--` keeps it from being read as a path.
+    await git(dir, ["reset", "-q", "--hard", await resolveCommit(dir, commit), "--"]);
     if (kept.length > 0) await this.keepIgnoring?.({ name, dir }, kept).catch(() => {});
     await git(dir, ["clean", "-qfd", ...kept.flatMap((line) => ["-e", line])]);
     await this.afterRestore?.({ name, dir });

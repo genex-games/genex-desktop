@@ -58,9 +58,6 @@ npx genex llm bench "<the frozen prompt, one real example filled in>" \
   `--max-coins` is the old name of the same flag and still works.
 - `--samples 3` is the floor. The same prompt costs different amounts on
   different runs, because the model's own output length varies.
-- `npx genex llm price` re-prints the last run's recommendation without spending
-  anything again. A file from before credits is reprinted as history, with a
-  request to re-run.
 
 ## 3. Read the output
 

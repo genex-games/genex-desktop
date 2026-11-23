@@ -452,13 +452,15 @@ describe("local server completions", () => {
     assert.equal(deltas.join(""), "Done.", "the stream never shows the thought");
   });
 
-  it("maps failures: too long for the context, refused, down, the server gone", async () => {
+  it("maps failures: too long for the context, refused, down, out of memory, the server gone", async () => {
     const overflow =
       '{"error":{"code":400,"message":"request exceeds the available context size","type":"exceed_context_size_error"}}';
     const rows: Array<[FakeReply, string]> = [
       [{ httpStatus: 400, body: overflow }, "context_overflow"],
       [{ httpStatus: 401, body: '{"detail":"bad key"}' }, "auth"],
       [{ httpStatus: 503, body: '{"detail":"loading model"}' }, "unavailable"],
+      // llama.cpp's server when the model's buffers do not fit the card: no wait fits them.
+      [{ httpStatus: 500, body: '{"error":{"message":"failed to allocate compute buffers"}}' }, "out_of_memory"],
       [{ cutAfter: "half a rep" }, "other"],
     ];
     for (const [reply, kind] of rows) {

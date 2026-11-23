@@ -104,10 +104,11 @@ import { createGenexLane, type GenexLaneDeps } from "../substrate/engines/genex.
 import { CodexEngine } from "../substrate/engines/codex.ts";
 import { OllamaEngine, OllamaSidecar } from "../substrate/engines/ollama.ts";
 import { OpenCodeEngine, openCodeSessionFolders } from "../substrate/engines/opencode.ts";
+import { PiEngine } from "../substrate/engines/pi.ts";
 import { AntigravityEngine } from "../substrate/engines/antigravity.ts";
 import { CursorEngine } from "../substrate/engines/cursor.ts";
 import { GrokEngine } from "../substrate/engines/grok.ts";
-import { cursorHomes, grokHome } from "../substrate/credential-homes.ts";
+import { cursorHomes, grokHome, piAgentDir } from "../substrate/credential-homes.ts";
 import { LOCK_RECOVERY_DIR } from "../substrate/engines/ownership-locks.ts";
 import { OpenRouterEngine } from "../substrate/engines/openrouter.ts";
 import { LocalServerEngine } from "../substrate/engines/local-server.ts";
@@ -146,7 +147,7 @@ import { PluginRegistry } from "../substrate/plugins/registry.ts";
 import { PluginServices } from "../substrate/plugins/services.ts";
 import { createEngineLinks, type EngineLinks } from "../substrate/plugins/engine-links.ts";
 import type { PreviewInputAction } from "../substrate/preview-input.ts";
-import { DEFAULT_POOL_MAX } from "../substrate/preview-pool.ts";
+import { DEFAULT_POOL_MAX, LIVE_HANDLE } from "../substrate/preview-pool.ts";
 import type { PreviewConsoleEntry, PreviewPixelStats, PreviewPort } from "../substrate/preview-port.ts";
 import { SnapshotEngine, SnapshotIndex, HARNESS_WORKSPACE } from "../substrate/snapshots.ts";
 import { gitMissingProblem, SandboxUnavailableError } from "../substrate/sandbox-unavailable.ts";
@@ -179,6 +180,9 @@ import {
   standCredentialFile,
 } from "./core/genex-cli.ts";
 import { GenexRoomService } from "./core/genex-room.ts";
+import { PreviewAiService } from "./core/preview-ai.ts";
+import { PreviewMicService } from "./core/preview-mic.ts";
+import type { PreviewAiState } from "../shared/preview-ai.ts";
 import { isLocalDraft, type ListingRecord } from "../shared/item-draft.ts";
 import { type CreatorItem, type Selling, type StoreRefused, StoreRefusal } from "../shared/store-items.ts";
 import { ITEM_APPROVALS_FILE, ItemApprovals } from "./core/item-approvals.ts";
@@ -266,7 +270,7 @@ import type { PlanReviewController } from "./plan-review.ts";
 import { PluginConsent } from "./plugin-consent.ts";
 import { assertOwnedProject } from "./project-policy.ts";
 import { type BuildEndDeps, gameOfThread, noteBuildEnd } from "./core/build-ends.ts";
-import { usesGenexMultiplayer } from "../substrate/genex-game-manifest.ts";
+import { declaresMicrophone, usesGenexMultiplayer } from "../substrate/genex-game-manifest.ts";
 import { seedUpgradedPayload } from "./seed-upgrade-notice.ts";
 import { SeedUpgradeMode } from "../substrate/seed-upgrade.ts";
 
@@ -454,6 +458,11 @@ export interface StudioCoreOptions {
   localPlays?: { play(project: string, engine: string | null): Promise<LocalPlayAnswer> };
   /** Notes each boot step as it finishes (`main/performance.ts`); a launch without diagnostics passes nothing. */
   markBoot?: (step: string) => void;
+  /**
+   * Open a page in the person's browser: the page Google names for verifying an Antigravity
+   * account. Absent in tests, where nothing opens.
+   */
+  openPage?: (url: string) => unknown;
   engines?: Engine[];
   executionPolicy?: { allowedProjectRoot?: string };
   paths: StudioPaths;
@@ -469,6 +478,8 @@ export interface StudioCoreOptions {
   execPath?: string;
   /** The room-module toolchain's folder: the Genex plugin's build in resources unless a test names one. */
   authorityDev?: string;
+  /** The pinned Genex CLI's entry: the Genex plugin's build in resources unless a test names one. */
+  genexCli?: string;
   runAsNode?: boolean;
   /** The app's version, stamped into the harness seed manifest (substrate/seed-upgrade.ts `writer`). */
   appVersion?: string;
@@ -552,6 +563,17 @@ export interface StudioCoreOptions {
    */
   genexStand?: GenexStand;
   /**
+   * Whether Live may switch a game's play-time models to real ones on the person's own Genex
+   * credits (`PreviewAiService`): the app's real launches; never a fixture or a test, where the bar
+   * answers that real models are not available here. Absent: no.
+   */
+  previewAiLive?: boolean;
+  /**
+   * Whether the system lets the app use the microphone (macOS asks the person once), for a game the
+   * person allowed it in Live. Absent: no, so Live's game never gets it.
+   */
+  microphoneAccess?: () => Promise<boolean>;
+  /**
    * A game's local item drafts after its publish: Put on sale as the app's Genex account, and in a
    * fixture launch the fixture's own sync and sharing in place of the CLI's (`dev/fixture-items.ts`).
    * Absent: nothing a local draft's settle uploads goes on sale.
@@ -578,6 +600,10 @@ export class StudioCore {
   readonly games: GameWorkspaces;
   /** The games' design boards: read for the Design tab, served to its frames, shown by a game's agent. */
   readonly design: DesignBoardService = new DesignBoardService(this);
+  /** Play-time models in the previews: practice helpers, and real models in Live once the person approved a cap. */
+  readonly previewAi: PreviewAiService;
+  /** The microphone in Live: for a game that declares it, once the person allowed it. */
+  readonly previewMic: PreviewMicService;
   readonly journal: UpdateJournal;
   readonly ollamaSidecar: OllamaSidecar;
   /** Token bookkeeping + improvement-class caps, enforced at the engine seam (A9). */
@@ -623,6 +649,8 @@ export class StudioCore {
   readonly #previews: PreviewService;
   /** The games' local rooms; set with the plugin programs. */
   #genexRoom: GenexRoomService | null = null;
+  /** The pinned Genex CLI the practice helpers start from; made on first use. */
+  #cli: GenexCliService | null = null;
   readonly #delegation: DelegationService;
   readonly #recovery: RecoveryService;
   /** Resumes a paused build on its own once its limit resets or its loop runs again. */
@@ -751,6 +779,12 @@ export class StudioCore {
       ...options.observers,
     });
     this.#previews = new PreviewService(this, this.#x);
+    this.previewAi = this.#createPreviewAi();
+    this.previewMic = new PreviewMicService({
+      declares: (project) => declaresMicrophone(this.games.dirFor(project)),
+      access: () => this.options.microphoneAccess?.() ?? Promise.resolve(false),
+      show: (project, ask) => this.previewAi.setMic(project, ask),
+    });
     this.#delegation = new DelegationService(this, this.#x);
     this.#finishReviews = this.#createFinishReviews();
     this.#recovery = new RecoveryService(this, this.#x);
@@ -1151,16 +1185,18 @@ export class StudioCore {
     // Windows: native jobs work in, and read pinned runtimes from, folders granted now. srt-win
     // changes grants only while no sandboxed command runs, and agents keep commands running.
     const windows = process.platform === StudioPlatform.Windows;
-    // OpenCode's, Grok Build's and Cursor's own folders too: their sessions run as the sandbox user
-    // and read their sign-ins there.
+    // OpenCode's, Grok Build's, Cursor's and Pi's own folders too: their sessions run as the sandbox
+    // user and read their sign-ins there.
     // They are optional: one a file stands in the way of (a `.cache` file in the home folder) is
     // left ungranted, and only that CLI misses it, instead of the studio not starting.
     const cliFolders = windows
-      ? await ensureDirsWhereMade([...openCodeSessionFolders(), grokHome(), ...cursorHomes()], (dir, err) =>
-          this.options.onLog?.(
-            `[core] a CLI folder could not be made, left ungranted: ${dir}: ${errorMessage(err)}`,
-            "stderr",
-          ),
+      ? await ensureDirsWhereMade(
+          [...openCodeSessionFolders(), grokHome(), ...cursorHomes(), piAgentDir()],
+          (dir, err) =>
+            this.options.onLog?.(
+              `[core] a CLI folder could not be made, left ungranted: ${dir}: ${errorMessage(err)}`,
+              "stderr",
+            ),
         )
       : [];
     if (windows) await mkdir(this.layout.nativeRuntimes, { recursive: true });
@@ -1386,6 +1422,32 @@ export class StudioCore {
     });
   }
 
+  /** The person's answer to a game's microphone ask in Live's bar, and the game's state after it. */
+  answerPreviewMic(project: string, allow: boolean): PreviewAiState {
+    this.previewMic.answer(project, allow);
+    return this.previewAi.state(project);
+  }
+
+  /** Practice helpers beside the previews, run like `genex__cli` runs the CLI. */
+  #createPreviewAi(): PreviewAiService {
+    const cli = (): GenexCliService => {
+      this.#cli ??= this.#genexCli();
+      return this.#cli;
+    };
+    return new PreviewAiService(
+      {
+        launch: (project, live) => cli().practiceLaunch(project, live),
+        spawn: (request) => this.sandbox.spawnLongLived(request),
+        signedIn: () => cli().signedIn(),
+        hasDraft: (project) => cli().hasHostedProject(project),
+        liveAllowed: () => this.options.previewAiLive === true,
+        emit: (state) => this.emit(UiEvent.PreviewAi, state),
+        reloadLive: (project) => this.#previews.reloadLiveFor(project),
+      },
+      LIVE_HANDLE,
+    );
+  }
+
   #genexCli(): GenexCliService {
     const stand = this.options.genexStand;
     return new GenexCliService({
@@ -1405,6 +1467,7 @@ export class StudioCore {
       boundGame: (binding) =>
         boundGameFolder(binding, { gameDir: (project) => this.games.dirFor(project), scratch: this.layout.scratch }),
       ...(this.options.execPath ? { execPath: this.options.execPath } : {}),
+      ...(this.options.genexCli ? { cliPath: this.options.genexCli } : {}),
     });
   }
 
@@ -1622,6 +1685,7 @@ export class StudioCore {
       EngineId.Antigravity,
       EngineId.Genex,
       EngineId.OpenRouter,
+      EngineId.Pi,
     ]);
   }
 
@@ -1637,6 +1701,7 @@ export class StudioCore {
       toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
       lockRecovery: path.join(this.layout.engineHomes, LOCK_RECOVERY_DIR),
       onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.Antigravity }),
+      ...(this.options.openPage ? { openPage: this.options.openPage } : {}),
     });
   }
 
@@ -1692,14 +1757,21 @@ export class StudioCore {
         onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.Cursor }),
       }),
       this.#antigravityEngine(),
-      // Metered: OpenCode on whatever the person signed it in to, OpenRouter on the key pasted in
-      // Settings. Registered like the subscriptions, so the picker can offer them.
+      // Metered: OpenCode, Pi or Grok Build on whatever the person signed them in to, OpenRouter on
+      // the key pasted in Settings. Registered like the subscriptions, so the picker can offer them.
       new OpenCodeEngine({
         scratchRoot: path.join(this.layout.scratch, EngineId.OpenCode),
         protectedPaths: this.#protectedPaths(),
         toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
         lockRecovery: path.join(this.layout.engineHomes, LOCK_RECOVERY_DIR),
         onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.OpenCode }),
+      }),
+      new PiEngine({
+        scratchRoot: path.join(this.layout.scratch, EngineId.Pi),
+        protectedPaths: this.#protectedPaths(),
+        toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
+        lockRecovery: path.join(this.layout.engineHomes, LOCK_RECOVERY_DIR),
+        onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.Pi }),
       }),
       // Grok Build on the person's own Grok sign-in, in the studio's sandbox as OpenCode is (a
       // Bypass chat's builds run as the person, as Codex's do).
@@ -1902,6 +1974,8 @@ export class StudioCore {
     // A pause appended before `start()` may have planned a resume: it, and the hold on the Mac
     // awake that it asked for, end with the core either way.
     this.#autoResume.dispose();
+    // No practice helper outlives the app, started or not.
+    await this.previewAi.stopAll().catch(() => {});
     // `init()` opened the sandbox and the job registry, so a core that never started still stops
     // the jobs it was handed and gives the sandbox back.
     if (!this.#started) {

@@ -53,6 +53,7 @@ import {
   signInRenewal,
 } from "./grok-cli.ts";
 import { grokStderrStatus, grokStream, parseGrokLine, type Translated } from "./grok-events.ts";
+import { RENEWAL_RETRY_MS } from "./sign-in-renewal.ts";
 import {
   type CompleteRequest,
   type CompleteResponse,
@@ -99,8 +100,6 @@ const STDERR_TAIL_CHARS = 4_000;
 const PROMPT_FILE = "prompt.json";
 /** How a run's own folder in the sandbox's temporary folder is named. */
 const RUN_FOLDER_PREFIX = "prompt-";
-/** How long a sign-in a renewal left as it was waits before it is tried again: offline, xAI down. */
-const RENEWAL_RETRY_MS = 5 * MINUTE_MS;
 /** The sandbox's temporary folder under the engine's scratch root. */
 const TEMPORARY_DIR = "tmp";
 /** The usage counts each model response reports, added up over a run cut short before its end. */
@@ -559,6 +558,7 @@ export class GrokEngine implements Engine {
           scratchDir: path.join(this.#scratchRoot, TEMPORARY_DIR),
           secretPaths: [...this.#protectedPaths, ...denyReads],
           home: this.#home,
+          platform: this.#platform,
           ...(this.#toolPath ? { toolPath: this.#toolPath } : {}),
         });
     return {

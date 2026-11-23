@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, realpath, symlink } from "node:fs/promises";
+import { mkdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import {
   editorStatus,
@@ -9,6 +9,7 @@ import {
   readDescriptor,
   runCommand,
 } from "../../src/plugins/unity/pipeline.ts";
+import { FILE_LINKS, linkFile, linkFolder } from "../helpers/links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import {
   droppedConnection,
@@ -21,13 +22,46 @@ import {
 } from "../helpers/unity-editor-stand-in.ts";
 
 const { pid: PID, port: PORT, token: TOKEN } = STAND_IN;
+/** The descriptor's own fields, and the capabilities Pipeline 1.0.0 wrote on Unity 6000.6.0f1. */
+const DESCRIPTOR = { pid: PID, port: PORT, evalToken: TOKEN };
+const GROUPED_CAPABILITIES = [
+  "exec.argv",
+  "exec.commandLine",
+  "exec.commandTimeouts",
+  "transport.pipelineProtocol",
+  "pipeline.terminal",
+  "tests.camelCase",
+];
+/** A project open in an editor whose Pipeline groups its commands (0.9 and later). */
+async function openGroupedProject(): Promise<string> {
+  const root = await openProject();
+  await writeDescriptor(root, { ...DESCRIPTOR, capabilities: GROUPED_CAPABILITIES });
+  return root;
+}
 
 describe("the descriptor of an editor's Pipeline server", () => {
   it("names the port, the token and the editor's process", async () => {
     const root = await openProject();
-    assert.deepEqual(await readDescriptor(root), { pid: PID, port: PORT, token: TOKEN });
+    assert.deepEqual(await readDescriptor(root), { pid: PID, port: PORT, token: TOKEN, grouped: false });
     await writeDescriptor(root, { pid: PID, port: PORT, evalToken: TOKEN, unityVersion: "6000.6.0f1", mode: "editor" });
-    assert.deepEqual(await readDescriptor(root), { pid: PID, port: PORT, token: TOKEN, unityVersion: "6000.6.0f1" });
+    assert.deepEqual(await readDescriptor(root), {
+      pid: PID,
+      port: PORT,
+      token: TOKEN,
+      grouped: false,
+      unityVersion: "6000.6.0f1",
+    });
+  });
+
+  it("says whether the editor's commands are grouped, as Pipeline 0.9 and later list them", async () => {
+    const root = await openProject();
+    // What 0.8.0-exp.1 and 1.0.0 each wrote on Unity 6000.6.0f1.
+    await writeDescriptor(root, { ...DESCRIPTOR, capabilities: ["exec.argv", "exec.commandLine"] });
+    assert.equal((await readDescriptor(root))?.grouped, false);
+    await writeDescriptor(root, { ...DESCRIPTOR, capabilities: GROUPED_CAPABILITIES });
+    assert.equal((await readDescriptor(root))?.grouped, true);
+    await writeDescriptor(root, { ...DESCRIPTOR, capabilities: "exec.commandTimeouts" });
+    assert.equal((await readDescriptor(root))?.grouped, false, "capabilities that are no list name none");
   });
 
   it("is not believed unless it is a plain file of the project naming a usable port and token", async () => {
@@ -36,17 +70,7 @@ describe("the descriptor of an editor's Pipeline server", () => {
       ["no descriptor", async () => {}],
       [
         "a Library folder that is a link out of the project",
-        (root) => symlink(path.join(outside, "Library"), path.join(root, "Library")),
-      ],
-      [
-        "a descriptor that is a link out of the project",
-        async (root) => {
-          await mkdir(path.join(root, "Library", "Pipeline"), { recursive: true });
-          await symlink(
-            path.join(outside, "Library", "Pipeline", ".unity-pipeline-port"),
-            path.join(root, "Library", "Pipeline", ".unity-pipeline-port"),
-          );
-        },
+        (root) => linkFolder(path.join(outside, "Library"), path.join(root, "Library")),
       ],
       [
         "a descriptor that is a folder",
@@ -74,6 +98,18 @@ describe("the descriptor of an editor's Pipeline server", () => {
         (root) => writeDescriptor(root, { pid: PID, port: PORT, evalToken: TOKEN, pad: "x".repeat(17_000) }),
       ],
     ];
+    // A linked file can be made only where the computer allows it (helpers/links.ts).
+    if (FILE_LINKS)
+      unbelieved.push([
+        "a descriptor that is a link out of the project",
+        async (root) => {
+          await mkdir(path.join(root, "Library", "Pipeline"), { recursive: true });
+          await linkFile(
+            path.join(outside, "Library", "Pipeline", ".unity-pipeline-port"),
+            path.join(root, "Library", "Pipeline", ".unity-pipeline-port"),
+          );
+        },
+      ]);
     for (const [what, arrange] of unbelieved) {
       const root = await realpath(await tmpDir("unity-pipeline-"));
       await arrange(root);
@@ -143,6 +179,34 @@ describe("a call to the editor's Pipeline server", () => {
     ]);
   });
 
+  it("lists a grouped catalogue by the names that run its commands, as Pipeline 1.0.0 answers it", async () => {
+    const root = await openGroupedProject();
+    const { deps } = editor([
+      json(200, {
+        commands: [
+          // Two entries of 1.0.0's own answer: `name` is only the last word, which groups share.
+          { command: "scene save", name: "save", group: "scene", description: "Save a scene", tags: ["scenes"] },
+          { command: "editor.playmode stop", name: "stop", group: "editor.playmode", readOnly: false },
+          { command: "settings.runtime_pipeline get", name: "get", group: "settings.runtime_pipeline" },
+          { command: "scene  save", name: "save" },
+          { command: "scene save extra", name: "save" },
+          { command: "Scene save", name: "save" },
+          { command: ".scene save", name: "save" },
+          { command: `${"a".repeat(96)} save`, name: "save" },
+        ],
+        count: 8,
+        server: { version: "1.0.0" },
+      }),
+    ]);
+    const listed = await listCommands(root, deps);
+    assert.ok(listed.ok);
+    assert.deepEqual(
+      listed.result.map((command) => command.name),
+      ["scene save", "editor.playmode stop", "settings.runtime_pipeline get"],
+      "an entry whose command is no group and name is dropped, never listed by its last word",
+    );
+  });
+
   it("reads a catalogue answered as a bare list too", async () => {
     const root = await openProject();
     const { deps } = editor([json(200, [{ name: "editor_stop", description: "Leave Play mode" }])]);
@@ -168,6 +232,27 @@ describe("a call to the editor's Pipeline server", () => {
         redirect: "error",
       },
     ]);
+  });
+
+  it("sends Genex's own commands under the name the editor that gets them knows", async () => {
+    const call = { command: "editor.playmode stop", parameters: {} };
+    const grouped = editor([json(200, { success: true, result: null })]);
+    await runCommand(await openGroupedProject(), call, grouped.deps);
+    assert.deepEqual(grouped.seen[0]?.body, call, "0.9 and later run it as it is");
+    const flat = editor([json(200, { success: true, result: {} })]);
+    await runCommand(await openProject(), call, flat.deps);
+    assert.deepEqual(flat.seen[0]?.body, { command: "editor_stop", parameters: {} }, "0.8 knows one flat word");
+  });
+
+  it("sends any other command as it was named, to either editor", async () => {
+    for (const open of [openProject, openGroupedProject]) {
+      for (const command of ["gameobject create", "create_gameobject", "scene save"]) {
+        const { deps, seen } = editor([json(200, { success: true, result: null })]);
+        await runCommand(await open(), { command, parameters: {} }, deps);
+        const sent = open === openProject && command === "scene save" ? "save_scene" : command;
+        assert.deepEqual(seen[0]?.body, { command: sent, parameters: {} });
+      }
+    }
   });
 
   it("says the project is not open, asking nobody, with no descriptor or one whose editor is gone", async () => {

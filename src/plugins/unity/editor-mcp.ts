@@ -37,6 +37,7 @@ import {
   runCommand,
   systemPipelineDeps,
 } from "./pipeline.ts";
+import { canonicalCommand, EditorCommand, listedScenes, NAME_THE_SCENE } from "./pipeline-commands.ts";
 
 const BRIDGE_VERSION = "0.1.0";
 /** The most of a command's result handed to the agent as text. */
@@ -48,16 +49,20 @@ const MAX_IMAGE_DEPTH = 6;
 const PNG = "png";
 const PNG_MIME = "image/png";
 
-/** The Pipeline commands the bridge itself knows by name. Wire values: Pipeline's own. */
+/** The Pipeline commands the bridge itself knows, whichever way the editor that lists them spells them. */
 const Command = {
-  Batch: "batch",
-  SaveAll: "save_all",
-  SaveScene: "save_scene",
-  ListOpenScenes: "list_open_scenes",
-  Play: "editor_play",
-  Stop: "editor_stop",
-  Capture: "capture_game_view",
+  Batch: EditorCommand.Batch,
+  SaveAll: EditorCommand.SaveAll,
+  SaveScene: EditorCommand.SaveScene,
+  ListOpenScenes: EditorCommand.ListOpenScenes,
+  Play: EditorCommand.Play,
+  Stop: EditorCommand.Stop,
+  Capture: EditorCommand.Capture,
 } as const;
+
+/** Whether `name`, as an agent took it from the editor's catalogue, is the command `known`. */
+const names = (name: unknown, known: EditorCommand): boolean =>
+  typeof name === "string" && canonicalCommand(name) === known;
 
 /** The bridge's tools, by the names agents call. Wire values: never rename one. */
 export const EditorTool = {
@@ -85,15 +90,14 @@ const MESSAGE = {
     `${command} was sent and Unity gave no answer, so whether it took effect is unknown. Look before you repeat it.`,
   [PipelineProblem.Stalled]:
     "Unity's server answers but its main thread ran nothing, so the command did not run: it is in a long import or bake, or showing a dialog nobody answered. Call again in a minute; if it is still so and nobody is at the computer, call unity__restart-editor, which ends Unity and opens the project again (unsaved editor work is lost).",
-  UntitledScene:
-    "An open scene has never been saved, so Unity would ask for its file name in a save panel, which stalls the editor until someone answers it. Call save_scene with a path under Assets/ (such as Scenes/Main.unity) first; then save_all works.",
+  UntitledScene: `An open scene has never been saved, so this save has no file to write (an older Unity connector would ask for its name in a save panel, which stalls the editor until someone answers it). To keep it, ${NAME_THE_SCENE}; then the save works.`,
   ImageAttached: (n: number) => `[image ${n} attached]`,
   ImageOmitted: `[image omitted: at most ${MAX_IMAGES} per answer]`,
   [GateRefusal.NotACommand]: "command must be the name of a command from list_commands.",
   [GateRefusal.NotParameters]:
     "parameters must be an object (for batch: operations is a list of { id?, command, params }).",
   [GateRefusal.Denied]: (command: string) =>
-    `${command} is not available to agents: running C# text that is in no file (eval, eval_file), quitting Unity or opening another project in it (quit, or such a menu item), Pipeline's authoring root and runtime settings, and a batch inside a batch are left out, in a batch's operations too. To run code, write a C# file into the project and call run_script on it, or let Unity compile it; to quit Unity, call unity__quit-editor, which saves first; to start it over, call unity__restart-editor.`,
+    `${command} is not available to agents: running C# text that is in no file (script eval; eval and eval_file on an older Pipeline), quitting Unity or opening another project in it (editor quit, or such a menu item), Pipeline's authoring root and runtime settings, and a batch inside a batch are left out, in a batch's operations too. To run code, write a C# file into the project and call script run on it (run_script where list_commands names it so), or let Unity compile it; to quit Unity, call unity__quit-editor, which saves first; to start it over, call unity__restart-editor.`,
   [GateRefusal.PathOutside]: (parameter: string) =>
     `${parameter} must name a file or folder inside this game's folder (in a batch, spelled out, not taken from an earlier operation).`,
   Cut: (chars: number) => `\n[cut: the result was ${chars} characters]`,
@@ -204,7 +208,7 @@ type Sent = { command: string; parameters: Record<string, unknown> };
 
 /** The commands a call runs: its own, and for a batch each operation's. */
 function commandsOf(sent: Sent): Sent[] {
-  if (sent.command !== Command.Batch) return [sent];
+  if (!names(sent.command, Command.Batch)) return [sent];
   const operations = Array.isArray(sent.parameters.operations) ? sent.parameters.operations : [];
   return operations.filter(isJsonObject).map((operation) => ({
     command: String(operation.command),
@@ -219,7 +223,7 @@ function sizedCapture(parameters: Record<string, unknown>, size: Record<string, 
 
 /** One operation of a batch, its capture sized as {@link sizedCaptures} says. */
 function sizedOperation(operation: unknown, size: Record<string, number>): unknown {
-  if (!isJsonObject(operation) || operation.command !== Command.Capture) return operation;
+  if (!isJsonObject(operation) || !names(operation.command, Command.Capture)) return operation;
   const params = isJsonObject(operation.params) ? operation.params : {};
   return { ...operation, params: sizedCapture(params, size) };
 }
@@ -231,20 +235,20 @@ function sizedOperation(operation: unknown, size: Record<string, number>): unkno
  * the agent's transcript for the rest of its session. A size the agent names is kept.
  */
 function sizedCaptures(sent: Sent, catalogue: readonly PipelineCommand[]): Sent {
-  const capture = catalogue.find((command) => command.name === Command.Capture);
+  const capture = catalogue.find((command) => names(command.name, Command.Capture));
   const takes = new Set(capture?.parameters.map((parameter) => parameter.name));
   const size = Object.fromEntries(Object.entries(ENGINE_PLAY_VIEW).filter(([name]) => takes.has(name)));
   if (Object.keys(size).length === 0) return sent;
-  if (sent.command === Command.Capture) return { ...sent, parameters: sizedCapture(sent.parameters, size) };
+  if (names(sent.command, Command.Capture)) return { ...sent, parameters: sizedCapture(sent.parameters, size) };
   const operations = sent.parameters.operations;
-  if (sent.command !== Command.Batch || !Array.isArray(operations)) return sent;
+  if (!names(sent.command, Command.Batch) || !Array.isArray(operations)) return sent;
   const sized = operations.map((operation) => sizedOperation(operation, size));
   return { ...sent, parameters: { ...sent.parameters, operations: sized } };
 }
 
 /** Whether a command saves a scene under the name it already has, which an untitled scene has none of. */
 const savesUnnamed = ({ command, parameters }: Sent): boolean =>
-  command === Command.SaveAll || (command === Command.SaveScene && typeof parameters.path !== "string");
+  names(command, Command.SaveAll) || (names(command, Command.SaveScene) && typeof parameters.path !== "string");
 
 /**
  * Why a save must not be sent, if it must not: an open scene with no name would make Unity ask for
@@ -255,15 +259,14 @@ async function unnamedSave(call: Call, sent: Sent): Promise<ToolResult | undefin
   const listing = { command: Command.ListOpenScenes, parameters: {} };
   const answer = await runCommand(call.at.root, listing, call.deps, { signal: call.signal });
   if (!answer.ok) return problemResult(answer, sent.command);
-  const scenes = isJsonObject(answer.result) && Array.isArray(answer.result.scenes) ? answer.result.scenes : [];
-  const untitled = scenes.some((scene) => isJsonObject(scene) && scene.path === "");
+  const untitled = listedScenes(answer.result).some((scene) => scene.path === "");
   return untitled ? errorResult(MESSAGE.UntitledScene) : undefined;
 }
 
 /** The last play or stop a call runs, alone or in a batch: what the editor's Play mode ends up as. */
 const lastPlayChange = (sent: Sent): string | undefined =>
   commandsOf(sent)
-    .map(({ command }) => command)
+    .map(({ command }) => canonicalCommand(command))
     .filter((command) => command === Command.Play || command === Command.Stop)
     .at(-1);
 
@@ -273,7 +276,7 @@ const lastPlayChange = (sent: Sent): string | undefined =>
  * never started is forgotten by the lock's probe once it sees the editor stopped.
  */
 async function markPlay(call: Call, sent: Sent): Promise<void> {
-  if (commandsOf(sent).some(({ command }) => command === Command.Play))
+  if (commandsOf(sent).some(({ command }) => names(command, Command.Play)))
     await call.agentPlay.started().catch(() => undefined);
 }
 

@@ -641,6 +641,7 @@ describe("SEC-3: both CLIs' sign-in homes are off limits to every agent process"
     const defaults = [
       at("Users", "me", ".codex"),
       at("Users", "me", ".claude"),
+      at("Users", "me", ".pi"),
       at("Users", "me", ".local", "share", "opencode"),
       at("Users", "me", ".grok"),
       at("Users", "me", ".cursor"),

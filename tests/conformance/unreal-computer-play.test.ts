@@ -21,7 +21,7 @@ import {
 import { createComputerPlay, unrealKey } from "../../src/plugins/unreal/computer-play.ts";
 import { createEditorQueue, LoopTool } from "../../src/plugins/unreal/editor-queue.ts";
 import { tmpDir } from "../helpers/tmp.ts";
-import { playable, TEST, written } from "../helpers/unreal-editor-stand-in.ts";
+import { playable, TEST, THROTTLE, written } from "../helpers/unreal-editor-stand-in.ts";
 
 const STORAGE = "/storage";
 const GAME = "valley";
@@ -56,6 +56,69 @@ function playTools(
 }
 
 describe("the Unreal plugin's play tools for the computer", () => {
+  // Unreal 5.9 runs no tool for the frames a settings change blocks it, and says so only in words.
+  it("starts play again when the editor refused the first start for a moment", async () => {
+    let refusals = 1;
+    const lead = playTools({
+      overrides: {
+        [LoopTool.StartPlay]: () => {
+          if (refusals-- > 0) throw new Error("Not run: the Unreal Editor is running a slow task.");
+          lead.editor.state.pie = true;
+          return true;
+        },
+      },
+    });
+    assert.deepEqual(await lead.call(EnginePlayTool.Open), { ...ENGINE_PLAY_VIEW, joined: false });
+    assert.equal(lead.tools().filter((tool) => tool === LoopTool.StartPlay).length, 2);
+  });
+
+  it("gives the throttle back at close though switching the light blocks the editor for a moment", async () => {
+    const BLOCK_MS = 100;
+    let blockedUntil = 0;
+    const busy = () => lead.deps.now() < blockedUntil;
+    const lead = playTools({
+      overrides: {
+        [LoopTool.LightPlay]: (args) => {
+          blockedUntil = lead.deps.now() + BLOCK_MS;
+          return { light: args.on === true };
+        },
+        [LoopTool.SetProperties]: (args) => {
+          if (busy()) throw new Error("Not run: the Unreal Editor is running a slow task.");
+          lead.editor.state.throttle = JSON.parse(String(args.values))[THROTTLE];
+          return true;
+        },
+        [LoopTool.StartPlay]: () => {
+          if (busy()) throw new Error("Not run: the Unreal Editor is running a slow task.");
+          lead.editor.state.pie = true;
+          return true;
+        },
+      },
+    });
+    assert.deepEqual(await lead.call(EnginePlayTool.Open), { ...ENGINE_PLAY_VIEW, joined: false });
+    assert.equal(
+      lead.tools().filter((tool) => tool === LoopTool.StartPlay).length,
+      1,
+      "the start waited the block out",
+    );
+    assert.deepEqual(await lead.call(EnginePlayTool.Close), { closed: true });
+    assert.equal(lead.editor.state.throttle, true, "the throttle went back as it was");
+    assert.deepEqual(lead.tools().filter((tool) => tool === LoopTool.LightPlay).length, 2, "the light went back too");
+  });
+
+  it("gives the throttle back, and keeps no session, when play can't start", async () => {
+    const { call, editor, tools } = playTools({
+      overrides: {
+        [LoopTool.StartPlay]: () => {
+          throw new Error("The level has errors.");
+        },
+      },
+    });
+    await assert.rejects(call(EnginePlayTool.Open), /The level has errors\./);
+    assert.equal(tools().filter((tool) => tool === LoopTool.StartPlay).length, 2, "one more try, no more");
+    assert.deepEqual(written(editor.calls), [false, true], "the throttle went back as it was");
+    assert.deepEqual(await call(EnginePlayTool.Close), { closed: false }, "no session was kept");
+  });
+
   it("starts play with the throttle off, and ends that play and gives the throttle back when it closes", async () => {
     const { call, editor, tools } = playTools();
     assert.deepEqual(await call(EnginePlayTool.Open), { ...ENGINE_PLAY_VIEW, joined: false });

@@ -171,6 +171,21 @@ export async function readGenexGameManifest(dir: string): Promise<GenexGameManif
   return templateGenexManifest(html, parsedJson(await readOwnFile(dir, TEMPLATE_GENEX_SETTINGS)));
 }
 
+/** The capability a game declares to be given the microphone on its Genex page (and in Live). */
+const MICROPHONE_CAPABILITY = "microphone";
+
+/**
+ * Whether a game declares the microphone: `"genex": {"capabilities": ["microphone"]}` in its
+ * package.json, or the same `capabilities` in a template game's `genex.json`. An undeclared game is
+ * refused the microphone without the person being asked, as on its Genex page.
+ */
+export async function declaresMicrophone(dir: string): Promise<boolean> {
+  const pkg = parsedJson(await readOwnFile(dir, "package.json"));
+  const settings = isRecord(pkg) ? pkg.genex : parsedJson(await readOwnFile(dir, TEMPLATE_GENEX_SETTINGS));
+  const capabilities = isRecord(settings) ? settings.capabilities : undefined;
+  return Array.isArray(capabilities) && capabilities.includes(MICROPHONE_CAPABILITY);
+}
+
 /** Whether a game's Genex manifest loads Genex's multiplayer. */
 export const manifestUsesMultiplayer = (manifest: GenexGameManifest | undefined): boolean =>
   manifest?.dependencies[MULTIPLAYER_PACKAGE] !== undefined;

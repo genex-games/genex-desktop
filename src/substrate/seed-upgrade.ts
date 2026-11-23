@@ -14,6 +14,10 @@
  *  - workspace hash == manifest hash  → agent untouched → apply the new seed ("updated")
  *  - workspace hash != manifest hash  → agent edited it → LEAVE IT           ("kept")
  *  - in the manifest but deleted      → agent deleted it → leave it deleted  ("kept")
+ *    unless the app took it itself, and it is laid down again                ("added"):
+ *    the workspace's history never held the file (a rewind went back to before the seed shipped
+ *    it), or the app retired the path and this seed ships a different file there. The same bytes
+ *    at a retired path are an older build's seed, and stay out.
  *
  * There is a fifth outcome, for a path the seed used to ship and no longer does: when the
  * workspace copy still hashes to what the manifest last applied, it is backed up and removed
@@ -311,6 +315,13 @@ export interface ApplySeedOptions {
   /** The clock an archive's folder is dated by (seed-archive.ts); the wall clock when absent. */
   now?: () => Date;
   /**
+   * Whether the history the workspace stands on has ever held `rel` (the core asks the harness
+   * repository). A file the manifest knows, missing from a history that never held it, was taken
+   * by a rewind to before the seed shipped it, not deleted by the agent: it is laid down again.
+   * Without this, every missing file stays the agent's deletion.
+   */
+  everHeld?: (rel: string) => Promise<boolean>;
+  /**
    * Lays the seed's `files` into an empty workspace on a first launch, instead of a copy: the core
    * makes the workspace's repository as it does (`checkOutNewRepo`).
    */
@@ -359,6 +370,8 @@ interface SeedPass {
   report: SeedUpgradeReport;
   /** Every path this seed ships. */
   seedRels: ReadonlySet<string>;
+  /** rel → when the app itself removed it (the manifest's `retired`), less what this seed ships anew. */
+  retired: Record<string, string>;
   /** Upgrading into the archive epoch: the archive's real folder and what went into it; else null. */
   archive: (SeedArchive & { abs: string }) | null;
 }
@@ -410,7 +423,8 @@ export async function applySeed(options: ApplySeedOptions): Promise<SeedUpgradeR
   // is the one the loop would read.
   const targetHashes = await hashTargets(options.workspaceDir, [...seedHashes.keys()]);
   const seedRels = new Set(seedHashes.keys());
-  const pass: SeedPass = { options, manifest, applied, deferred, targetHashes, report, seedRels, archive };
+  const retired = { ...(body?.retired ?? {}) };
+  const pass: SeedPass = { options, manifest, applied, deferred, targetHashes, report, seedRels, archive, retired };
 
   for (const [rel, seedHash] of [...seedHashes.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) {
     await applySeedFile(pass, rel, seedHash);
@@ -507,13 +521,44 @@ async function applySeedFile(pass: SeedPass, rel: string, seedHash: string): Pro
   // With a manifest, `lastApplied` is known here (a brand-new file returned above); without one
   // (a pre-manifest install, which predates all self-edits) it is null and the file is the app's.
   if (lastApplied !== null && targetHash !== lastApplied) {
-    // The epoch's one exception: an edit of a file this seed changes is archived and replaced.
-    const archived = seedHash !== lastApplied && (await archiveEdit(pass, rel, seedHash, targetHash));
-    if (!archived) keepAgentVersion(pass, rel, targetHash, lastApplied);
+    await applyOverDivergedFile(pass, rel, seedHash, { targetHash, lastApplied });
     return;
   }
   // Untouched since last seeding (or pre-manifest install, which predates all self-edits).
   await layDownSeedFile(pass, rel, seedHash, targetHash);
+}
+
+/**
+ * A file that no longer matches what the seed last applied there is the agent's. A missing one is
+ * not when the app took it itself: by retiring the path, where this seed ships a new file, or by
+ * a rewind. The files that import it are brought up to date by this very pass, so it is laid down.
+ */
+async function applyOverDivergedFile(
+  pass: SeedPass,
+  rel: string,
+  seedHash: string,
+  { targetHash, lastApplied }: { targetHash: string | null; lastApplied: string },
+): Promise<void> {
+  const shippedAnew = rel in pass.retired && seedHash !== lastApplied;
+  if (targetHash === null && (shippedAnew || (await takenByRewind(pass, rel)))) {
+    delete pass.retired[rel];
+    await layDownSeedFile(pass, rel, seedHash, null);
+    return;
+  }
+  // The epoch's one exception: an edit of a file this seed changes is archived and replaced.
+  const archived = seedHash !== lastApplied && (await archiveEdit(pass, rel, seedHash, targetHash));
+  if (!archived) keepAgentVersion(pass, rel, targetHash, lastApplied);
+}
+
+/**
+ * Whether a rewind, not the agent, removed this missing file: the history the workspace now stands
+ * on never held it, so nothing there could have deleted it. A restore goes back to a commit from
+ * before the seed shipped the file, while the files that import it are brought up to date by this
+ * very pass; left out, the harness would not load.
+ */
+async function takenByRewind(pass: SeedPass, rel: string): Promise<boolean> {
+  const { everHeld } = pass.options;
+  return everHeld !== undefined && !(await everHeld(rel));
 }
 
 /** A seed module the layout migration will lay down: the manifest keeps what it knew of it until then. */
@@ -619,7 +664,7 @@ function restoredByMigration(pass: SeedPass, rel: string): boolean {
 /** After every seed file: retirements, move notices, the manifest, and the report's mode. */
 async function finishSeedPass(pass: SeedPass, body: SeedManifest | null): Promise<void> {
   const { options, report, deferred } = pass;
-  const alreadyRetired = body?.retired ?? {};
+  const alreadyRetired = pass.retired;
   const retiredForEpoch = await retireForEpoch(pass, alreadyRetired);
   const retiredNow = [
     ...retiredForEpoch,
@@ -851,7 +896,8 @@ export interface ReconcileOptions {
  * content byte-matches a *known seed vintage* — the shipped seed itself, or a copy an earlier
  * upgrade backed up before replacing. Content that matches no vintage is genuinely the agent's
  * (hard constraint #1) and its manifest entry is left alone, missing files included: deletion
- * carries no bytes to match, so it stays an agent edit.
+ * carries no bytes to match. The next upgrade tells a file the rewind took from one the agent
+ * deleted by the workspace's history (`ApplySeedOptions.everHeld`).
  */
 export async function reconcileManifestWithSeedVintages(options: ReconcileOptions): Promise<{ reconciled: string[] }> {
   const body = await readManifest(options.manifestFile);

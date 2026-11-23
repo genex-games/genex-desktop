@@ -687,6 +687,7 @@ function ReviewLine({ review }: { review: ReviewLineView }): JSX.Element {
   return (
     <span className="sidebar-game-line" data-review-line={review.line} data-review-tone={review.tone}>
       {review.busy && <Dot tone="busy" />}
+      {review.icon && <Icon name={review.icon} size={12} strokeWidth={1.9} />}
       <span className="min-w-0 truncate">{review.text}</span>
     </span>
   );

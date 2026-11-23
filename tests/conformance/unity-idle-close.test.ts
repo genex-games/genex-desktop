@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, readdir, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { PluginHookContext } from "../../src/plugin-sdk/index.d.ts";
 import { UnityTool } from "../../src/plugins/unity/backend.ts";
@@ -16,6 +16,7 @@ import {
 } from "../../src/plugins/unity/editor-idle.ts";
 import { PIPELINE_VERSION } from "../../src/plugins/unity/pipeline.ts";
 import { HookEvent } from "../../src/shared/plugin-hooks.ts";
+import { linkFolder } from "../helpers/links.ts";
 import {
   type BackendOptions,
   backendOn,
@@ -264,7 +265,7 @@ describe("closing a Unity editor: the marks it keeps per game", () => {
     const storage = await realTmp("unity-marks-");
     const outside = await realTmp("unity-marks-outside-");
     await writeFile(path.join(outside, "lantern.json"), "{}");
-    await symlink(outside, path.join(storage, "runs"));
+    await linkFolder(outside, path.join(storage, "runs"));
     await runMarksOnce()(storage);
     assert.deepEqual(await everythingUnder(outside), ["lantern.json"], "what the link pointed to stays");
     assert.deepEqual(await everythingUnder(storage), [], "the link is gone");

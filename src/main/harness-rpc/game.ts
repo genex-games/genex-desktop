@@ -4,7 +4,7 @@ import path from "node:path";
 import { readFile, realpath } from "node:fs/promises";
 import { ensureDir, realpathNearest, writeFileNoFollow } from "../../substrate/fsx.ts";
 import { isImageFile } from "../../substrate/game-workspace.ts";
-import { ThreadKind } from "../../shared/event-log.ts";
+import { PROJECT_NAME_RE, slugFromName } from "../../shared/game-folder-name.ts";
 import { starterOfKind } from "../../shared/project-facts.ts";
 import {
   HostMethod,
@@ -15,6 +15,7 @@ import {
 import { UiEvent } from "../../shared/ui-events.ts";
 import { describeUnknownImage, sniffImage } from "../../substrate/image-sniff.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
+import { type GameThreadMeta, isGameThreadWithoutGame } from "../core/game-threads.ts";
 import { startHeldInPlan } from "../core/project-tools.ts";
 import { withEditorPlay } from "../core/editor-play-session.ts";
 import { isBelow, throughClaudeFolder, throughGitFolder } from "../../substrate/paths.ts";
@@ -115,15 +116,21 @@ async function scaffold(
   // No kind makes a game with no kind yet; the web starter only when the caller names it.
   const starter = starterOfKind(p.kind);
   if (starter === undefined) throw new Error(MESSAGE.onlyBrowserGames);
-  const options = p.title ? { title: p.title } : {};
-  const made = starter ? await core.games.scaffold(p.name, options) : await core.games.makeEmpty(p.name, options);
+  // A name the harness wrote as a project id is kept as it is; only one that cannot be a folder
+  // (a local model's non-ASCII name, say) is made into one, its words kept as the title.
+  const name = PROJECT_NAME_RE.test(p.name) ? p.name : slugFromName(p.name);
+  const title = p.title?.trim() || (name === p.name ? undefined : p.name.trim());
+  const options = title ? { title } : {};
+  const made = starter ? await core.games.scaffold(name, options) : await core.games.makeEmpty(name, options);
   const project = await x.readyProject(made);
-  // A brief sent from an unbound "new game" thread names that thread the moment the
-  // folder exists — the chat and the project become one thing.
+  // A chat that had no game (or whose game the library no longer lists) is named after the game
+  // the moment its folder exists — the chat and the project become one thing. A chat of a game
+  // still in the library keeps that game: making another folder in it never moves the chat.
   if (p.threadId && p.threadId !== core.mainThread) {
     const record = await core.store.getRecord(p.threadId).catch(() => null);
-    const meta = record?.metadata as { kind?: string; project?: string | null } | undefined;
-    if (meta?.kind === ThreadKind.Game && !meta.project) await core.bindThreadToProject(p.threadId, project.name);
+    const meta = record?.metadata as GameThreadMeta | undefined;
+    const games = new Set((await core.games.list()).map((game) => game.name));
+    if (meta && isGameThreadWithoutGame(meta, games)) await core.bindThreadToProject(p.threadId, project.name);
   }
   return project;
 }

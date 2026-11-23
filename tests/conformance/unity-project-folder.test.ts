@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   bridgeHome,
@@ -9,6 +9,7 @@ import {
   rememberedProject,
   rememberProject,
 } from "../../src/plugins/unity/project-folder.ts";
+import { FILE_LINKS, linkFile, linkFolder } from "../helpers/links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const VERSION_TEXT = "m_EditorVersion: 6000.6.0f1\nm_EditorVersionWithRevision: 6000.6.0f1 (abc123)\n";
@@ -70,20 +71,10 @@ describe("a game's Unity project folder", () => {
   it("never takes a project through a link, a hidden folder or node_modules", async () => {
     const outside = await makeProject(await realTmp("unity-outside-"));
     const hostile: Array<[string, (game: string) => Promise<unknown>]> = [
-      ["a subfolder that is a link to a project elsewhere", (game) => symlink(outside, path.join(game, "unity"))],
+      ["a subfolder that is a link to a project elsewhere", (game) => linkFolder(outside, path.join(game, "unity"))],
       [
         "a ProjectSettings folder that is a link",
-        (game) => symlink(path.join(outside, "ProjectSettings"), path.join(game, "ProjectSettings")),
-      ],
-      [
-        "a version file that is a link",
-        async (game) => {
-          await mkdir(path.join(game, "ProjectSettings"));
-          await symlink(
-            path.join(outside, "ProjectSettings", "ProjectVersion.txt"),
-            path.join(game, "ProjectSettings", "ProjectVersion.txt"),
-          );
-        },
+        (game) => linkFolder(path.join(outside, "ProjectSettings"), path.join(game, "ProjectSettings")),
       ],
       [
         "a version file that is a folder",
@@ -93,6 +84,18 @@ describe("a game's Unity project folder", () => {
       ["a project in node_modules", (game) => makeProject(path.join(game, "node_modules"))],
       ["a project in an engine's scratch folder", (game) => makeProject(path.join(game, "Library", "PackageCache"))],
     ];
+    // A linked file can be made only where the computer allows it (helpers/links.ts).
+    if (FILE_LINKS)
+      hostile.push([
+        "a version file that is a link",
+        async (game) => {
+          await mkdir(path.join(game, "ProjectSettings"));
+          await linkFile(
+            path.join(outside, "ProjectSettings", "ProjectVersion.txt"),
+            path.join(game, "ProjectSettings", "ProjectVersion.txt"),
+          );
+        },
+      ]);
     for (const [what, arrange] of hostile) {
       const game = await realTmp("unity-game-");
       await arrange(game);
@@ -154,7 +157,7 @@ describe("the record the editor connector reads", () => {
     const root = await makeProject(await realTmp("unity-game-"));
     const elsewhere = await makeProject(await realTmp("unity-elsewhere-"));
     const link = path.join(await realTmp("unity-links-"), "project");
-    await symlink(elsewhere, link);
+    await linkFolder(elsewhere, link);
     const write = (record: unknown) => writeFile(projectRecordFile(storage, "lantern"), JSON.stringify(record));
     await rememberProject(storage, "lantern", { root, game: root }, NOW);
 

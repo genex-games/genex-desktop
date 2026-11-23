@@ -15,6 +15,6 @@ export const BOARD_WORDS = {
   notThis: t("Not this"),
   chosen: t("Chosen"),
   tell: t("Tell Genex"),
-  drawing: (title: string) => t("Genex is drawing {title}", { title }),
+  drawing: t("Genex is drawing"),
   next: (title: string) => t("{title} · next", { title }),
 } as const;

@@ -204,6 +204,13 @@ const IDLE_STATUS = "idle";
 /** Does this status line say the thread is working (anything but empty or idle)? */
 export const isWorkingStatus = (status: string | undefined): boolean => Boolean(status && status !== IDLE_STATUS);
 
+/** Whether a chat of this game is working right now: its agent is in a turn. */
+export function projectWorking(state: Pick<ThreadsState, "records" | "status">, project: string): boolean {
+  return state.records.some(
+    (record) => threadMeta(record).project === project && isWorkingStatus(state.status[record.id]?.status),
+  );
+}
+
 /** Threads with a working status line (anything but idle). */
 export function busyThreadIds(status: ThreadStatusMap): Set<string> {
   return new Set(

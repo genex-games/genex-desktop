@@ -491,6 +491,9 @@ export interface Usage {
 export type MessageUsageSource = 'delegation';
 // ↑ src/shared/event-log.ts
 
+export type GenexLine = 'stopped' | 'stopped_waiting' | 'stopped_before_turn' | 'stopped_before_build' | 'model_out_of_memory';
+// ↑ src/shared/event-log.ts
+
 export type SnapshotScope = 'game' | 'harness' | 'both';
 // ↑ src/shared/event-log.ts
 
@@ -520,6 +523,8 @@ export type EventData =
       usage?: Usage;
       /** Whose engine call `usage` reports when it is not the chat's own: absent on the chat's own calls and older records. */
       usage_source?: MessageUsageSource;
+      /** One of Genex's own fixed lines, by code: the app shows its own words for it. Absent on every other reply. */
+      genex_line?: GenexLine;
     }
   | { type: "tool_requested"; tool_call_id: string; request: { name: string; arguments: unknown } }
   | {
@@ -798,7 +803,7 @@ export interface ModelCatalogStatus {
 }
 // ↑ src/shared/model-catalog.ts
 
-export type CodingProvider = "codex" | "claude-code" | "opencode" | "grok" | "cursor" | "antigravity";
+export type CodingProvider = "codex" | "claude-code" | "opencode" | "grok" | "cursor" | "pi" | "antigravity";
 // ↑ src/shared/coding-cli.ts
 
 export interface CodingCliStatus {
@@ -1199,6 +1204,8 @@ export type GameCover =
 
 export interface GameLibraryEntry {
   title?: string;
+  /** The game's name in the library, kept while it is removed so no new game takes it back. */
+  name?: string;
   pinned?: boolean;
   removed?: boolean;
   /** Folder trust is host metadata; project files cannot grant it. */
@@ -1653,7 +1660,7 @@ export interface BuildObservation {
 export type JobRole = 'lead' | 'chat' | 'worker';
 // ↑ src/shared/jobs.ts
 
-export type JobState = 'failed' | 'running' | 'succeeded' | 'stopped' | 'timed_out' | 'interrupted';
+export type JobState = 'stopped' | 'failed' | 'running' | 'succeeded' | 'timed_out' | 'interrupted';
 // ↑ src/shared/jobs.ts
 
 export type JobStopper = 'person' | 'agent' | 'scope_ended' | 'quit';

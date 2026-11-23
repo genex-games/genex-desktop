@@ -68,7 +68,8 @@ host for arrives over the harness RPC, which is therefore an untrusted surface:
   inside the exports folder. EventStore thread and artifact ids are plain names, and
   `saveRunArtifact` resolves inside `runs/<runId>/`.
 - A revision the harness names must resolve to a commit (`resolveCommit`) and reaches git after
-  `--end-of-options`. Host git always runs with `HOST_GIT_CONFIG`
+  `--end-of-options`; `reset` takes the resolved hash and a closing `--` instead, because Git
+  2.43.0 refuses that option there. Host git always runs with `HOST_GIT_CONFIG`
   (`-c core.fsmonitor= -c core.hooksPath=/dev/null`), so a repository's config cannot make the
   host run a program.
 - The harness cannot choose its own rewind target; see [Snapshots and health](#snapshots-and-health).
@@ -138,6 +139,10 @@ scope: Codex's cover pre-existing files, never directories; the Claude hook matc
   install's length (counted, restored in `finally`). The Install packages button, `genex__package`
   (an exact-pinned `GENEX_GAME_PACKAGES` entry) and a remix's script-free `installGuarded` open
   it. No build starts meanwhile; agents' commands still reach it.
+- **A coding CLI's hosts are open to every sandboxed process while one of its sessions runs**, as
+  the registry and the API are above. The allow-list is the union of every running sandbox's on
+  macOS and Linux, as Windows' grant session's is, so a sandbox that ends never closes a host
+  another still needs (Antigravity's sign-in waiting for its code beside a status check).
 - **A remix's setup scripts run** once trusted (Run setup scripts).
 - **Builds are confined on macOS and Linux only, and for writes**: a build can copy home files
   into the output Publish uploads.
@@ -481,6 +486,11 @@ moved and retired:
 - The manifest keeps entries for paths the booting seed does not ship, so an older build cannot
   orphan a newer file; a file the manifest does not know is re-owned when its bytes match a
   backed-up seed vintage.
+- A shipped file the agent deleted stays deleted. A missing file the app took itself is laid down
+  again, since the same boot brings the files that import it up to date: one the harness
+  repository's history never held (a rewind to before the seed shipped it, `everHeld`), and a
+  retired path where the seed now ships a different file (the same bytes are an older build's seed
+  and stay out).
 - A retired path (`RETIRED_SEED_PATHS`) is backed up and removed only when its bytes match a
   vintage; its entry stays, marked retired, and nothing retires without a backup directory. The
   one pre-manifest pass retires too and writes the entry as it removes the file.

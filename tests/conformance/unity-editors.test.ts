@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   compareVersions,
@@ -10,8 +10,9 @@ import {
   isUnity6,
   shippedPackages,
 } from "../../src/plugins/unity/editors.ts";
+import { linkFolder } from "../helpers/links.ts";
 import { tmpDir } from "../helpers/tmp.ts";
-import { fakeEditor, macEnv } from "../helpers/unity-editor-stand-in.ts";
+import { fakeEditor, macEnv, macPath } from "../helpers/unity-editor-stand-in.ts";
 
 describe("Unity versions", () => {
   it("orders versions the later one first, release kind and number included", () => {
@@ -42,10 +43,16 @@ describe("Unity versions", () => {
 });
 
 describe("the Unity editors installed on this computer", () => {
-  it("finds editors in Hub's own folder and in the one the person chose, newest first, each version once", async () => {
+  // The stand-in Mac lives in this computer's temporary folder, whose path on Windows (C:\…) is not
+  // one a Mac calls absolute, so the app rightly does not believe Hub's record of it there.
+  const macFoldersOnly = process.platform === "win32" ? "a Mac's absolute folder cannot be made on Windows" : false;
+
+  it("finds editors in Hub's own folder and in the one the person chose, newest first, each version once", {
+    skip: macFoldersOnly,
+  }, async () => {
     const env = await macEnv();
-    const own = path.join(env.applications, "Unity", "Hub", "Editor");
-    const chosen = path.join(env.home, "Unity3D");
+    const own = macPath(env.applications, "Unity", "Hub", "Editor");
+    const chosen = macPath(env.home, "Unity3D");
     await fakeEditor(own, "6000.0.26f1");
     await fakeEditor(own, "2022.3.13f1");
     await fakeEditor(chosen, "6000.3.10f1");
@@ -57,18 +64,18 @@ describe("the Unity editors installed on this computer", () => {
 
     assert.deepEqual(await editorFolders(env), [own, chosen]);
     assert.deepEqual(await findEditors(env), [
-      { version: "6000.3.10f1", app: path.join(chosen, "6000.3.10f1", "Unity.app") },
-      { version: "6000.0.26f1", app: path.join(own, "6000.0.26f1", "Unity.app") },
-      { version: "2022.3.13f1", app: path.join(own, "2022.3.13f1", "Unity.app") },
+      { version: "6000.3.10f1", app: macPath(chosen, "6000.3.10f1", "Unity.app") },
+      { version: "6000.0.26f1", app: macPath(own, "6000.0.26f1", "Unity.app") },
+      { version: "2022.3.13f1", app: macPath(own, "2022.3.13f1", "Unity.app") },
     ]);
   });
 
   it("lists nothing that is not an editor in a folder named by its version", async () => {
     const env = await macEnv();
-    const own = path.join(env.applications, "Unity", "Hub", "Editor");
+    const own = macPath(env.applications, "Unity", "Hub", "Editor");
     const real = await fakeEditor(await realpath(await tmpDir("unity-elsewhere-")), "6000.3.10f1");
     await mkdir(path.join(own, "6000.3.10f1"), { recursive: true });
-    await symlink(real.app, path.join(own, "6000.3.10f1", "Unity.app"));
+    await linkFolder(real.app, path.join(own, "6000.3.10f1", "Unity.app"));
     await mkdir(path.join(own, "6000.1.0f1"), { recursive: true });
     await writeFile(path.join(own, "6000.1.0f1", "Unity.app"), "a file, not an app");
     await mkdir(path.join(own, "latest", "Unity.app"), { recursive: true });
@@ -79,7 +86,7 @@ describe("the Unity editors installed on this computer", () => {
 
   it("believes Hub's record of the person's folder only when it names a folder plainly", async () => {
     const env = await macEnv();
-    const own = path.join(env.applications, "Unity", "Hub", "Editor");
+    const own = macPath(env.applications, "Unity", "Hub", "Editor");
     const record = path.join(env.home, "Library", "Application Support", "UnityHub", "secondaryInstallPath.json");
     const unbelieved: Array<[string, string]> = [
       ["a relative folder", JSON.stringify("Unity3D")],

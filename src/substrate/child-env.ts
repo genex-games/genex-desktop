@@ -38,7 +38,7 @@ export type ChildEnvRequest =
        * The CLI's vendor: the other vendors' variables are dropped wholesale. `none` is a tool that
        * is no coding CLI (the Ollama server): every vendor's variables stay behind.
        */
-      vendor: "claude" | "codex" | "opencode" | "grok" | "cursor" | "antigravity" | "none";
+      vendor: "claude" | "codex" | "opencode" | "grok" | "cursor" | "pi" | "antigravity" | "none";
       /** Credential variables this child is meant to use — its own sign-in, never a metered key. */
       keep?: readonly string[];
       set?: Record<string, string | undefined>;
@@ -93,6 +93,7 @@ const VENDOR = {
   opencode: /^OPENCODE_/i,
   grok: /^(?:XAI|GROK)_/i,
   cursor: /^(?:CURSOR|AGENT_CLI)_/i,
+  pi: /^PI_/i,
   // Antigravity CLI and the Gemini CLI it replaced, whose folder and variables it still reads.
   antigravity: /^(?:AGY|ANTIGRAVITY|GEMINI|GOOGLE_GEMINI)_/i,
 } as const;
@@ -134,13 +135,14 @@ export function vendorEnv(
 
 /** The other vendor's variables a coding CLI's child never sees; a tool of neither vendor sees neither's. */
 const FOREIGN_VENDORS: Record<ContractorRequest["vendor"], readonly RegExp[]> = {
-  claude: [VENDOR.codex, VENDOR.opencode, VENDOR.grok, VENDOR.cursor, VENDOR.antigravity],
-  codex: [VENDOR.claude, VENDOR.opencode, VENDOR.grok, VENDOR.cursor, VENDOR.antigravity],
-  opencode: [VENDOR.claude, VENDOR.codex, VENDOR.grok, VENDOR.cursor, VENDOR.antigravity],
-  grok: [VENDOR.claude, VENDOR.codex, VENDOR.opencode, VENDOR.cursor, VENDOR.antigravity],
-  cursor: [VENDOR.claude, VENDOR.codex, VENDOR.opencode, VENDOR.grok, VENDOR.antigravity],
-  antigravity: [VENDOR.claude, VENDOR.codex, VENDOR.opencode, VENDOR.grok, VENDOR.cursor],
-  none: [VENDOR.claude, VENDOR.codex, VENDOR.opencode, VENDOR.grok, VENDOR.cursor, VENDOR.antigravity],
+  claude: [VENDOR.codex, VENDOR.opencode, VENDOR.grok, VENDOR.cursor, VENDOR.pi, VENDOR.antigravity],
+  codex: [VENDOR.claude, VENDOR.opencode, VENDOR.grok, VENDOR.cursor, VENDOR.pi, VENDOR.antigravity],
+  opencode: [VENDOR.claude, VENDOR.codex, VENDOR.grok, VENDOR.cursor, VENDOR.pi, VENDOR.antigravity],
+  grok: [VENDOR.claude, VENDOR.codex, VENDOR.opencode, VENDOR.cursor, VENDOR.pi, VENDOR.antigravity],
+  cursor: [VENDOR.claude, VENDOR.codex, VENDOR.opencode, VENDOR.grok, VENDOR.pi, VENDOR.antigravity],
+  pi: [VENDOR.claude, VENDOR.codex, VENDOR.opencode, VENDOR.grok, VENDOR.cursor, VENDOR.antigravity],
+  antigravity: [VENDOR.claude, VENDOR.codex, VENDOR.opencode, VENDOR.grok, VENDOR.cursor, VENDOR.pi],
+  none: [VENDOR.claude, VENDOR.codex, VENDOR.opencode, VENDOR.grok, VENDOR.cursor, VENDOR.pi, VENDOR.antigravity],
 };
 
 type ContractorRequest = Extract<ChildEnvRequest, { base: "contractor" }>;

@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { agentPlayFolder, agentPlayMarker } from "../../src/plugins/unity/agent-play.ts";
 import { createUnityBackend, UnityTool } from "../../src/plugins/unity/backend.ts";
@@ -9,6 +9,7 @@ import { type Launch, openProjectLaunch } from "../../src/plugins/unity/editor-l
 import type { UnityEditor } from "../../src/plugins/unity/editors.ts";
 import { PIPELINE_VERSION } from "../../src/plugins/unity/pipeline.ts";
 import { rememberedProject } from "../../src/plugins/unity/project-folder.ts";
+import { linkFolder } from "../helpers/links.ts";
 import {
   backendOn,
   commandsSent,
@@ -101,7 +102,7 @@ describe("new-game", () => {
     const failed = json(400, { success: false, error: "Command Execution Failed", errorDetails: "Disk full" });
     const { call } = await backendOn(["6000.3.10f1"], [ready(), look(), ok(), ok(), failed]);
     const answer = String(await call(UnityTool.NewGame));
-    assert.match(answer, /first scene could not be made \(Command Execution Failed: Disk full\).* create_scene/);
+    assert.match(answer, /first scene could not be made \(Command Execution Failed: Disk full\).* scene create/);
   });
 
   it("says Unity is still starting when it is not ready within the wait, without failing", async () => {
@@ -227,6 +228,49 @@ describe("open-editor", () => {
     assert.deepEqual(commandsSent(seen), ["set_autotick"]);
   });
 
+  it("moves a project from the Pipeline version Genex asked for before to the current one as it opens it", async () => {
+    const { call, game, launches } = await backendOn(["6000.6.0f1"], [ready(), look(), ok()]);
+    const root = await withProject(game, "6000.6.0f1", {
+      "com.unity.pipeline": "0.8.0-exp.1",
+      "com.unity.ugui": "2.6.0",
+    });
+    await call(UnityTool.OpenEditor);
+    assert.equal(launches.length, 1);
+    assert.deepEqual((await manifestOf(root)).dependencies, {
+      "com.unity.pipeline": PIPELINE_VERSION,
+      "com.unity.ugui": "2.6.0",
+    });
+  });
+
+  it("leaves the Pipeline version alone when the person chose it, or an editor already has the project open", async () => {
+    for (const chosen of ["0.9.0-exp.1", "0.6.0-exp.1", "2.0.0", "file:../pipeline"]) {
+      const { call, game } = await backendOn(["6000.6.0f1"], [ready(), look(), ok()]);
+      const root = await withProject(game, "6000.6.0f1", { "com.unity.pipeline": chosen });
+      await call(UnityTool.OpenEditor);
+      assert.equal((await manifestOf(root)).dependencies["com.unity.pipeline"], chosen, chosen);
+    }
+    const open = await backendOn(["6000.6.0f1"], [ready(), look(), ok()]);
+    const root = await withProject(open.game, "6000.6.0f1", { "com.unity.pipeline": "0.8.0-exp.1" });
+    await open.openIn(root);
+    assert.match(String(await open.call(UnityTool.OpenEditor)), /already open/);
+    assert.equal((await manifestOf(root)).dependencies["com.unity.pipeline"], "0.8.0-exp.1");
+  });
+
+  it("still takes back a setup whose package it moved to the current version", async () => {
+    const { call, game, storage } = await backendOn(["6000.6.0f1"], [ready(), look(), ok()]);
+    const root = await withProject(game, "6000.6.0f1", { "com.unity.pipeline": "0.8.0-exp.1" });
+    // The record a setup by the Genex that asked for 0.8 left.
+    await mkdir(path.join(storage, "setup"), { recursive: true });
+    await writeFile(
+      path.join(storage, "setup", "lantern.json"),
+      JSON.stringify({ root, package: "com.unity.pipeline", version: "0.8.0-exp.1", at: NOW().toISOString() }),
+    );
+    await call(UnityTool.OpenEditor);
+    assert.equal((await manifestOf(root)).dependencies["com.unity.pipeline"], PIPELINE_VERSION);
+    await call(UnityTool.UndoSetup);
+    assert.deepEqual((await manifestOf(root)).dependencies, {});
+  });
+
   it("says the project is open already when its editor answers", async () => {
     const { call, game, launches, openIn } = await backendOn(["6000.3.10f1"], [ready(), look(), ok()]);
     await openIn(await withProject(game, "6000.3.10f1", { "com.unity.pipeline": PIPELINE_VERSION }));
@@ -293,7 +337,7 @@ describe("open-editor", () => {
     await mkdir(path.join(outside, "__Backupscenes"));
     await writeFile(path.join(outside, "__Backupscenes", "0.backup"), "someone else's");
     const other = await withProject(linked.game, "6000.3.10f1", { "com.unity.pipeline": PIPELINE_VERSION });
-    await symlink(outside, path.join(other, "Temp"));
+    await linkFolder(outside, path.join(other, "Temp"));
     assert.doesNotMatch(String(await linked.call(UnityTool.OpenEditor)), /backups of scenes/);
     assert.equal(
       existsSync(path.join(outside, "__Backupscenes", "0.backup")),

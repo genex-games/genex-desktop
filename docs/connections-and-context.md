@@ -147,7 +147,7 @@ A failure says why; Settings then adds the vendor's install guide. Sign in with 
 
 ## OpenRouter and OpenCode
 
-Both are metered (`billing: "metered"` in `shared/providers.ts`): every token is paid to someone,
+OpenRouter, OpenCode and Pi are metered (`billing: "metered"` in `shared/providers.ts`): every token is paid to someone,
 so `EngineRegistry` never offers one as a fallback or a first ready engine, and the sign-in gate's
 local finish and the reference judge never pick one. Only the person's explicit pick runs on them.
 
@@ -177,11 +177,19 @@ request is sent once more asking for 90% of that), 429 a rate limit. Errors are 
 spoken, picked by the version `opencode --version` prints (`openCodeRelease` in
 [opencode-cli.ts](../src/substrate/engines/opencode-cli.ts)), never guessed: 1.18 (`--pure`,
 `--variant`, the `permission` map, `opencode models --verbose`) and 2.x from 2.0.20 (Homebrew ships
-2.x while OpenCode's own installer still ships 1.18). A 2.x newer than the tested 2.0.26 runs and
+2.x while OpenCode's own installer still ships 1.18). A 2.x newer than the tested 2.3.2 runs and
 its status says so; an older 2.x, 3.x or an unreadable version is refused, and discovery then tries
 the next OpenCode on the search path (a manual choice never yields). On 2.x every session passes
 `--standalone --agent build`: OpenCode's shared background server runs outside the sandbox with the
-settings of whoever started it, so each session runs a private one inside `ProcessSandbox`. 2.x
+settings of whoever started it, so each session runs a private one inside `ProcessSandbox`. Where
+the sandbox fences loopback (Windows, `loopbackPorts`), `openCodeEvents` starts that server itself:
+`opencode serve --stdio --port <n>` in the same sandbox, folder and environment, on the highest
+free port of the range that no other session holds, with a password made for it (`--stdio` makes it
+drop the password from the environment its tools inherit, as `--standalone` does, and end when its
+stdin, held by the live-input relay, closes); it counts as up once it answers that password, and the run gets `--server` in place of `--standalone`,
+whose server listens on a port of the system's choosing that the session may not connect to
+("Transport: EACCES" from 2.2: newer 2.x reaches loopback past the sandbox's proxy). The server is
+stopped with its session; with every port of the range held, the session says so. 2.x
 reads its folder from `PWD`, gets `OPENCODE_DISABLE_PROJECT_CONFIG=1` (a game's own OpenCode config,
 plugins and agents never load, as `--pure` kept them out on 1.18) and an empty `OPENCODE_TEST_HOME`
 (2.x stops when the sandbox refuses it the home folder's `.claude`), and takes the effort as
@@ -231,7 +239,77 @@ sign in again; and a failure on one of OpenCode's free models says so, keeping i
 lists every OpenAI model even on a ChatGPT sign-in, where OpenAI refuses some, so while Codex is
 signed in the picker starts OpenCode's GPT models with the ones Codex lists (`runnableModels` in
 `renderer/model-lineup.ts`). Recorded streams and listings: `tests/fixtures/transcripts/opencode-*`
-(OpenCode 1.18 and 2.0.20).
+(OpenCode 1.18 and 2.0.20); `STUDIO_OPENCODE_CLI_TESTS=1` runs a real 2.x CLI in the real sandbox
+against a made-up provider (`opencode-cli-live.test.ts`).
+
+**Pi** ([pi.ts](../src/substrate/engines/pi.ts)) is the Pi coding agent (`pi --mode json`), not the
+`pi-ai` HTTP client. Sign in and `--list-models` run with `--no-extensions --offline`; of Pi's
+sign-in studio uses only which providers hold a subscription sign-in and when each expires, never a
+token (a session gets a copy of the file, below). Ready once `--list-models` lists
+a model; a Pi whose help lacks an option a session passes shows "Update needed" with Pi's guide
+(Genex runs `pi update` only for a Pi that is ready), and one that cannot start (no Node for its
+launcher) says it did not answer. Sessions run in `ProcessSandbox` (`readableHome`: `~/.pi`) with
+`--no-extensions --no-approve`: a game folder's own `.pi` settings and `.agents/skills` stay untrusted.
+Every session is told where Pi's folder is (`PI_CODING_AGENT_DIR`, `piAgentDir`): by default
+`~/.pi/agent`, or the folder the person moved it to with that variable, which is then fenced like
+`~/.pi` (`piHomes`).
+
+What Pi keeps in its agent folder it loads and runs outside the sandbox, for the person and for
+Genex's own model listing: `settings.json`, `models.json`, `trust.json`, `mcp.json`, the instruction
+files `AGENTS.md`, `SYSTEM.md` and `APPEND_SYSTEM.md`, `extensions`, `skills`, `prompts`, `themes`,
+`npm`, `bin`, and the sign-in file `auth.json`, where a stored key that starts with `!` is a command
+Pi runs. A session writes none of them. Pi still has to write beside them: a lock folder next to
+each file it reads (`auth.json.lock`), a renewed subscription sign-in, its catalog cache. How each
+system gives it that (`piWrites`):
+
+- **macOS and Linux**: every session runs on a folder of its own that stands for Pi's
+  ([pi-agent-view.ts](../src/substrate/engines/pi-agent-view.ts)):
+  `<agent>/genex/agent-<process>-<name>`, named in `PI_CODING_AGENT_DIR`. It is made new when the
+  session starts, before anything can write it, and never used again. In it `auth.json` and
+  `models-store.json` are copies of the person's (the bytes, which Genex never reads as anything
+  else) and are never copied back; every other entry is a link to the person's, read-only to the
+  session. A sign-in file that is there and cannot be read fails the session, as does a `genex` or
+  `genex/work` that is not a folder: Genex removes through those two names. The session writes that folder and `sessions` (Pi's transcripts, kept in the person's
+  folder). When the session ends its folder is renamed into `<agent>/genex/work`, which no session
+  writes, and removed there, so nothing is built or removed through a name a session could have
+  changed and nothing one session left reaches another. A folder whose Genex is gone is taken out
+  the same way when the next session starts. The person's own Pi never reads any of this. Two
+  things follow. A sign-in Pi renews during a session lasts that session, and where the provider
+  takes each refresh token once the person's file would then hold a spent one. So before the copy
+  is made, when the subscription sign-in of the session's provider has less than two hours left (or
+  half a token's life, once a renewal showed how long one lasts), the person's own Pi renews it on
+  the host ([pi-sign-in.ts](../src/substrate/engines/pi-sign-in.ts): `pi auth print-bearer-token
+  --provider <id> --min-expiry <n>s`, the lead reaching just past that expiry; Pi 0.83.0 and later).
+  With no model named Pi picks one, so every subscription sign-in that is due is renewed. Pi writes
+  its own file under its own lock and prints the token, which Genex never reads. A session waits
+  20 s at most; Pi gets two minutes and is not stopped before, and a sign-in a renewal left
+  unchanged waits five minutes before another try. Before a renewal has shown how long a provider's
+  tokens last, one that lasts under two hours is renewed once at the first session. A session that
+  outlasts its copy's sign-in still renews it in the copy alone, and a later session then says to
+  sign in to Pi again; where another session's start had the person's Pi renew meanwhile, the
+  provider refuses the long session's own renewal and it ends with Pi's sign-in error. And a
+  session's lock is not the person's Pi's: a session reads settings the person's Pi may be writing
+  at that moment. Linux denies a game's `.pi` only when it exists (`gameSettingsDenyWrites`).
+- **Windows** has no link a session's user can read through, runs a session as the sandbox's own
+  user, grants whole folders and stamps no deny inside a sandboxed CLI's home, so there a session
+  can write all of Pi's folder, its settings, `models.json` and `auth.json` included
+  ([windows-sandbox.md](windows-sandbox.md)). A sign-in it renews is the person's own, so Genex asks
+  for no renewal there.
+
+Pi files a session under the folder it was started in, and its `--session-id` looks only there. A
+build runs in the game and a Plan or read-only turn in a folder of its own, so the turn that follows
+one from another folder continues the chat with `--fork <the session's file>`
+([pi-sessions.ts](../src/substrate/engines/pi-sessions.ts)): Pi copies the history into the turn's
+folder under a new id, which the turn reports as the session to continue. A Plan turn that follows a
+Plan turn runs from the same folder again and resumes in place. A turn's pictures are written under
+the engine's scratch and passed as `@file` arguments: Pi takes no file from the prompt's text.
+
+A provider status is read at the head of Pi's error (`401: {...}`), never a number inside the body
+it quotes, and an expired sign-in, a refresh the provider refuses (OAuth's `invalid_grant`) or one
+the credential store cannot write (a 401, or an errno naming `auth.json`) says to sign in again. A
+model the list has not named yet reaches its built-in provider's hosts; an unknown provider reaches
+only the `https` host in its `models.json`. No in-app installer (`installsInApp`): the row opens
+Pi's guide, to install it and to update one too old to run. Account can run `pi update` on a Pi that is ready. Streams: `tests/fixtures/transcripts/pi-*`.
 
 ## Grok Build
 
@@ -270,7 +348,11 @@ is the context reading. Compact now runs Grok's own `/compact` on the resumed se
 (`auto_compact_completed`). Its sandbox writes the workspace (a scratch folder when read-only) and
 Grok's home (`ownHome`; on Windows the studio's sandbox grants it at start, as OpenCode's folders),
 denies writing a game's own `.grok`, and reaches only xAI's hosts (`api.x.ai`,
-`cli-chat-proxy.grok.com`, `auth.x.ai`, `accounts.x.ai`, `grok.com`). A chat the person set to
+`cli-chat-proxy.grok.com`, `auth.x.ai`, `accounts.x.ai`, `grok.com`). On Linux a provider's
+sandbox denies a game's own settings (`.grok`, `.cursor`, `opencode.json`, `.opencode`, `.agents`)
+only when they exist (`gameSettingsDenyWrites`): sandbox-runtime guards a missing deny path with a
+stand-in device file in the game, which the build's `git add -A` refuses. So on Linux nothing
+stops a session making such settings in a game that has none; macOS and Windows deny them either way. A chat the person set to
 Bypass runs its builds outside that sandbox, as the person, as Codex's Bypass does
 (`runsAsPerson`, `grokOutside`): in their environment less every credential and other vendors'
 variables, with the studio's toolchain PATH, on Grok's own sign-in, which it renews itself. A
@@ -337,7 +419,7 @@ Cursor's sandbox cannot start inside Genex's, so each turn runs in `ProcessSandb
 is Cursor's hosts (`*.cursor.sh`, `*.cursorapi.com`, `cursor.com`); Cursor's agent connection reads
 the sandbox's proxy itself and `NODE_USE_ENV_PROXY=1` covers Node's own requests. It writes the
 workspace (a read-only session, Plan or a reviewer runs from a scratch folder), Cursor's own folders and a Node compile cache, never a game's
-`.cursor` (its rules, hooks and MCP servers). Two options `--help` does not list are passed, checked
+`.cursor` (its rules, hooks and MCP servers; on Linux only one that exists, as Grok Build's `.grok`). Two options `--help` does not list are passed, checked
 on 2026.10.22: `--disable-auto-update` (its updater rewrites `~/.local/bin/agent`) and
 `--single-turn` (a turn ends with its reply instead of waiting on a dev server left in the
 background, which kept `--print` from exiting). A judge's answer runs in `--mode ask` from an empty
@@ -368,13 +450,17 @@ bill, but the provider is `metered` in the table so the app never picks a Beta o
 
 Settings › Model Providers has its row (`CliSignInRow`): Install, Sign in (`agy acp --login` in a
 terminal inside the row, started in the box a session runs in (`antigravitySignInLaunch`,
-`ProcessSandbox.terminalLaunch`): it prints Google's page for Open sign-in page and takes the code
-that page gives; `studio:antigravity.signin`, native; on Windows the terminal reaches the boxed CLI
+`ProcessSandbox.terminalLaunch`): it prints Google's page and takes the code that page gives. The
+boxed CLI cannot hand the page to the browser itself (macOS refuses its `open` from the box), so
+Genex opens the first `https://accounts.google.com` page the terminal prints, once, and Open
+sign-in page stays for a second look; `studio:antigravity.signin`, native; on Windows the terminal reaches the boxed CLI
 through the sandbox's input relay: Git Bash starts a feeder (written in the person's own temp
 folder, which no box can write, since it runs outside every box) under the studio's own Node, which
 starts the box and hands it what the person types, because Electron started straight in a Windows
 terminal reads and prints nothing; the box is made under the engine's own scratch folder), and once
-connected Check connection, Sign in again and Update. The CLI has no command that says whether it
+connected Check connection, Sign in again and Update. The chat's sign-in card for a CLI that signs
+in in its own terminal (Antigravity, Grok Build, Cursor, OpenCode, Pi) starts that same sign-in and
+opens Settings › Model Providers, where its terminal runs; it names the provider by its table label. The CLI has no command that says whether it
 is signed in, so the engine asks by opening a session in an empty folder, at most once a minute:
 the answer lists the models the account can run and its plan, or refuses with ACP's sign-in code
 (`-32000`). While a boxed session of a turn is open it is the proof and nothing is asked, and a
@@ -386,9 +472,12 @@ Antigravity keeps its Google sign-in in the operating system's own store (the Ke
 Credential Manager, the Secret Service) when it can reach it, and in
 `~/.gemini/antigravity-cli/antigravity-oauth-token` when it cannot or when it believes it runs over
 SSH. Genex never reads either. Its sign-in runs in the session's box, so the sign-in lands in the
-file every session reads: on a Mac the box denies the Keychain; off a Mac the box sets
-`SSH_CONNECTION` and `SSH_CLIENT` (`antigravityBoxEnv`), because on Windows the boxed CLI otherwise
-saved the sign-in in the sandbox user's Credential Manager, which every Windows sandbox runs as. On
+file every session reads: every box sets `SSH_CONNECTION` and `SSH_CLIENT` (`antigravityBoxEnv`;
+a Mac's box denies the Keychain anyway), because on Windows the boxed CLI otherwise saved the
+sign-in in the sandbox user's Credential Manager, which every Windows sandbox runs as. A Bypass
+build, which runs as the person, is told the same (`antigravityPersonEnv`): outside the box the CLI
+read the Keychain, which held another Google account than the one Genex signed in, so the chat's
+model (from the boxed account's list) was unknown to it ("Unknown model ID"). On
 Windows the box also sets `USERPROFILE` to the person's home, so that file is in the person's
 `~/.gemini`, not the sandbox user's profile. A box is given Antigravity's own variables alone
 (`vendorEnv`) and builds the rest from its allow-list: Windows' env file refuses a name like
@@ -398,7 +487,7 @@ terminal sandbox leaves its file tools out, and its permission rules do not reac
 so each turn runs in `ProcessSandbox` with `antigravitySandbox` (a build for a chat the person set to
 Bypass runs as them outside it, `runsAsPerson`, as Codex's and Grok Build's do): the workspace (a read-only
 session, Plan or a reviewer runs from a scratch folder) is all it writes, the network is Google's
-hosts (`ANTIGRAVITY_HOSTS`), a game's `.agents` folder is not the session's to write, and inside
+hosts (`ANTIGRAVITY_HOSTS`), a game's `.agents` folder is not the session's to write (on Linux only one that exists), and inside
 the box every tool call the agent asks about is allowed, except a command the never-touch screen
 stops (`antigravityPermission`, `neverTouchVerdict`): macOS's keychain tool, a command the screen
 cannot read and a command with no command line are refused, as a worker's hook refuses them. Its sandbox alone is given `~/.gemini`
@@ -410,7 +499,14 @@ sandbox, and every other sandbox still denies `~/.gemini` and opens no extra ser
 
 A failed turn is named by ACP's code (`-32000` a sign-in failure) or by Google's status name in
 the error (`RESOURCE_EXHAUSTED` a usage limit; `UNAVAILABLE`, `INTERNAL`, `DEADLINE_EXCEEDED`
-unavailable); anything else ends the build with the CLI's words. Stop sends `session/cancel` and
+unavailable); anything else ends the build with the CLI's words. When Google refuses a turn the
+CLI does not say so over ACP: it writes one notice as the whole reply ("⚠ Verification Required")
+and ends the turn as finished. A reply that is nothing but the notice of Google's account check
+(`PERMISSION_DENIED` with `VALIDATION_REQUIRED`; `antigravityNotice`, `AntigravityNotice`) fails
+the turn and a one-shot answer, so a game is never named by it; any other reply, one starting with
+the sign included, stays the model's. The engine reads the page Google named from the CLI's newest
+logs since the turn began (`verificationPage`, only `https://accounts.google.com`), opens it in the
+browser once (`openPage`), and the turn says to verify there and send again. Stop sends `session/cancel` and
 gives the CLI five seconds to answer before it is stopped; a turn that says nothing for 10 minutes
 (30 while a tool call is open) is stopped with its process group. Compact now is refused.
 A live run on a signed-in Mac (CLI 1.5.7, free plan) reads the sign-in, builds in the game and
@@ -807,7 +903,10 @@ windows. Codex starts `codex app-server` with the login's `CODEX_HOME` and profi
 sends `initialize` and one `account/rateLimits/read`, then closes stdin; `normalizeCodexUsage`
 names windows by length and scopes non-default buckets. Claude sessions at work never read plan
 usage (see Native context telemetry). `readUsage()` answers null when the plan shares no limits and
-throws when they could not be read; each engine reuses a reading under a minute old and shares an
+throws when they could not be read; a plan named with no limit is `not_shared` and keeps its name.
+Antigravity's plan is listed too: its session names the plan (`_meta.antigravity.tier`) and no
+limit, so it shows by name with the note that it shares none, and no account switch; its Sign in
+again starts its own sign-in in Model Providers. Each engine reuses a reading under a minute old and shares an
 in-flight read; a Recheck clears it. The composer asks when its ring panel opens or the ring is
 hovered, and every minute while open; until the first answer it draws each plan this setup uses
 at full size with shimmering bars, and a plan being read with no numbers yet does the same. A
@@ -906,7 +1005,10 @@ Genex 1.5.0 reaches existing installations through the standard Update flow, whi
 bundled plugin's newer version without a trust dialog. Builder briefs index Genex's guide and its
 platform cards (multiplayer, player identity, LLM in games, monetization, publishing, cover, updates);
 agents read a card with `genex__skill` before that work, and the host serves it from the plugin,
-never from or into the game folder.
+never from or into the game folder. The two LLM cards' index lines name what people ask for (AI
+opponents, teammates or agents, characters that talk, plan or remember, factions that negotiate, a
+game master or narrator, a judge of free-form input, quests or items made per save), so a request
+worded any of those ways finds them.
 
 With an unlocked account, agents also reach Studio's pinned Genex CLI: `genex__cli` for free
 commands (doctor, budget, LLM models, job status and cancel, shop list, a store item's draft) and, after a consent card,
@@ -914,6 +1016,13 @@ commands (doctor, budget, LLM models, job status and cancel, shop list, a store 
 in a throwaway folder of its own, never the game, with only the Genex API reachable (and Genex's
 object storage while a store item's picture, model or package moves); setup,
 sign-in, publishing and generation commands are refused and point to the matching Genex tool.
+A benchmark of an in-game model call (`llm bench`) spends the person's own credits, never Nex, up
+to the `max-credits` its card shows for one attempt, and may name the game's answer-shape file
+(`schema`: one `.json` file inside the game, at most 16 KB), which Studio checks by real path and
+copies in. `llm price` is refused: it rereads a file from the CLI's folder, which Studio removes
+after every command, so the benchmark's answer is the record. A benchmark is not a gate: until one
+runs, a game declares provisional ceilings and ships with its model calls on (the play-time model
+card's preface, [plugins](plugins.md)).
 `genex__package` adds `@genex-ai/multiplayer` or `@genex-ai/embed-sdk` at Studio's pin to a
 build game after consent, opening the npm registry for that one install. A Studio-template game
 gets player identity by mapping Studio's copy in its import map instead, and Studio then calls

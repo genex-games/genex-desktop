@@ -21,7 +21,6 @@
 import { cp, mkdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { SECOND_MS } from "../../shared/duration.ts";
-import { isJsonObject } from "../../substrate/fsx.ts";
 import { containedReal } from "../../substrate/paths.ts";
 import {
   editorStatus,
@@ -33,6 +32,7 @@ import {
   readDescriptor,
   runCommand,
 } from "./pipeline.ts";
+import { EditorCommand, listedScenes } from "./pipeline-commands.ts";
 import { endEditors, type ProcessEnv, projectPids } from "./processes.ts";
 
 /** How long an editor asked to exit cleanly is given before its processes are signalled. */
@@ -48,16 +48,6 @@ const RECOVERED_FOLDER = "recovered";
 const GAME_ID = /^[a-zA-Z0-9_-]{1,100}$/;
 /** The error of a rename across two disks. */
 const CROSS_DEVICE = "EXDEV";
-
-/** The Pipeline commands Genex itself runs, by name. Wire values: Pipeline's own. */
-const Command = {
-  Eval: "eval",
-  ListOpenScenes: "list_open_scenes",
-  SaveScene: "save_scene",
-  CreateScene: "create_scene",
-  SetAutotick: "set_autotick",
-  EditorStop: "editor_stop",
-} as const;
 
 /** The C# Genex itself runs in the editor; agents run none (`pipeline-gate.ts`). */
 const Code = {
@@ -111,10 +101,9 @@ export async function openScenes(
   deps: EditorDeps,
   signal?: AbortSignal,
 ): Promise<PipelineAnswer<OpenScene[]>> {
-  const answer = await editorCommand(root, deps, Command.ListOpenScenes, {}, signal);
+  const answer = await editorCommand(root, deps, EditorCommand.ListOpenScenes, {}, signal);
   if (!answer.ok) return answer;
-  const listed = isJsonObject(answer.result) && Array.isArray(answer.result.scenes) ? answer.result.scenes : [];
-  const scenes = listed.filter(isJsonObject).map((scene) => ({
+  const scenes = listedScenes(answer.result).map((scene) => ({
     path: typeof scene.path === "string" ? scene.path : "",
     dirty: scene.isDirty === true,
   }));
@@ -140,11 +129,11 @@ export async function saveWork(root: string, deps: EditorDeps, signal?: AbortSig
   const dirty = scenes.result.filter((scene) => scene.dirty);
   const saved: string[] = [];
   for (const scene of dirty.filter((unsaved) => unsaved.path)) {
-    const answer = await editorCommand(root, deps, Command.SaveScene, { path: scene.path }, signal);
+    const answer = await editorCommand(root, deps, EditorCommand.SaveScene, { path: scene.path }, signal);
     if (!answer.ok) return { saved, untitled: 0, trouble: answer };
     saved.push(scene.path);
   }
-  const assets = await editorCommand(root, deps, Command.Eval, { code: Code.SaveAssets }, signal);
+  const assets = await editorCommand(root, deps, EditorCommand.Eval, { code: Code.SaveAssets }, signal);
   const untitled = dirty.filter((scene) => !scene.path).length;
   return { saved, untitled, ...(assets.ok ? {} : { trouble: assets }) };
 }
@@ -154,11 +143,12 @@ export const isPlaying = (status: EditorStatus): boolean => status.playMode !== 
 
 /** Ends the editor's Play mode; what a scene had while it played is lost, as when the person stops it. */
 export const stopPlaying = (root: string, deps: EditorDeps, signal?: AbortSignal): Promise<PipelineAnswer> =>
-  editorCommand(root, deps, Command.EditorStop, {}, signal);
+  editorCommand(root, deps, EditorCommand.Stop, {}, signal);
 
 /** Keeps the editor ticking while it is behind other windows, for as long as it runs; trouble is not the caller's. */
 export async function keepTicking(root: string, deps: EditorDeps, signal?: AbortSignal): Promise<void> {
-  await editorCommand(root, deps, Command.SetAutotick, { enable: true }, signal).catch(() => undefined);
+  // Turning it on is the command's default; the parameter itself was renamed in 1.0.
+  await editorCommand(root, deps, EditorCommand.SetAutoTick, {}, signal).catch(() => undefined);
 }
 
 /**
@@ -172,8 +162,8 @@ export async function firstSetup(
   signal?: AbortSignal,
 ): Promise<Extract<PipelineAnswer, { ok: false }> | undefined> {
   const steps: Array<[string, Record<string, unknown>]> = [
-    [Command.Eval, { code: Code.RunInBackground }],
-    [Command.CreateScene, { ...FIRST_SCENE }],
+    [EditorCommand.Eval, { code: Code.RunInBackground }],
+    [EditorCommand.CreateScene, { ...FIRST_SCENE }],
   ];
   for (const [command, parameters] of steps) {
     const answer = await editorCommand(root, deps, command, parameters, signal);
@@ -218,7 +208,7 @@ export async function endEditor(root: string, deps: EditorDeps, options: EndOpti
   if (look.ok) {
     if (options.save) await saveBeforeEnd(root, deps, look.result, options.signal);
     // The editor is gone before it can answer, so no answer is the expected one.
-    await runCommand(root, { command: Command.Eval, parameters: { code: Code.Exit } }, deps.pipeline, {
+    await runCommand(root, { command: EditorCommand.Eval, parameters: { code: Code.Exit } }, deps.pipeline, {
       waitMs: 0,
     }).catch(() => undefined);
     if (await goneWithin(root, deps, CLEAN_EXIT_MS)) return true;

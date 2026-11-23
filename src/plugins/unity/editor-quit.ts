@@ -8,6 +8,7 @@
 import { agentPlaying } from "./agent-play.ts";
 import { editorRuns, endEditor, isPlaying, saveWork } from "./editor-life.ts";
 import { type Moment, type MomentDeps, stopPlay } from "./editor-moments.ts";
+import { NAME_THE_SCENE } from "./pipeline-commands.ts";
 import { editorStatus, PipelineProblem } from "./pipeline.ts";
 
 /** The longest reason a refusal quotes from Unity. */
@@ -24,7 +25,7 @@ const MESSAGE = {
     "The user is playing the game in Unity, and scenes can't be saved while it plays, so Genex didn't quit Unity. Call unity__quit-editor again once their play ends.",
   SaveFailed: (why: string) => `Unity couldn't save its work (${why}), so Genex left Unity open.`,
   Untitled: (count: number) =>
-    `${count === 1 ? "A scene" : `${count} scenes`} with unsaved work in Unity ${count === 1 ? "has" : "have"} never been saved: save ${count === 1 ? "it" : "each"} with save_scene and a path under Assets/, then call unity__quit-editor again. Genex left Unity open.`,
+    `${count === 1 ? "A scene" : `${count} scenes`} with unsaved work in Unity ${count === 1 ? "has" : "have"} never been saved: ${NAME_THE_SCENE}, then call unity__quit-editor again. Genex left Unity open.`,
   NotEnded: "Genex saved Unity's work, but Unity could not be ended. Call unity__quit-editor again in a moment.",
   Quit: (saved: string) => `${saved}, then quit it. Open it again with unity__open-editor.`,
 } as const;

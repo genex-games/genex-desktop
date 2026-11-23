@@ -5,6 +5,8 @@
  * editor has the project open is read from the computer's processes, so the lock file and the
  * descriptor a killed editor left behind never stand in the way of opening it again, and the scene
  * backups it left are moved aside first, so the new editor opens without asking to recover them.
+ * A project Genex opens that still asks for a Pipeline version Genex wrote before is moved to the
+ * current one first (`setup.ts`).
  */
 import { errorMessage } from "../../shared/errors.ts";
 import { EditorWait, type Opener, openProjectLaunch, waitForEditor } from "./editor-launch.ts";
@@ -12,6 +14,7 @@ import { type EditorDeps, editorRuns, type KeepPlace, keepTicking, setAsideBacku
 import { type EditorsEnv, findEditors } from "./editors.ts";
 import { editorStatus, PipelineProblem, serverStatus } from "./pipeline.ts";
 import type { UnityProject } from "./project-folder.ts";
+import { moveToCurrentPipeline } from "./setup.ts";
 
 /** How opening a project for use ended. */
 export const Opened = {
@@ -85,6 +88,8 @@ export async function openProject(
   if (!editor) return { opened: Opened.NoEditor, version, installed: editors.map((installed) => installed.version) };
   // No editor has the project open: what a killed one left would make this one ask to recover it.
   const kept = options.keep ? await setAsideBackups(root, options.keep).catch(() => undefined) : undefined;
+  // A project still on a Pipeline version Genex wrote before gets the current one as it opens.
+  await moveToCurrentPipeline(root, options.keep).catch(() => false);
   const setAside = kept ? { setAside: kept } : {};
   try {
     await deps.open(openProjectLaunch(editor, root, deps.editors.platform));

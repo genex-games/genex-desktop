@@ -29,6 +29,7 @@ import { atomicWriteJson, isJsonObject, readJsonIfExists } from "../../substrate
 import { agentPlayFolder } from "./agent-play.ts";
 import { type EditorDeps, editorCommand, editorRuns, endEditor, openScenes, saveWork } from "./editor-life.ts";
 import { editorStatus, PLAY_STOPPED } from "./pipeline.ts";
+import { EditorCommand, evaluated } from "./pipeline-commands.ts";
 
 /** How long an editor Genex opened for a run sits unused after it before Genex closes it. */
 export const IDLE_CLOSE_MS = 15 * MINUTE_MS;
@@ -45,9 +46,6 @@ const AGENT_USE_FILE = "agent-used.json";
 /** A game id as Genex names a game's record: a plain folder name, never a path. */
 const GAME_ID = /^[a-zA-Z0-9_-]{1,100}$/;
 const JSON_EXTENSION = ".json";
-
-/** The Pipeline command a look runs. Wire value: Pipeline's own. */
-const Command = { Eval: "eval" } as const;
 
 /** The C# a look runs: whether Unity is the app in front, and where its undo history stands. */
 const LOOK_CODE =
@@ -182,9 +180,10 @@ export type IdleLook = (typeof IdleLook)[keyof typeof IdleLook];
 
 /** The editor's own answer to {@link LOOK_CODE}, or undefined when it gave none. */
 async function lookInside(root: string, deps: IdleDeps): Promise<{ active: boolean; undo: number } | undefined> {
-  const answer = await editorCommand(root, deps, Command.Eval, { code: LOOK_CODE });
-  if (!answer.ok || !isJsonObject(answer.result)) return undefined;
-  const { active, undo } = answer.result;
+  const answer = await editorCommand(root, deps, EditorCommand.Eval, { code: LOOK_CODE });
+  const said = answer.ok ? evaluated(answer.result) : undefined;
+  if (!said?.ok || !isJsonObject(said.value)) return undefined;
+  const { active, undo } = said.value;
   return typeof active === "boolean" && typeof undo === "number" ? { active, undo } : undefined;
 }
 

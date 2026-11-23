@@ -8,7 +8,9 @@ import { UiEvent } from "../shared/ui-events.ts";
 import { findClaudeBinary } from "../substrate/engines/claude-cli.ts";
 import { requireCodingCli } from "../substrate/engines/external-cli.ts";
 import { openCodeSignInArgs } from "../substrate/engines/opencode-cli.ts";
+import { PI_DISCOVERY_ARGS } from "../substrate/engines/pi-cli.ts";
 import { antigravitySignInLaunch } from "../substrate/engines/antigravity.ts";
+import { googleSignInPage } from "../substrate/engines/antigravity-cli.ts";
 import { CURSOR_FILE_STORE, CursorCommand } from "../substrate/engines/cursor-cli.ts";
 import { childEnv, vendorEnv } from "../substrate/child-env.ts";
 import { grokHome } from "../substrate/credential-homes.ts";
@@ -69,6 +71,8 @@ export interface LoginControllerDeps {
   showClaudeState(state: ClaudeLoginState): void;
   /** OpenCode's sign-in ended: read the models it can run now. */
   onOpenCodeSignedIn?(): Promise<unknown>;
+  /** Pi's TUI `/login` ended: read the models it can run now. */
+  onPiSignedIn?(): Promise<unknown>;
   /** Grok Build's sign-in ended: read whose sign-in it runs on, and its models, now. */
   onGrokSignedIn?(): Promise<unknown>;
   /** Cursor's sign-in ended: check the sign-in and read the models it can run now. */
@@ -100,6 +104,7 @@ export function createLoginControllers({
   requireCli = requireCodingCli,
   findBinary = findClaudeBinary,
   onOpenCodeSignedIn,
+  onPiSignedIn,
   onGrokSignedIn,
   onCursorSignedIn,
   onAntigravitySignedIn,
@@ -110,6 +115,7 @@ export function createLoginControllers({
   codexLogin: CodexLoginController;
   claudeLogin: ClaudeLoginController;
   openCodeLogin: OpenCodeLogin;
+  piLogin: PiLogin;
   grokLogin: CliLogin;
   cursorLogin: CliLogin;
   antigravityLogin: CliLogin;
@@ -185,6 +191,7 @@ export function createLoginControllers({
       return { started: true };
     },
   };
+  const piLogin: PiLogin = piSignIn({ terminals, requireCli, onPiSignedIn });
   const grokLogin: CliLogin = {
     async start() {
       const cli = await requireCli(EngineId.Grok).catch(() => null);
@@ -212,12 +219,45 @@ export function createLoginControllers({
   const cursorLogin = cursorSignIn({ terminals, requireCli, onCursorSignedIn });
   const antigravityLogin = antigravitySignIn({
     terminals,
+    openExternal,
     requireCli,
     onAntigravitySignedIn,
     boxAntigravitySignIn,
     antigravityScratch,
   });
-  return { codexLogin, claudeLogin, openCodeLogin, grokLogin, cursorLogin, antigravityLogin };
+  return { codexLogin, claudeLogin, openCodeLogin, piLogin, grokLogin, cursorLogin, antigravityLogin };
+}
+
+/**
+ * Pi's sign-in: its own TUI so the person can `/login`. Pi keeps what it is given in its own store;
+ * when the terminal closes, the studio rereads the models Pi can run.
+ */
+function piSignIn({
+  terminals,
+  requireCli,
+  onPiSignedIn,
+}: Pick<LoginControllerDeps, "terminals" | "onPiSignedIn"> & {
+  requireCli: typeof requireCodingCli;
+}): PiLogin {
+  return {
+    async start() {
+      const cli = await requireCli(EngineId.Pi).catch(() => null);
+      if (!cli) return { started: false, missingCli: true };
+      terminals.open({
+        file: cli.path,
+        args: [...PI_DISCOVERY_ARGS],
+        cwd: os.tmpdir(),
+        // Interactive TUI so the person can `/login`; the studio rereads Pi's models once it closes.
+        env: childEnv(cli.env, { base: "contractor", vendor: "pi" }),
+        title: t("Pi sign-in"),
+        kind: TerminalKind.PiLogin,
+        onExit: () => {
+          void onPiSignedIn?.()?.catch(() => {});
+        },
+      });
+      return { started: true };
+    },
+  };
 }
 
 /**
@@ -229,11 +269,12 @@ export function createLoginControllers({
  */
 function antigravitySignIn({
   terminals,
+  openExternal,
   requireCli,
   onAntigravitySignedIn,
   boxAntigravitySignIn,
   antigravityScratch,
-}: Pick<LoginControllerDeps, "terminals" | "onAntigravitySignedIn"> & {
+}: Pick<LoginControllerDeps, "terminals" | "openExternal" | "onAntigravitySignedIn"> & {
   requireCli: typeof requireCodingCli;
   boxAntigravitySignIn: typeof antigravitySignInLaunch;
   antigravityScratch: () => string | undefined;
@@ -251,6 +292,9 @@ function antigravitySignIn({
         ...(scratchRoot ? { scratchRoot } : {}),
       });
       const before = new Set(terminals.list().map((session) => session.id));
+      // The boxed CLI cannot hand its page to the browser (macOS refuses it from the box), so Genex
+      // opens Google's sign-in page itself, once: Open sign-in page stays for a second look.
+      let opened = false;
       const launch = {
         file: boxed.file,
         args: boxed.args,
@@ -258,6 +302,12 @@ function antigravitySignIn({
         env: boxed.env,
         title: t("Antigravity sign-in"),
         kind: TerminalKind.AntigravityLogin,
+        onUrl: (url: string) => {
+          const page = googleSignInPage(url);
+          if (opened || !page) return;
+          opened = true;
+          void Promise.resolve(openExternal(page)).catch(() => {});
+        },
         onExit: () => {
           void boxed.release();
           void onAntigravitySignedIn?.()?.catch(() => {});
@@ -322,3 +372,9 @@ export interface CliLogin {
  * rereads the models OpenCode can run once the terminal closes.
  */
 export type OpenCodeLogin = CliLogin;
+
+/**
+ * Pi's sign-in: its own TUI so the person can `/login`. Pi keeps credentials in its own store;
+ * the studio rereads the models Pi can run once the terminal closes.
+ */
+export type PiLogin = CliLogin;

@@ -22,7 +22,8 @@ import {
   type EngineModel,
   type EngineStatus,
   ModelContextSource,
-  classifyHttpFailure,
+  classifyLocalFailure,
+  outOfMemoryFailure,
 } from "./types.ts";
 import {
   drainPiStream,
@@ -608,10 +609,13 @@ export class LocalServerEngine implements Engine {
     return redactSecrets(redactValues(said, key ? [key] : []));
   }
 
-  /** An HTTP failure: a request too long for the model's context by its typed code, else by its status. */
+  /**
+   * An HTTP failure: a request too long for the model's context by its typed code, a model that
+   * does not fit the server's memory, else by its status.
+   */
   #httpFailure(status: number, message: string): EngineError {
     if (message.includes(CONTEXT_EXCEEDED)) return new EngineError(EngineFailureKind.ContextOverflow, this.id, message);
-    return classifyHttpFailure(this.id, status, message);
+    return classifyLocalFailure(this.id, status, message);
   }
 
   /**
@@ -622,6 +626,8 @@ export class LocalServerEngine implements Engine {
     const message = this.#redacted(said, key);
     const status = streamHttpStatus(message);
     if (status !== null) return this.#httpFailure(status, message);
+    const outOfMemory = outOfMemoryFailure(this.id, message);
+    if (outOfMemory) return outOfMemory;
     if (!isCutConnection(message)) return new EngineError(EngineFailureKind.Other, this.id, message);
     const cut = new EngineError(EngineFailureKind.Other, this.id, MESSAGE.Cut(where(saved.url)));
     CUT_CONNECTIONS.add(cut);

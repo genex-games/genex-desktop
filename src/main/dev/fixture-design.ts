@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { CustomEvent, customEventData } from "../../shared/custom-events.ts";
 import { DESIGN_DROPS, DESIGN_FOLDER } from "../../shared/design-board.ts";
 import { type EventData, EventKind } from "../../shared/event-log.ts";
+import { UiEvent } from "../../shared/ui-events.ts";
 import type { StudioCore } from "../studio-core.ts";
 
 const ASK = "A dark action game with a lantern. Show me the design before you build anything.";
@@ -166,15 +167,25 @@ export async function seedDesignBoard(
   );
 }
 
+/** What the fixture chat's status line says while its agent works: a turn in progress, as the harness reports it. */
+const AGENT_AT_WORK = "thinking";
+
 /**
  * The fixture game's agent at work on the board, once the window is up, through the same calls
- * `show_design` makes: it offers the three places to pick among, says it is making a fourth place
- * and a character's model, and points at a spot of the first place with what it changed there.
+ * `show_design` makes: its chat is working, it offers the three places to pick among, says it is
+ * drawing the second place again, then a fourth place and a character's model, and points at a
+ * spot of the first place with what it changed there.
  */
-export async function designAgentArrivals(core: StudioCore, project: string): Promise<void> {
+export async function designAgentArrivals(core: StudioCore, project: string, threadId: string): Promise<void> {
   const world = (name: string): string => `${DESIGN_FOLDER}/world/${name}`;
+  const working = { status: AGENT_AT_WORK, since: Date.now() };
+  core.emit(UiEvent.HarnessStatus, { threadId, status: AGENT_AT_WORK, all: { [threadId]: working } });
   await core.design.offer(project, ["01-hollowmere.jpg", "02-the-high-fires.jpg", "03-the-cloud-sea.jpg"].map(world));
-  core.design.making(project, [world("05-the-drowned-gate.jpg"), `${DESIGN_FOLDER}/characters/the-keeper.glb`]);
+  core.design.making(project, [
+    world("02-the-high-fires.jpg"),
+    world("05-the-drowned-gate.jpg"),
+    `${DESIGN_FOLDER}/characters/the-keeper.glb`,
+  ]);
   await core.design.show(project, world("01-hollowmere.jpg"), {
     note: "Moved the well next to the gate",
     spot: "38,72",

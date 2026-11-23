@@ -70,6 +70,37 @@ function signInLabel({ engine, busy, stalled, flat }: CardState): string {
   return engine === EngineId.Codex ? t("Connect ChatGPT") : t("Sign in");
 }
 
+/** The check button's label: Checking… while it runs. */
+function recheckLabel(flat: boolean, checking: boolean): string {
+  if (checking) return t("Checking…");
+  return flat ? t("Check connection") : t("I'm signed in");
+}
+
+/**
+ * The card's own check of the sign-in: Checking… while it runs, and once it ends with the card
+ * still up, that the account is still signed out (a signed-in one takes the card away).
+ */
+function useRecheck(engine: string, onRecheck: (() => unknown) | undefined) {
+  const [checking, setChecking] = useState(false);
+  const [stillSignedOut, setStillSignedOut] = useState(false);
+  useEffect(() => {
+    setStillSignedOut(false);
+  }, [engine]);
+  const run = (): void => {
+    if (!onRecheck) return;
+    setChecking(true);
+    setStillSignedOut(false);
+    void Promise.resolve()
+      .then(onRecheck)
+      .catch(() => {})
+      .finally(() => {
+        setChecking(false);
+        setStillSignedOut(true);
+      });
+  };
+  return { checking, stillSignedOut, run };
+}
+
 /** Stop the sign-in under way for `engine`. */
 const cancelSignIn = (engine: string): Promise<unknown> =>
   engine === EngineId.Codex ? window.studio.codexLoginCancel() : window.studio.claudeLoginCancel();
@@ -147,13 +178,15 @@ export function SignInCard({
   missingCli?: boolean;
   allowLocal?: boolean;
   onSignIn: () => void;
-  onRecheck?: () => void;
+  /** Check the sign-in again; the card says so when the check finds it still signed out. */
+  onRecheck?: () => unknown;
   onContinueLocal?: () => void;
 }): JSX.Element {
   const vendor = signInVendor(engine);
   const login = useClaudeLogin(engine);
   const [code, setCode] = useState("");
   const [codeError, setCodeError] = useState<string | null>(null);
+  const recheck = useRecheck(engine, onRecheck);
   // Nothing typed for one subscription belongs to the next one either.
   useEffect(() => {
     setCode("");
@@ -168,7 +201,12 @@ export function SignInCard({
   const cliInstall = useCliInstall(engine);
   const card: CardState = { engine, vendor, login, busy, stalled, flat, missingCli, installing: cliInstall.installing };
   /** The nearest trouble wins: the code just refused, then the sign-in's own, then the caller's. */
-  const trouble = codeError ?? login?.error ?? (missingCli ? cliInstall.problem : null) ?? error;
+  const trouble =
+    codeError ??
+    login?.error ??
+    (missingCli ? cliInstall.problem : null) ??
+    error ??
+    (recheck.stillSignedOut ? t("{name} still isn't signed in.", { name: vendor.name }) : null);
   const submitCode = (): void => {
     setCodeError(null);
     void settled(
@@ -234,10 +272,10 @@ export function SignInCard({
         {busy && <Button onClick={() => void cancelSignIn(engine)}>{t("Cancel sign-in")}</Button>}
         {onRecheck ? (
           <Button
-            onClick={press(flat ? ProviderAction.CheckConnection : ProviderAction.Recheck, onRecheck)}
-            disabled={busy}
+            onClick={press(flat ? ProviderAction.CheckConnection : ProviderAction.Recheck, recheck.run)}
+            disabled={busy || recheck.checking}
           >
-            {flat ? t("Check connection") : t("I'm signed in")}
+            {recheckLabel(flat, recheck.checking)}
           </Button>
         ) : null}
         {allowLocal && onContinueLocal ? <Button onClick={onContinueLocal}>{t("Continue on this Mac")}</Button> : null}

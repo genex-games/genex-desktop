@@ -33,7 +33,8 @@ passages of advice Studio does not ship taken out. Where it disagrees with this 
   So do `shop set` and `shop remove` on a local draft (`local_…`).
 - `llm bench`, `shop set|remove` on an item in the store, `shop test` and `items add|remove`:
   `genex__cli-paid`. The user
-  approves each call, because it spends Nex (Genex's currency, which the cards call coin) or changes
+  approves each call, because it spends their Genex credits (`llm bench`; 1 credit is 1 cent) or
+  Nex (Genex's currency, which the cards call coin), or changes
   what the game sells. A store item's `image`, `model` and `package` name paths inside this game,
   and `items add` writes `genex-items/<id>/` into it; `shop publish` is not available, because Studio puts
   a game's items on sale when it is published. Read the `genex-items` skill first. A thing priced in Nex is a store item; coins, gold or gems are the game's own currency unless the person says they are

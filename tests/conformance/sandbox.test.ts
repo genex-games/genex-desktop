@@ -8,7 +8,7 @@
  */
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { mkdir, readFile, realpath, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -153,6 +153,40 @@ describe("sandboxed spawn", () => {
     );
     const after = await sandbox.run({ command: probe, cwd: workspace, timeoutMs: 30_000 });
     assert.equal(after.stdout.trim(), "403", "the domain closes again when the run ends");
+  });
+
+  it("a run's domain stays open while another sandbox opens, closes and goes away", {
+    skip: process.platform === "win32" ? "Windows' grant session unions its members (windows-sandbox.test.ts)" : false,
+  }, async () => {
+    // Antigravity's sign-in waits in a sandbox of its own with Google open; a status check in
+    // another sandbox opened and closed the same host, and the pasted code met the proxy's 403.
+    const host = "studio-shared-probe.invalid";
+    const waiting = sandbox.run({
+      // It asks only once the test says so: after the other sandbox has gone.
+      command: `while [ ! -f ask ]; do sleep 0.05; done; curl -s -m 8 -o /dev/null -w '%{http_code}' http://${host}/`,
+      cwd: workspace,
+      timeoutMs: 30_000,
+      policy: { allowedDomains: [host] },
+    });
+    const root = await tmpDir("studio-sandbox-check-");
+    const check = await ProcessSandbox.create({
+      writableRoots: [root],
+      scratchDir: path.join(root, "scratch"),
+      secretPaths: [],
+    });
+    try {
+      await check.run({ command: "true", cwd: root, timeoutMs: 30_000, policy: { allowedDomains: [host] } });
+    } finally {
+      await check.dispose();
+      await writeFile(path.join(workspace, "ask"), "");
+    }
+    const result = await waiting;
+    await rm(path.join(workspace, "ask"), { force: true });
+    assert.equal(
+      result.stdout.trim(),
+      "502",
+      `the waiting run still reaches its host: ${result.stdout} ${result.stderr}`,
+    );
   });
 
   it("SEC-2: a sandboxed command sees none of the studio's credentials", async () => {

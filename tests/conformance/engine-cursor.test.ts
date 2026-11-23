@@ -10,7 +10,7 @@
  * holds.
  */
 import assert from "node:assert/strict";
-import { readFile, realpath, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -256,6 +256,8 @@ describe("a Cursor session", () => {
       yield* replay(await events("cursor-run-written-2026.10.22.jsonl"));
     });
     const cwd = await game();
+    // Linux denies only settings that are there: a deny on a missing path leaves a stand-in file.
+    await mkdir(path.join(cwd, ".cursor"));
     const mirrored: DelegateEvent[] = [];
     const result = await engine.delegate({
       cwd,

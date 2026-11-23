@@ -41,6 +41,7 @@ export const EngineId = {
   Ollama: "ollama",
   OpenCode: "opencode",
   OpenRouter: "openrouter",
+  Pi: "pi",
   LocalServer: "local-server",
   Grok: "grok",
   Cursor: "cursor",
@@ -59,6 +60,7 @@ const SESSION_ENGINES: readonly string[] = [
   EngineId.Bonsai,
   EngineId.OpenCode,
   EngineId.OpenRouter,
+  EngineId.Pi,
   EngineId.LocalServer,
   EngineId.Grok,
   EngineId.Cursor,
@@ -358,6 +360,7 @@ const BRIDGE_ENGINES: readonly string[] = [
   EngineId.OpenCode,
   EngineId.Grok,
   EngineId.Cursor,
+  EngineId.Pi,
   EngineId.Antigravity,
 ];
 

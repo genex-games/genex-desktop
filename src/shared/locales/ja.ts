@@ -476,8 +476,6 @@ export default {
   Blur: "ぼかし",
   "Bonsai currently requires an Apple Silicon Mac": "Bonsaiには現在、Appleシリコン搭載のMacが必要です",
   "Bonsai installed · starts on demand": "Bonsaiインストール済み · 必要なときに起動",
-  "Bonsai is answering a chat or build. Delete the model when it finishes.":
-    "Bonsaiがチャットかビルドで応答中です。終わってからモデルを削除してください。",
   "Bonsai requires Apple Silicon": "BonsaiにはAppleシリコンが必要です",
   "Bonsai requires at least 16 GiB of memory.": "Bonsaiには16 GiB以上のメモリが必要です。",
   "Bonsai runtime is unavailable": "Bonsaiランタイムを利用できません",
@@ -689,7 +687,8 @@ export default {
   Checkpoint: "チェックポイント",
   Choose: "選択",
   "Choose Blender…": "Blenderを選ぶ…",
-  "Choose PQ2_0 (recommended) or PTQ1_0 in Model setup.": "モデル設定でPQ2_0（推奨）かPTQ1_0を選んでください。",
+  "Download Bonsai 2 27B or Bonsai 2 27B Lite in Settings › Local Models.":
+    "設定 › ローカルモデルで Bonsai 2 27B か Bonsai 2 27B Lite をダウンロードしてください。",
   "Choose a PNG, JPEG or WebP image, or a valid cover recipe.":
     "PNG、JPEG、WebPの画像か、有効なカバーレシピを選んでください。",
   "Choose a coding model": "コーディングモデルを選んでください",
@@ -1414,7 +1413,7 @@ export default {
   "Fit every asset": "すべてのアセットを表示",
   "Fit everything": "全体を表示",
   "Tidy up": "整える",
-  "Genex is drawing {title}": "Genex が {title} を描いています",
+  "Genex is drawing": "Genex が描いています",
   "{title} · next": "{title} · 次",
   "{count, plural, one {# new pick} other {# new picks}}": "{count, plural, other {新しい選択 #件}}",
   "Use this": "これにする",
@@ -1868,6 +1867,9 @@ export default {
   "Install OpenCode": "OpenCodeをインストール",
   "Install OpenCode from Settings › Model Providers.":
     "設定 › モデルプロバイダーからOpenCodeをインストールしてください。",
+  "Install Pi from Settings › Model Providers.": "設定 › モデルプロバイダーからPiをインストールしてください。",
+  "This version of Pi is too old for Genex. Update Pi, then check again.":
+    "このバージョンのPiはGenexには古すぎます。Piをアップデートしてから、もう一度確認してね。",
   "Install Unity 6": "Unity 6をインストール",
   "Install Unreal {version}": "Unreal {version}をインストール",
   "Install Xcode": "Xcodeをインストール",
@@ -2566,6 +2568,7 @@ export default {
   "Open Apple's downloads": "Appleのダウンロードを開く",
   "Open Model providers to reconnect, then try again.":
     "「モデルプロバイダー」を開いて再接続し、もう一度試してください。",
+  "Open Pi and type /login to connect a provider.": "Piを開いて/loginと入力し、プロバイダーを接続してください。",
   "Open Plugins": "プラグインを開く",
   "Open Privacy settings": "プライバシー設定を開く",
   "Open Studio": "Studioを開く",
@@ -2651,6 +2654,13 @@ export default {
   "OpenCode keeps each sign-in": "サインイン情報はそれぞれOpenCodeが保持します",
   "OpenCode ready": "OpenCodeの準備ができました",
   "OpenCode ready · free models": "OpenCode準備完了 · 無料モデル",
+  "Pi didn't answer. Check the installation, then try again.":
+    "Piから応答がありません。インストールを確認して、もう一度試してください。",
+  "Pi has no model it can run yet.": "Piで実行できるモデルがまだありません。",
+  "Pi isn't installed on this computer.": "このコンピューターにPiがインストールされていません。",
+  "Pi keeps each sign-in": "サインイン情報はそれぞれPiが保持します",
+  "Pi sign-in": "Piへのサインイン",
+  "Pi {version}, {count, plural, other {# model(s)}}": "Pi {version}、モデル{count, plural, other {#個}}",
   "OpenCode sign-in": "OpenCodeへのサインイン",
   "OpenCode {version}, {count, plural, other {# model(s)}}": "OpenCode {version}、モデル{count, plural, other {#個}}",
   "OpenCode's model list could not be read.": "OpenCodeのモデル一覧を読み取れませんでした。",
@@ -3423,6 +3433,8 @@ export default {
     "プロバイダーのモデルを使うには、OpenCodeでそのプロバイダーにサインインしてください。",
   "Sign in to a provider with OpenCode from Settings › Model Providers.":
     "設定 › モデルプロバイダーから、OpenCodeでプロバイダーにサインインしてください。",
+  "Sign in to a provider with Pi from Settings › Model Providers.":
+    "設定 › モデルプロバイダーから、Piでプロバイダーにサインインしてください。",
   "Sign in to another provider": "別のプロバイダーにサインイン",
   "Sign in to another provider…": "別のプロバイダーにサインイン…",
   "Sign in to buy things in games": "サインインしてゲーム内で購入しましょう",
@@ -3553,12 +3565,19 @@ export default {
   "Stop your builds and replies first, then move.": "先にビルドと返信を止めてから移動してください。",
   Stopped: "停止",
   "Stopped adding the Luau checks. Nothing was kept.": "Luauチェックの追加を停止しました。何も保存されていません。",
+  "Stopped before it started — nothing was done. Send a message to go on.":
+    "始まる前に停止しました。何も変更されていません。続行するにはメッセージを送信してください。",
+  "Stopped before the build started — nothing was built.": "ビルドが始まる前に停止しました。何もつくられていません。",
   "Stopped getting Roblox Studio.": "Roblox Studioの入手を止めました。",
   "Stopped getting Roblox Studio. Anything Roblox's installer already put on this computer stays.":
     "Roblox Studioの入手を止めました。Robloxのインストーラーがすでにこのコンピューターに入れたものは残ります。",
   "Stopped play": "プレイを停止しました",
+  "Stopped waiting. Send a message to go on once it's ready.":
+    "待機を停止しました。準備ができたらメッセージを送信して続けてください。",
   "Stopped.": "停止しました。",
   "Stopped. Everything built so far is kept.": "停止しました。ここまでつくったものはすべて残っています。",
+  "Stopped. Finished edits are preserved; send a message to continue.":
+    "停止しました。編集内容は保存されています。続行するにはメッセージを送信してください。",
   "Stopped. What it built is in your game now.": "停止しました。つくったものはゲームに反映されています。",
   "Stopped. What it built is kept in your project.": "停止しました。つくったものはプロジェクトに残っています。",
   "Stopped. Your game is as you left it.": "停止しました。ゲームは元のままです。",
@@ -4107,6 +4126,8 @@ export default {
   "This model is unavailable. Check the connection or choose another model.":
     "このモデルは使えません。接続を確認するか、別のモデルを選んでください。",
   "This model isn’t available right now": "このモデルは今使えません",
+  "This model needs more memory than this computer has free, so resending won't help. Pick a smaller model, or close other apps and try again.":
+    "このモデルには、このコンピューターの空きメモリより多くのメモリが必要なので、送り直しても解決しません。小さいモデルを選ぶか、ほかのアプリを閉じてからもう一度試してください。",
   "This page isn't from the sign-in Genex started.": "このページは、Genexが開始したサインインのものではありません。",
   "This paste has {count, plural, other {# servers}}. Pick one:":
     "貼り付けた内容に{count, plural, other {#個のサーバー}}があります。1つ選んでください：",
@@ -4250,6 +4271,8 @@ export default {
     "Unrealエディターが2つ開いています。終了したいほうを、そのウィンドウから終了してください。",
   "Two open Studios have a place named {name}, so Genex can't tell them apart. Save one under another name in Studio, then choose it again.":
     "開いている2つのStudioに{name}という名前のプレイスがあり、Genexには区別できません。Studioで片方を別の名前で保存してから、もう一度選んでください。",
+  "Type /login below and finish signing in. Pi keeps the sign-in.":
+    "下で/loginと入力してサインインを完了してください。サインイン情報はPiが保持します。",
   "Type a name.": "名前を入力してください。",
   "Type your email and password in the Unity Hub window and add a Unity license (Personal is free if Unity's terms allow it for you). Genex goes on by itself once you're in.":
     "Unity Hubのウィンドウでメールアドレスとパスワードを入力し、Unityのライセンスを追加してください（Unityの規約で認められていれば、Personalは無料です）。サインインできたら、Genexが自動で続けます。",
@@ -4358,6 +4381,7 @@ export default {
   "Update Claude Code": "Claude Codeをアップデート",
   "Update Codex": "Codexをアップデート",
   "Update OpenCode": "OpenCodeをアップデート",
+  "Update Pi": "Piをアップデート",
   "Update Xcode": "Xcodeをアップデート",
   "Update Xcode (this Mac has {version})": "Xcodeをアップデート（このMacは{version}）",
   "Update all": "すべてアップデート",
@@ -4536,6 +4560,8 @@ export default {
   "Windows app": "Windowsアプリ",
   "Windows didn't get permission to install. Press Do it for me again and choose Yes when Windows asks.":
     "Windowsでインストールが許可されませんでした。もう一度「おまかせ」を押して、Windowsに聞かれたら「はい」を選んでください。",
+  "Windows doesn’t let Genex’s agents sign in on this PC. Set up allows it.":
+    "このPCでは、WindowsがGenexのエージェントのサインインを許可していません。「セットアップ」で許可します。",
   "Windows needs a one-time setup of the protected workspace, approved by an administrator.":
     "Windowsでは、保護されたワークスペースの初回セットアップに管理者の承認が必要です。",
   "Windows will ask you to allow it once.": "Windowsから一度だけ許可を求められます。",
@@ -5106,6 +5132,8 @@ export default {
   'the lead put a worker on "{task}"': "メインエージェントがワーカーに「{task}」を任せました",
   'the lead put a worker on "{task}" for {minutes}': "メインエージェントがワーカーに「{task}」を{minutes}任せました",
   "the model could not be reached": "モデルに接続できませんでした",
+  "the model needs more memory than this computer has free — close other apps or pick a smaller model, then press Resume":
+    "モデルに必要なメモリがこのコンピューターの空きメモリより多いです。ほかのアプリを閉じるか小さいモデルを選んでから「再開」を押してください",
   "the model provider hit your plan's session limit": "モデルプロバイダーでプランのセッション上限に達しました",
   "the model provider hit your plan's usage cap": "モデルプロバイダーでプランの使用上限に達しました",
   "the model provider is down": "モデルプロバイダーが停止しています",
@@ -5518,6 +5546,7 @@ export default {
     "{name}はまだGenex用にセットアップされていません。先にセットアップしてください。",
   "{name} isn’t on this computer any more.": "{name}はもうこのコンピューターにありません。",
   "{name} needs Studio {version} or newer": "{name}にはStudio {version}以降が必要です",
+  "{name} still isn't signed in.": "{name}はまだサインインしていません。",
   "{name} needs a sign-in": "{name}へのサインインが必要です",
   "{name} opens in Unreal {to} from now on.": "{name} は今後 Unreal {to} で開きます。",
   "{name} settings": "{name}の設定",
@@ -6423,8 +6452,8 @@ export default {
   "Installing Antigravity. This can take a minute.":
     "Antigravityをインストールしています。1分ほどかかることがあります。",
   "Not signed in to Antigravity.": "Antigravityにサインインしていません。",
-  "Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in.":
-    "サインインページを開き、表示されたコードをここに貼り付けてください。サインイン情報はAntigravityが保持します。",
+  "Sign in on Google's page in your browser, then paste the code it gives you here. Antigravity keeps the sign-in.":
+    "ブラウザで開いたGoogleのページでサインインし、表示されたコードをここに貼り付けてください。サインイン情報はAntigravityが保持します。",
   "Sign in to Antigravity from Settings › Model Providers.":
     "設定 › モデルプロバイダーからAntigravityにサインインしてください。",
   "Sign in with your Google account to build with your plan.":
@@ -7118,4 +7147,37 @@ export default {
   "column\u0004System": "システム",
   "column\u0004Share": "割合",
   "column\u0004Opened": "開いた数",
+  "Show all {count}": "すべて表示（{count}）",
+  "{at} of {count}": "{at} / {count}",
+  "Add {cap} more": "{cap} 追加",
+  Allow: "許可",
+  "Genex's real models are switched off right now. Practice answers go on.":
+    "Genex の本物のモデルは今オフです。練習用の回答は続きます。",
+  "Most credits this play session may spend": "このプレイで使えるクレジットの上限",
+  "Practice answers (free, made up)": "練習用の回答（無料・作り物）",
+  "Practice answers could not start: {error}": "練習用の回答を開始できませんでした: {error}",
+  "Real AI is billed to this game's draft on Genex, and it has none yet. Ask the chat to publish a draft, then try again. Practice answers go on.":
+    "本物の AI はこのゲームの Genex の下書きに請求されますが、まだ下書きがありません。チャットに下書きの公開を頼んでから、もう一度試してね。練習用の回答は続きます。",
+  "Real AI is not available in this test profile. Practice answers go on.":
+    "このテスト用プロフィールでは本物の AI は使えません。練習用の回答は続きます。",
+  "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
+    "本物の AI を使うには Genex にサインインしてね。設定からサインインして、もう一度試してね。練習用の回答は続きます。",
+  "Real AI stopped. Practice answers go on.": "本物の AI が止まりました。練習用の回答は続きます。",
+  "Real AI · {spent} of {cap} credits": "本物の AI · {cap} 中 {spent} クレジット",
+  "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
+    "このプレビューでは本物のモデルが答え、Genex のクレジットから支払われます: このプレイで最大 {cap} クレジット ({dollars})。",
+  Start: "開始",
+  "Starting real AI…": "本物の AI を起動中…",
+  "The cap is used up": "上限に達しました",
+  "This game wants to hear you through your microphone.": "このゲームはマイクであなたの声を聞きたがっています。",
+  "Use real AI": "本物の AI を使う",
+  "A local model is answering a chat or build. Delete the model when it finishes.":
+    "ローカルモデルがチャットかビルドで応答中です。終わってからモデルを削除してください。",
+  "Download Inkling 2 Mini in Settings › Local Models.":
+    "設定 › ローカルモデルで Inkling 2 Mini をダウンロードしてください。",
+  "Download Inkling 2 Mini to build locally": "ローカルで作るにはInkling 2 Miniをダウンロード",
+  "Inkling 2 Mini installed · starts on demand": "Inkling 2 Miniインストール済み · 必要なときに起動",
+  "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
+    "ローカルモデルにはAppleシリコン搭載のMac、または64ビットのWindowsかLinuxのPCが必要です",
+  "{model} can't run on this computer.": "{model}はこのコンピュータでは動きません。",
 } satisfies LocaleCatalog;

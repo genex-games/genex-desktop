@@ -12,7 +12,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { GenexCliService, genexHostPreflight } from "../../src/main/core/genex-cli.ts";
 import { boundGameFolder } from "../../src/main/core/genex-bound-game.ts";
-import { GenexCliRefusal, GenexCliRefusalCode } from "../../src/main/core/genex-cli-policy.ts";
+import { GenexCliRefusal, GenexCliRefusalCode, SCHEMA_MAX_BYTES } from "../../src/main/core/genex-cli-policy.ts";
 import { GenexPackageService } from "../../src/main/core/genex-package.ts";
 import type { PluginBinding } from "../../src/shared/plugins.ts";
 import { PluginHostTool } from "../../src/shared/plugins.ts";
@@ -85,7 +85,7 @@ function fakeSandbox(options: { stdout?: string; code?: number; write?: (cwd: st
   const seen: Seen[] = [];
   const run = async (request: RunRequest): Promise<RunResult> => {
     const named: Seen["named"] = {};
-    for (const flag of ["image", "model", "package"]) {
+    for (const flag of ["image", "model", "package", "schema"]) {
       const value = flagValue(request.command, flag);
       if (!value) continue;
       const stats = await lstat(value);
@@ -282,6 +282,210 @@ describe("a store item's files, from the game into the run folder", () => {
       /names nothing/,
     );
     assert.equal(sandbox.seen.length, 0, "a preflight runs nothing");
+  });
+});
+
+/** The shape a game's model call answers in, as the game keeps it in one file. */
+const SCHEMA = `${JSON.stringify(
+  {
+    type: "object",
+    properties: { line: { type: "string", maxLength: 240 }, mood: { enum: ["warm", "wary"] } },
+    required: ["line", "mood"],
+    additionalProperties: false,
+  },
+  null,
+  2,
+)}\n`;
+const SCHEMA_FILE = "answer.schema.json";
+const bench = (schema: unknown) => ({
+  command: "llm bench",
+  args: "Greet the traveller in one line.",
+  options: { "max-credits": 5, schema },
+});
+
+/**
+ * Genex's pricing card benchmarks with the game's own answer-shape file (`--schema`), and the CLI
+ * never runs in the game: the file is a path boundary like a store item's picture. Studio takes one
+ * small `.json` file inside the bound game, by real path, and the CLI reads Studio's copy.
+ */
+describe("a bench's answer-shape file, from the game into the run folder", () => {
+  it("copies the schema, points the CLI at the copy and opens the API alone", async () => {
+    const p = await profile();
+    await writeFile(path.join(p.game, SCHEMA_FILE), SCHEMA);
+    const before = await tree(p.gamesRoot);
+    const sandbox = fakeSandbox();
+    const answer = await service(p, sandbox).run(bench(`./${SCHEMA_FILE}`), bound(p), PAID);
+    assert.equal(answer.ok, true);
+    const [run] = sandbox.seen;
+    assert.ok(run, "the CLI ran");
+    assert.equal(run.named.schema, SCHEMA, "the CLI reads the game's schema, byte for byte");
+    const runs = path.join(p.userData, "genex-cli");
+    const copy = flagValue(run.request.command, "schema") ?? "";
+    assert.ok(copy.startsWith(`${runs}${path.sep}`), `schema names the run folder's copy: ${copy}`);
+    assert.equal(path.basename(copy), SCHEMA_FILE);
+    assert.ok(run.request.command.includes("'--max-credits' '5'"), run.request.command);
+    assert.deepEqual(
+      run.request.policy?.allowedDomains,
+      ["api.genex.games"],
+      "a schema goes in the request: no item storage opens for it",
+    );
+    assert.deepEqual(await tree(p.gamesRoot), before, "the game is untouched");
+    assert.deepEqual(await readdir(runs), [], "the run folder and its copy are gone");
+  });
+
+  it("takes a schema of exactly the most Genex takes, in a folder of the game", async () => {
+    const p = await profile();
+    const full = `"${"s".repeat(SCHEMA_MAX_BYTES - 2)}"`;
+    await writeFile(path.join(p.game, "assets", "Full.Schema.JSON"), full);
+    const sandbox = fakeSandbox();
+    const cli = service(p, sandbox);
+    const shown = await cli.preflight(bench("assets/Full.Schema.JSON"), bound(p), PAID);
+    assert.equal(shown.schema, "assets/Full.Schema.JSON");
+    assert.equal(shown["max-credits"], "5");
+    assert.equal((await cli.run(bench("assets/Full.Schema.JSON"), bound(p), PAID)).ok, true);
+    assert.equal(sandbox.seen[0]?.named.schema, full);
+  });
+
+  const hostile: Array<[string, (p: Profile) => Promise<unknown>, RegExp]> = [
+    [
+      "a schema behind ../",
+      async (p) => {
+        await writeFile(path.join(p.outside, SCHEMA_FILE), SCHEMA);
+        return `../elsewhere/${SCHEMA_FILE}`;
+      },
+      /inside this game/,
+    ],
+    [
+      "a schema behind ../ in the middle of the path",
+      async (p) => {
+        await writeFile(path.join(p.outside, SCHEMA_FILE), SCHEMA);
+        return `assets/../../elsewhere/${SCHEMA_FILE}`;
+      },
+      /inside this game/,
+    ],
+    [
+      "an absolute schema outside the game",
+      async (p) => {
+        await writeFile(path.join(p.outside, SCHEMA_FILE), SCHEMA);
+        return path.join(p.outside, SCHEMA_FILE);
+      },
+      /inside this game/,
+    ],
+    [
+      "the game's own schema by its absolute path",
+      async (p) => {
+        await writeFile(path.join(p.game, SCHEMA_FILE), SCHEMA);
+        return path.join(p.game, SCHEMA_FILE);
+      },
+      /inside this game/,
+    ],
+    ["a schema under the home folder", async () => `~/${SCHEMA_FILE}`, /inside this game/],
+    [
+      "a link in the game that leads to a schema outside it",
+      async (p) => {
+        await writeFile(path.join(p.outside, SCHEMA_FILE), SCHEMA);
+        await symlink(path.join(p.outside, SCHEMA_FILE), path.join(p.game, SCHEMA_FILE));
+        return SCHEMA_FILE;
+      },
+      /leads outside this game/,
+    ],
+    [
+      "a schema through a linked folder",
+      async (p) => {
+        await writeFile(path.join(p.outside, SCHEMA_FILE), SCHEMA);
+        await symlink(p.outside, path.join(p.game, "linked"));
+        return `linked/${SCHEMA_FILE}`;
+      },
+      /leads outside this game/,
+    ],
+    [
+      "a link to a link that leaves the game",
+      async (p) => {
+        await writeFile(path.join(p.outside, SCHEMA_FILE), SCHEMA);
+        await symlink(path.join(p.outside, SCHEMA_FILE), path.join(p.game, "assets", "there.json"));
+        await symlink(path.join(p.game, "assets", "there.json"), path.join(p.game, SCHEMA_FILE));
+        return SCHEMA_FILE;
+      },
+      /leads outside this game/,
+    ],
+    [
+      "a folder named like a schema",
+      async (p) => {
+        await mkdir(path.join(p.game, "schemas.json"));
+        return "schemas.json";
+      },
+      /not a file/,
+    ],
+    ["a schema the game does not have", async () => "missing.schema.json", /names nothing/],
+    [
+      "a schema one byte larger than Genex takes",
+      async (p) => {
+        await writeFile(path.join(p.game, SCHEMA_FILE), `"${"s".repeat(SCHEMA_MAX_BYTES - 1)}"`);
+        return SCHEMA_FILE;
+      },
+      /16 KB/,
+    ],
+    [
+      "a file far too large to be a schema",
+      async (p) => {
+        await writeFile(path.join(p.game, SCHEMA_FILE), Buffer.alloc(4 * 1024 * 1024, "s"));
+        return SCHEMA_FILE;
+      },
+      /16 KB/,
+    ],
+    ["a file of another kind", async () => "assets/frost-axe.glb", /takes a \.json file/],
+    [
+      "a .json link to a file of another kind in the game",
+      async (p) => {
+        await writeFile(path.join(p.game, ".env"), "KEY=synthetic\n");
+        await symlink(path.join(p.game, ".env"), path.join(p.game, SCHEMA_FILE));
+        return SCHEMA_FILE;
+      },
+      /is not a \.json file/,
+    ],
+    ["a path with a NUL", async () => `answer\u0000.schema.json`, /control characters/],
+    ["a path with a line break", async () => `${SCHEMA_FILE}\n--env`, /control characters/],
+    ["a path that reads as a flag", async () => "--api-url.json", /not starting with -/],
+  ];
+  for (const [name, plant, message] of hostile) {
+    it(`refuses ${name} before anyone is asked, and reads and copies nothing`, async () => {
+      const p = await profile();
+      const sandbox = fakeSandbox();
+      const call = bench(await plant(p));
+      const before = { games: await tree(p.gamesRoot), outside: await tree(p.outside) };
+      const cli = service(p, sandbox);
+      const refused = (error: unknown) => {
+        assert.ok(error instanceof GenexCliRefusal, String(error));
+        assert.equal(error.code, GenexCliRefusalCode.InvalidValue);
+        assert.match(error.message, message);
+        return true;
+      };
+      await assert.rejects(cli.preflight(call, bound(p), PAID), refused, "nobody is asked");
+      await assert.rejects(cli.run(call, bound(p), PAID), refused);
+      assert.equal(sandbox.seen.length, 0, "nothing ran");
+      assert.deepEqual(await tree(p.gamesRoot), before.games);
+      assert.deepEqual(await tree(p.outside), before.outside);
+      assert.deepEqual(await readdir(path.join(p.userData, "genex-cli")).catch(() => []), [], "no copy was made");
+    });
+  }
+
+  it("refuses a schema for a call bound to a folder that is not the game's", async () => {
+    const p = await profile();
+    await writeFile(path.join(p.outside, SCHEMA_FILE), SCHEMA);
+    const sandbox = fakeSandbox();
+    await assert.rejects(
+      service(p, sandbox).run(bench(SCHEMA_FILE), bound(p, p.outside), PAID),
+      /not bound to the game/,
+    );
+    assert.equal(sandbox.seen.length, 0);
+  });
+
+  it("still runs a bench that names no schema, on the hosted project alone", async () => {
+    const p = await profile();
+    const sandbox = fakeSandbox();
+    const call = { command: "llm bench", args: "Greet the traveller.", options: { "max-credits": 5 } };
+    assert.equal((await service(p, sandbox).run(call, bound(p, p.outside), PAID)).ok, true);
+    assert.equal(flagValue(sandbox.seen[0]?.request.command ?? "", "schema"), null);
   });
 });
 

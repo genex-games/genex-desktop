@@ -346,6 +346,7 @@ describe("the committed case file", () => {
         ["loop-finish-check", CaseMode.LongHorizon],
         ["timed-wrap-up", CaseMode.LongHorizon],
         ["godot-loop", CaseMode.LongHorizon],
+        ["play-time-model", CaseMode.FollowUp],
       ],
     );
     for (const c of cases) assert.equal(c.visibility, CaseVisibility.Public);

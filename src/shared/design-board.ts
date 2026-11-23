@@ -37,6 +37,16 @@ export const DESIGN_SUPPORT_FOLDER = "img";
 export const DesignTheme = { Dark: "dark", Light: "light" } as const;
 export type DesignTheme = (typeof DesignTheme)[keyof typeof DesignTheme];
 
+/**
+ * A page's own background in each look. The app fills a page's frame with it too, so where the
+ * frame's edge shows past the page (a canvas zoomed far out draws the page a pixel short), it is
+ * the page's colour, never a light seam.
+ */
+export const DESIGN_PAGE_BACKGROUND: Readonly<Record<DesignTheme, string>> = {
+  [DesignTheme.Dark]: "#141416",
+  [DesignTheme.Light]: "#fdfdfd",
+};
+
 /** A page's address in the app's look: as it is for dark, with `t=light` for light. */
 export const themedPageUrl = (url: string, theme: DesignTheme): string =>
   theme === DesignTheme.Light ? `${url}&t=${DesignTheme.Light}` : url;

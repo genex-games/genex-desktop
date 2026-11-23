@@ -28,6 +28,7 @@ import { editorCommand, editorRuns, endEditor, isPlaying, openScenes, saveWork, 
 import { runEnded } from "./editor-idle.ts";
 import { type OpenDeps, Opened, type Opening, openProject, usable } from "./editor-open.ts";
 import { editorStatus, PipelineProblem } from "./pipeline.ts";
+import { EditorCommand, NAME_THE_SCENE } from "./pipeline-commands.ts";
 import type { UnityProject } from "./project-folder.ts";
 
 /** How long a main thread may run nothing before a health check fails: longer than any import a game's edits cause. */
@@ -38,7 +39,7 @@ export const AWAY_AFTER_MS = 5 * MINUTE_MS;
 const REOPEN_WAIT_MS = 45 * SECOND_MS;
 /** The still a checkpoint and the reviewer get. */
 const STILL = { source: "camera", width: 1280, height: 720 } as const;
-const CAPTURE = "capture_game_view";
+const CAPTURE = EditorCommand.Capture;
 /** The folders in the plugin's storage holding each game's record of an editor closed for a restore, and of a stall. */
 const Records = { Restore: "restore", Health: "health" } as const;
 /** A game id as Genex names a game's record: a plain folder name, never a path. */
@@ -53,7 +54,7 @@ const WORDS = {
   Playing: "Unity is in Play mode, and scenes can't be saved until play stops.",
   SaveFailed: (why: string) => `Unity couldn't save its work: ${why}`,
   Untitled: (count: number) =>
-    `${count === 1 ? "A scene" : `${count} scenes`} with unsaved work in Unity ${count === 1 ? "has" : "have"} never been saved, so Genex can't save ${count === 1 ? "it" : "them"}: save with save_scene and a path under Assets/.`,
+    `${count === 1 ? "A scene" : `${count} scenes`} with unsaved work in Unity ${count === 1 ? "has" : "have"} never been saved, so Genex can't save ${count === 1 ? "it" : "them"}: ${NAME_THE_SCENE}.`,
   // A checkpoint is taken either way: these follow the reason the editor's work wasn't saved.
   SavePointDiskOnly: "This save point holds the files on disk only.",
   CheckpointDiskOnly: "This checkpoint holds the files on disk only.",
@@ -73,7 +74,7 @@ const WORDS = {
   SetAside: (folder: string) =>
     `Unity's backups of the scenes that were unsaved when it last ended were moved to ${folder}, so that it opens without asking to recover them.`,
   EmptyStill:
-    "No picture of this save point: the main camera saw one flat colour, since outside Play mode the scene shows nothing of the game. Build the level into the scene with an Assets/Editor script run by run_script, so its camera sees the game.",
+    "No picture of this save point: the main camera saw one flat colour, since outside Play mode the scene shows nothing of the game. Build the level into the scene with an Assets/Editor script run by script run (run_script on an older Pipeline), so its camera sees the game.",
 } as const;
 
 /** What a handler works on: the game, the plugin's storage, the game's project and the moment. */

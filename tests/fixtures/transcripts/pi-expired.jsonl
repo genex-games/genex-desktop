@@ -1,0 +1,6 @@
+{"type":"session","version":3,"id":"sess-pi-expired","timestamp":"2024-12-03T14:00:00.000Z","cwd":"/game"}
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"401 unauthorized: token expired"}}
+{"type":"agent_end","messages":[],"willRetry":false}
+{"type":"agent_settled"}

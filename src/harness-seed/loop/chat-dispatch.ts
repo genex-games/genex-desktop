@@ -4,7 +4,7 @@
  * paused run it resumes, and the Loop the turn started.
  */
 import { runTurn, type TurnOptions, type TurnOutcome } from "./turn-loop.ts";
-import { sayInTurn, turnFailureOf, TurnStatus, TurnStop } from "./turn-record.ts";
+import { turnFailureOf, TurnStatus, TurnStop } from "./turn-record.ts";
 import { dropSteeringBacklog } from "./steering-backlog.ts";
 import { afterLeadLoopRun, holdsSession, resumeAfterReply, type AfterLoopRun } from "./after-loop-run.ts";
 import { conversationThrough, latestRun } from "./run-inbox.ts";
@@ -14,6 +14,7 @@ import { ProjectStarter, startWebIfPending } from "./folder-facts.ts";
 import { HostMethod } from "./host-methods.ts";
 import { EventKind, RunEvent, RunState } from "./run-events.ts";
 import { handleRunStart, loopRunRefusal } from "./run-dispatch.ts";
+import { GenexLine, sayGenexLine } from "./genex-lines.ts";
 import { runUnderWay } from "./live-chat.ts";
 import { type ActiveRun, StatusLane, type Studio } from "./studio-state.ts";
 import { CLIP_GAME_TITLE } from "./text.ts";
@@ -38,7 +39,6 @@ const MESSAGE = {
     `a build is already running for ${project} — wait for it to finish, or stop it, before starting another`,
   couldNotLaunch: (failure: string) => `the run could not launch: ${failure}`,
   stoppedBeforeLaunch: "it was stopped before it started, and nothing new was started",
-  stoppedBeforeTurn: "Stopped before it started — nothing was done. Send a message to go on.",
   turnFailed: (failure: unknown) => `turn failed: ${failure}`,
 } as const;
 
@@ -88,7 +88,7 @@ export async function handleUserMessage(studio: Studio, action: QueueAction, ste
 
 /** A turn the user stopped before it began: said in the chat, then ended as interrupted. */
 async function stoppedBeforeTurn(host: Host, ctx: HarnessCtx, turnId: string): Promise<void> {
-  await sayInTurn(ctx, turnId, MESSAGE.stoppedBeforeTurn);
+  await sayGenexLine(ctx, turnId, GenexLine.StoppedBeforeTurn);
   await endInterrupted(host, turnId);
 }
 
@@ -337,15 +337,16 @@ export async function launchFromIntake(
   const { host } = studio;
   requireGoal(spec);
   const games = await host.call(HostMethod.GameList, {});
-  const project = intakeProject(action, spec, games);
+  let project = intakeProject(action, spec, games);
   // A Loop with no game yet makes a web game; one on a game with no kind starts it as one.
   if (!games.some((g) => g.name === project)) {
-    await ctx.call(HostMethod.GameScaffold, {
+    const scaffolded = await ctx.call(HostMethod.GameScaffold, {
       name: project,
       title: spec.goal?.slice(0, CLIP_GAME_TITLE) || project,
       threadId: action.threadId,
       kind: ProjectStarter.Web,
     });
+    if (scaffolded && typeof scaffolded.name === "string") project = scaffolded.name;
   }
   await startWebIfPending(host, project, games);
   // What the folder itself refuses (loopRunRefusal): a game that is already compiled. Said in chat

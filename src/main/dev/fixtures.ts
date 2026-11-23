@@ -279,7 +279,9 @@ export async function activateChatFixture(
     // After the window is up, so the canvas hears the agent offer, announce and point as it would live.
     setTimeout(
       () =>
-        void designAgentArrivals(core, fixture.project).catch((error) => console.error("Design fixture failed", error)),
+        void designAgentArrivals(core, fixture.project, fixture.threadId).catch((error) =>
+          console.error("Design fixture failed", error),
+        ),
       NOTIFICATIONS_START_MS,
     );
     return;

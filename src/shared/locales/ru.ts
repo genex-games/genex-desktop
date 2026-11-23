@@ -498,8 +498,6 @@ export default {
   Blur: "Размытие",
   "Bonsai currently requires an Apple Silicon Mac": "Для Bonsai пока нужен Mac с Apple Silicon",
   "Bonsai installed · starts on demand": "Bonsai установлен · запускается по запросу",
-  "Bonsai is answering a chat or build. Delete the model when it finishes.":
-    "Bonsai сейчас отвечает в чате или сборке. Удали модель, когда ответ будет готов.",
   "Bonsai requires Apple Silicon": "Для Bonsai нужен Apple Silicon",
   "Bonsai requires at least 16 GiB of memory.": "Для Bonsai нужно не меньше 16 ГБ памяти.",
   "Bonsai runtime is unavailable": "Среда выполнения Bonsai недоступна",
@@ -709,7 +707,8 @@ export default {
   Checkpoint: "Чекпоинт",
   Choose: "Выбрать",
   "Choose Blender…": "Выбрать Blender…",
-  "Choose PQ2_0 (recommended) or PTQ1_0 in Model setup.": "Выбери PQ2_0 (рекомендуется) или PTQ1_0 в настройке модели.",
+  "Download Bonsai 2 27B or Bonsai 2 27B Lite in Settings › Local Models.":
+    "Скачай Bonsai 2 27B или Bonsai 2 27B Lite в разделе «Настройки › Локальные модели».",
   "Choose a PNG, JPEG or WebP image, or a valid cover recipe.":
     "Выбери картинку PNG, JPEG или WebP либо корректный рецепт обложки.",
   "Choose a coding model": "Выбери модель для кода",
@@ -1426,7 +1425,7 @@ export default {
   "Fit every asset": "Показать все ассеты",
   "Fit everything": "Вписать всё",
   "Tidy up": "Навести порядок",
-  "Genex is drawing {title}": "Genex рисует: {title}",
+  "Genex is drawing": "Genex рисует",
   "{title} · next": "{title} · дальше",
   "{count, plural, one {# new pick} other {# new picks}}":
     "{count, plural, one {# новый выбор} few {# новых выбора} many {# новых выборов} other {# нового выбора}}",
@@ -1876,6 +1875,9 @@ export default {
   "Install Ollama": "Установить Ollama",
   "Install OpenCode": "Установить OpenCode",
   "Install OpenCode from Settings › Model Providers.": "Установи OpenCode в разделе «Настройки › Провайдеры моделей».",
+  "Install Pi from Settings › Model Providers.": "Установи Pi в разделе «Настройки › Провайдеры моделей».",
+  "This version of Pi is too old for Genex. Update Pi, then check again.":
+    "Эта версия Pi слишком старая для Genex. Обнови Pi и нажми «Проверить снова».",
   "Install Unity 6": "Установить Unity 6",
   "Install Unreal {version}": "Установить Unreal {version}",
   "Install Xcode": "Установить Xcode",
@@ -2556,6 +2558,7 @@ export default {
   "Open App Store": "Открыть App Store",
   "Open Apple's downloads": "Открыть загрузки Apple",
   "Open Model providers to reconnect, then try again.": "Открой «Провайдеры моделей», переподключись и попробуй снова.",
+  "Open Pi and type /login to connect a provider.": "Открой Pi и введи /login, чтобы подключить провайдера.",
   "Open Plugins": "Открыть плагины",
   "Open Privacy settings": "Открыть настройки конфиденциальности",
   "Open Studio": "Открыть Studio",
@@ -2639,6 +2642,13 @@ export default {
   "OpenCode keeps each sign-in": "OpenCode запоминает каждый вход",
   "OpenCode ready": "OpenCode готов",
   "OpenCode ready · free models": "OpenCode готов · бесплатные модели",
+  "Pi didn't answer. Check the installation, then try again.": "Pi не отвечает. Проверь установку и попробуй снова.",
+  "Pi has no model it can run yet.": "У Pi пока нет моделей, которые он может запустить.",
+  "Pi isn't installed on this computer.": "Pi не установлен на этом компьютере.",
+  "Pi keeps each sign-in": "Pi запоминает каждый вход",
+  "Pi sign-in": "Вход в Pi",
+  "Pi {version}, {count, plural, other {# model(s)}}":
+    "Pi {version}, {count, plural, one {# модель} few {# модели} many {# моделей} other {# модели}}",
   "OpenCode sign-in": "Вход в OpenCode",
   "OpenCode {version}, {count, plural, other {# model(s)}}":
     "OpenCode {version}, {count, plural, one {# модель} few {# модели} many {# моделей} other {# модели}}",
@@ -3412,6 +3422,8 @@ export default {
     "Войди в аккаунт провайдера в OpenCode, чтобы запускать его модели.",
   "Sign in to a provider with OpenCode from Settings › Model Providers.":
     "Войди в провайдера через OpenCode в разделе «Настройки › Провайдеры моделей».",
+  "Sign in to a provider with Pi from Settings › Model Providers.":
+    "Войди в провайдера через Pi в разделе «Настройки › Провайдеры моделей».",
   "Sign in to another provider": "Войти в аккаунт другого провайдера",
   "Sign in to another provider…": "Войти через другого провайдера…",
   "Sign in to buy things in games": "Войди, чтобы покупать в играх",
@@ -3535,12 +3547,19 @@ export default {
   "Stop your builds and replies first, then move.": "Сначала останови сборки и ответы, потом переноси.",
   Stopped: "Остановлено",
   "Stopped adding the Luau checks. Nothing was kept.": "Добавление проверок Luau остановлено. Ничего не сохранено.",
+  "Stopped before it started — nothing was done. Send a message to go on.":
+    "Остановлено до начала — ничего не сделано. Напиши сообщение, чтобы продолжить.",
+  "Stopped before the build started — nothing was built.": "Остановлено до начала сборки — ничего не собрано.",
   "Stopped getting Roblox Studio.": "Установка Roblox Studio остановлена.",
   "Stopped getting Roblox Studio. Anything Roblox's installer already put on this computer stays.":
     "Установка Roblox Studio остановлена. Всё, что установщик Roblox уже поставил на этот компьютер, останется.",
   "Stopped play": "Игра остановлена",
+  "Stopped waiting. Send a message to go on once it's ready.":
+    "Ожидание остановлено. Напиши сообщение, когда всё будет готово, чтобы продолжить.",
   "Stopped.": "Остановлено.",
   "Stopped. Everything built so far is kept.": "Остановлено. Всё, что успели собрать, сохранено.",
+  "Stopped. Finished edits are preserved; send a message to continue.":
+    "Остановлено. Готовые правки сохранены — напиши сообщение, чтобы продолжить.",
   "Stopped. What it built is in your game now.": "Остановлено. Всё собранное уже в игре.",
   "Stopped. What it built is kept in your project.": "Остановлено. Всё собранное сохранено в твоём проекте.",
   "Stopped. Your game is as you left it.": "Остановлено. Игра осталась как была.",
@@ -4076,6 +4095,8 @@ export default {
   "This model is unavailable. Check the connection or choose another model.":
     "Эта модель недоступна. Проверь подключение или выбери другую модель.",
   "This model isn’t available right now": "Эта модель сейчас недоступна",
+  "This model needs more memory than this computer has free, so resending won't help. Pick a smaller model, or close other apps and try again.":
+    "Этой модели нужно больше памяти, чем свободно на компьютере, поэтому повторная отправка не поможет. Выбери модель поменьше или закрой другие приложения и попробуй снова.",
   "This page isn't from the sign-in Genex started.": "Эта страница не от того входа, который начал Genex.",
   "This paste has {count, plural, other {# servers}}. Pick one:":
     "Во вставленном тексте {count, plural, one {# сервер} few {# сервера} many {# серверов} other {# сервера}}. Выбери один:",
@@ -4217,6 +4238,8 @@ export default {
     "Открыты два редактора Unreal. Закрой нужный в его собственном окне.",
   "Two open Studios have a place named {name}, so Genex can't tell them apart. Save one under another name in Studio, then choose it again.":
     "В двух открытых Studio есть плейс с именем {name}, и Genex не может их различить. Сохрани один из них в Studio под другим именем и выбери снова.",
+  "Type /login below and finish signing in. Pi keeps the sign-in.":
+    "Введи /login ниже и заверши вход. Pi запомнит вход.",
   "Type a name.": "Введи название.",
   "Type your email and password in the Unity Hub window and add a Unity license (Personal is free if Unity's terms allow it for you). Genex goes on by itself once you're in.":
     "Введи почту и пароль в окне Unity Hub и добавь лицензию Unity (Personal — бесплатно, если условия Unity тебе это позволяют). Как только войдёшь, Genex продолжит сам.",
@@ -4321,6 +4344,7 @@ export default {
   "Update Claude Code": "Обновить Claude Code",
   "Update Codex": "Обновить Codex",
   "Update OpenCode": "Обновить OpenCode",
+  "Update Pi": "Обновить Pi",
   "Update Xcode": "Обновить Xcode",
   "Update Xcode (this Mac has {version})": "Обновить Xcode (на этом Mac — {version})",
   "Update all": "Обновить все",
@@ -4498,6 +4522,8 @@ export default {
   "Windows app": "Windows-приложение",
   "Windows didn't get permission to install. Press Do it for me again and choose Yes when Windows asks.":
     "Windows не получил разрешения на установку. Нажми «Сделать за меня» ещё раз и выбери «Да», когда Windows спросит.",
+  "Windows doesn’t let Genex’s agents sign in on this PC. Set up allows it.":
+    "Windows не даёт агентам Genex войти в систему на этом компьютере. «Настроить» это разрешит.",
   "Windows needs a one-time setup of the protected workspace, approved by an administrator.":
     "Windows нужно один раз настроить защищённое рабочее пространство с разрешения администратора.",
   "Windows will ask you to allow it once.": "Windows один раз попросит это разрешить.",
@@ -5072,6 +5098,8 @@ export default {
   'the lead put a worker on "{task}"': "главный агент поручил помощнику «{task}»",
   'the lead put a worker on "{task}" for {minutes}': "главный агент поручил помощнику «{task}» на {minutes}",
   "the model could not be reached": "не удалось связаться с моделью",
+  "the model needs more memory than this computer has free — close other apps or pick a smaller model, then press Resume":
+    "модели нужно больше памяти, чем свободно на компьютере — закрой другие приложения или выбери модель поменьше, потом нажми «Продолжить»",
   "the model provider hit your plan's session limit": "у провайдера моделей исчерпан лимит сессии твоего тарифа",
   "the model provider hit your plan's usage cap": "у провайдера моделей исчерпан лимит твоего тарифа",
   "the model provider is down": "провайдер моделей недоступен",
@@ -5549,6 +5577,7 @@ export default {
     "Проект {name} ещё не настроен для Genex. Сначала настрой его.",
   "{name} isn’t on this computer any more.": "Файла {name} больше нет на этом компьютере.",
   "{name} needs Studio {version} or newer": "Для {name} нужна Studio версии {version} или новее",
+  "{name} still isn't signed in.": "{name} всё ещё не подключён.",
   "{name} needs a sign-in": "{name}: нужен вход",
   "{name} opens in Unreal {to} from now on.": "{name} теперь будет открываться в Unreal {to}.",
   "{name} settings": "Настройки {name}",
@@ -6454,8 +6483,8 @@ export default {
     "Установи CLI Antigravity, чтобы собирать по твоему тарифу Google AI.",
   "Installing Antigravity. This can take a minute.": "Устанавливаем Antigravity. Это может занять минуту.",
   "Not signed in to Antigravity.": "Вход в Antigravity не выполнен.",
-  "Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in.":
-    "Открой страницу входа и вставь сюда код, который она даст. Antigravity сам хранит вход.",
+  "Sign in on Google's page in your browser, then paste the code it gives you here. Antigravity keeps the sign-in.":
+    "Войди на странице Google в браузере и вставь сюда код, который она даст. Antigravity сам хранит вход.",
   "Sign in to Antigravity from Settings › Model Providers.":
     "Войди в Antigravity в разделе «Настройки › Провайдеры моделей».",
   "Sign in with your Google account to build with your plan.":
@@ -7163,4 +7192,37 @@ export default {
   "column\u0004System": "Система",
   "column\u0004Share": "Доля",
   "column\u0004Opened": "Открыто",
+  "Show all {count}": "Показать все {count}",
+  "{at} of {count}": "{at} из {count}",
+  "Add {cap} more": "Добавить ещё {cap}",
+  Allow: "Разрешить",
+  "Genex's real models are switched off right now. Practice answers go on.":
+    "Настоящие модели Genex сейчас выключены. Пробные ответы продолжаются.",
+  "Most credits this play session may spend": "Сколько кредитов можно потратить за эту игровую сессию",
+  "Practice answers (free, made up)": "Пробные ответы (бесплатно, выдуманные)",
+  "Practice answers could not start: {error}": "Пробные ответы не запустились: {error}",
+  "Real AI is billed to this game's draft on Genex, and it has none yet. Ask the chat to publish a draft, then try again. Practice answers go on.":
+    "Настоящий ИИ оплачивается с черновика этой игры на Genex, а его пока нет. Попроси чат опубликовать черновик и попробуй снова. Пробные ответы продолжаются.",
+  "Real AI is not available in this test profile. Practice answers go on.":
+    "Настоящий ИИ недоступен в этом тестовом профиле. Пробные ответы продолжаются.",
+  "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
+    "Для настоящего ИИ нужно войти в Genex. Войди в настройках и попробуй снова. Пробные ответы продолжаются.",
+  "Real AI stopped. Practice answers go on.": "Настоящий ИИ остановился. Пробные ответы продолжаются.",
+  "Real AI · {spent} of {cap} credits": "Настоящий ИИ · {spent} из {cap} кредитов",
+  "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
+    "В этом превью отвечают настоящие модели, за твои кредиты Genex: не больше {cap} кредитов ({dollars}) за эту игровую сессию.",
+  Start: "Начать",
+  "Starting real AI…": "Запускаем настоящий ИИ…",
+  "The cap is used up": "Лимит исчерпан",
+  "This game wants to hear you through your microphone.": "Эта игра хочет слышать тебя через микрофон.",
+  "Use real AI": "Включить настоящий ИИ",
+  "A local model is answering a chat or build. Delete the model when it finishes.":
+    "Локальная модель сейчас отвечает в чате или сборке. Удали модель, когда ответ будет готов.",
+  "Download Inkling 2 Mini in Settings › Local Models.":
+    "Скачай Inkling 2 Mini в разделе «Настройки › Локальные модели».",
+  "Download Inkling 2 Mini to build locally": "Скачай Inkling 2 Mini, чтобы собирать игры локально",
+  "Inkling 2 Mini installed · starts on demand": "Inkling 2 Mini установлена · запускается по запросу",
+  "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
+    "Для локальных моделей нужен Mac с Apple Silicon или 64-битный ПК с Windows или Linux",
+  "{model} can't run on this computer.": "{model} не запустится на этом компьютере.",
 } satisfies LocaleCatalog;

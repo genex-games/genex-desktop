@@ -60,7 +60,9 @@ the setup screen opens on `git-missing`. What differs from macOS:
   `allowLocalBinding: false` on Windows for every session and command (`toRuntimeConfig`), since
   srt-win refuses the other mode (`wfp_loopback_mismatch`). A sandboxed command reaches no server
   on localhost but the proxies, as before 0.0.81; the harness inbox and the live-input relay listen
-  inside the sandbox, which the filter does not refuse. Proxy variables reach a command in lower
+  inside the sandbox, which the filter does not refuse. A server a sandboxed command's own client
+  must reach listens on a free port of that range (`loopbackPorts`): a game's room, and an OpenCode
+  2.x session's own server. Proxy variables reach a command in lower
   case only.
 - srt-win starts every command as `srt-sandbox` through CreateProcessWithLogonW, which the
   Secondary Logon service (`seclogon`) carries out; where hardening disabled it, Windows refuses
@@ -88,6 +90,24 @@ the setup screen opens on `git-missing`. What differs from macOS:
   with nothing changed: the session waits and tries again (`sandboxUserRefused`, `LOGON_RETRY_MS`),
   and a refusal that outlasts both pauses fails with plain words
   (`SandboxLaunchCode.SandboxUserRefused`: restart the PC) while the log keeps srt-win's.
+- That start is an interactive logon, which needs the account's "Allow log on locally" right. The
+  account has it as a member of Users; where a policy or a security program took it from Users, or
+  put the account under "Deny log on locally", the egress check fails with
+  ERROR_LOGON_TYPE_NOT_GRANTED (0x80070569), and srt-win's words blame the Secondary Logon service,
+  which runs. Reading account rights needs an administrator, so nothing says so before a start is
+  refused: the session then raises a setup problem (`sandboxLogonTypeRefused`,
+  `WindowsSetupNeed.LogonRight`) in plain words, and the log keeps srt-win's. The start runs behind
+  the open studio, so main shows the setup screen over it (`showAgentsSetup`), for this need only,
+  and the screen waits for its Set up button instead of raising the prompt by itself. A prompt that
+  is dismissed, or a Set up that fails, brings the studio back with the sidebar's line saying why
+  (the hold's `leave`), and its Try again shows the setup screen again. Set up gives the account `SeInteractiveLogonRight` and takes its
+  own entry off `SeDenyInteractiveLogonRight` through the LSA calls, which touch that account's
+  entry only ([`windows-logon-right.ts`](../src/substrate/windows-logon-right.ts)), in an elevated
+  Windows PowerShell behind a prompt of its own ([`windows-elevated.ts`](../src/substrate/windows-elevated.ts)),
+  then starts the agents. A deny that reaches the account through a group, or a domain policy that
+  writes the rights again, is not Genex's to lift: a refusal after this run's Set up fails with
+  `SandboxLaunchCode.LogonRightRefused`, which names the account and the two rights for the PC's
+  administrator.
 - srt-win records the setup version of its install. A PC an earlier Genex set up for an older
   srt-win (setup version 2) makes `initialize()` reject with `reinstall_required`, and the setup
   check (`windowsSetupGaps`, from `user status`' `markerVersion` and `setupVersion`) finds it
@@ -129,7 +149,8 @@ the setup screen opens on `git-missing`. What differs from macOS:
   grants a link's target. npm's global prefix is granted whole: its `node_modules` are the global
   CLIs that run in the sandbox, OpenCode among them. Cursor's own folders (`~/.cursor`,
   `%APPDATA%\Cursor`) are granted at the sandbox's start, as OpenCode's are: its sessions run as
-  the sandbox user and read their sign-in there.
+  the sandbox user and read their sign-in there. So is Pi's agent folder (`piAgentDir`): Pi makes a
+  lock folder beside its sign-in file even to read it.
 - No Schannel client works under the write-restricted token (`System32\curl.exe`, PowerShell
   web requests, .NET `HttpClient`, `winget`), and Git for Windows' own `curl.exe` uses Schannel
   alone, so `curl` over HTTPS fails inside (`SEC_E_NO_CREDENTIALS`); plain HTTP through the proxy
@@ -139,7 +160,7 @@ the setup screen opens on `git-missing`. What differs from macOS:
   once it keeps a write grant for this user.
 - Neither `spawn()`'s environment nor stdin reaches the child: each run's variables
   (`windowsRunEnv`) go to an env file in scratch and its stdin to a file, each deleted by the
-  command as it reads it, for a long-lived process (`spawnLongLived`'s `stdin`, OpenCode's brief)
+  command as it reads it, for a long-lived process (`spawnLongLived`'s `stdin`, OpenCode's and Pi's briefs)
   as for a run. The host sends nothing down the stdin pipe the command swaps away. The harness hears the host over a loopback inbox
   ([`src/substrate/harness-inbox.ts`](../src/substrate/harness-inbox.ts)) whose first line must
   be the one-time `HARNESS_INBOX_TOKEN`; it answers on stdout. A process whose input goes on for
@@ -356,7 +377,8 @@ runner only, it exports `GENEX_WINDOWS_SANDBOX=ready`) and `npm run test:windows
 session, env file and launch through fakes; runs everywhere) and `sandbox-windows.test.ts` (the
 real srt-win's hostile-input tables; skipped unless `GENEX_WINDOWS_SANDBOX=ready`).
 `windows-logon-service.test.ts` reads the runner's real Secondary Logon service and runs Set up's
-elevated step there (Actions only: it changes a service). A dispatch
+elevated step there (Actions only: it changes a service), and `windows-logon-right.test.ts` runs the
+elevated grant of the sandbox user's sign-in right there. A dispatch
 with `backlog` also runs the rest of the fast group as an informational pass that never fails;
 the job summary and `windows-tests` artifact list failing files and tests and clean files not yet
 in the suite. Test files run side by side, so one file's sandbox re-propagates srt-win's entries

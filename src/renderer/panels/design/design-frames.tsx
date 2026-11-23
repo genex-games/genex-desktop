@@ -20,7 +20,8 @@ const BEHIND = "pointer-events-none absolute top-0 left-0 opacity-0";
  * A page's frames: the address on show, and the changed one (`next`) loading behind it, which
  * `onLoaded` reports once its page and pictures are in. `styleOf` sizes each by its own address; a
  * frame that is `still` never takes the pointer or the keyboard (a preview). The frames' parent is
- * positioned, and as large as the frame on show.
+ * positioned, and as large as the frame on show. A frame is filled with `--design-page-bg`, the
+ * page's own background, where its owner sets it.
  */
 export function PageFrames({
   shown,
@@ -61,7 +62,7 @@ export function PageFrames({
             sandbox="allow-scripts"
             {...(behind || still ? { tabIndex: -1 } : {})}
             {...(behind ? { "aria-hidden": true, onLoad: () => onLoaded(url) } : {})}
-            className={`block border-0 bg-white ${className} ${behind ? BEHIND : ""} ${still ? "pointer-events-none" : ""}`}
+            className={`block border-0 bg-[var(--design-page-bg,white)] ${className} ${behind ? BEHIND : ""} ${still ? "pointer-events-none" : ""}`}
             style={styleOf(url)}
           />
         );

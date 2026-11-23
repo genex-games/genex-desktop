@@ -159,6 +159,7 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:claude-login.browser": "claudeLoginOpenBrowser",
   "studio:claude-login.cancel": "claudeLoginCancel",
   "studio:opencode.signin": "openCodeSignIn",
+  "studio:pi.signin": "piSignIn",
   "studio:grok.signin": "grokSignIn",
   "studio:cursor.signin": "cursorSignIn",
   "studio:cursor.signout": "cursorSignOut",
@@ -311,6 +312,10 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:live.behind": "liveBehind",
   "studio:preview.state": "previewState",
   "studio:preview.live": "previewLive",
+  "studio:preview-ai.state": "previewAi",
+  "studio:preview-ai.real": "previewAiReal",
+  "studio:preview-ai.practice": "previewAiPractice",
+  "studio:preview-ai.mic": "previewMicAnswer",
   "studio:preview.cover-still": "previewCoverStill",
   "studio:build.problem": "buildProblem",
   "studio:packages.install": "installPackages",
@@ -499,6 +504,7 @@ export interface StudioInvokePayloads {
   "studio:claude-login.browser": undefined;
   "studio:claude-login.cancel": undefined;
   "studio:opencode.signin": undefined;
+  "studio:pi.signin": undefined;
   "studio:grok.signin": undefined;
   "studio:cursor.signin": undefined;
   "studio:cursor.signout": undefined;
@@ -651,6 +657,10 @@ export interface StudioInvokePayloads {
   "studio:live.behind": { project: string };
   "studio:preview.state": undefined;
   "studio:preview.live": undefined;
+  "studio:preview-ai.state": { project: string };
+  "studio:preview-ai.real": { project: string; capCredits: number };
+  "studio:preview-ai.practice": { project: string };
+  "studio:preview-ai.mic": { project: string; allow: boolean };
   "studio:preview.cover-still": undefined;
   "studio:build.problem": { project: string };
   "studio:packages.install": { project: string; scripts?: boolean };

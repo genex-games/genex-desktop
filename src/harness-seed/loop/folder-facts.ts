@@ -227,17 +227,11 @@ export function seenInWindow(game: (FactsOfDescriptor & Pick<GameProject, "shape
 export const LoopProfile = { Open: "open" } as const;
 export type LoopProfile = (typeof LoopProfile)[keyof typeof LoopProfile];
 
-/** What a Loop says when its game is of a kind Genex can't name. */
-const MESSAGE = {
-  unknownKind: (project: string) =>
-    `A Loop can't start on ${project} yet: its folder holds files of a kind Genex doesn't know. Say in the chat what the project is, or turn on a Genex plugin for it, then start the Loop again.`,
-} as const;
-
 /**
  * A Loop on a game with no kind yet starts it as a web game: it takes the web starter first. A game of a
- * kind Genex can't name is never handed one: the Loop stops with a sentence saying it needs a kind.
- * `games` is the library as the caller listed it; a game not in it (one the caller is about to make)
- * is left to its maker.
+ * kind Genex can't name is never handed one, and its Loop starts all the same: its lead looks through
+ * the folder's own files and works on them as they are. `games` is the library as the caller listed it;
+ * a game not in it (one the caller is about to make) is left to its maker.
  */
 export async function startWebIfPending(
   host: Pick<Host, "call">,
@@ -245,7 +239,6 @@ export async function startWebIfPending(
   games: readonly GameProject[],
 ): Promise<void> {
   const game = games.find((listed) => listed.name === project);
-  if (kindUnknown(game)) throw new Error(MESSAGE.unknownKind(project));
   if (!kindPending(game)) return;
   await host.call(HostMethod.GameStart, { project, starter: ProjectStarter.Web });
 }

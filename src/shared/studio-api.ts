@@ -112,6 +112,7 @@ import type { AppAbout, ReadyUpdate, RestartAnswer, UpdateCheckResult } from "./
 import type { LaunchFacts } from "./app-session.ts";
 import type { PermissionMode, PermissionSettingsView, ToolPermissionAnswer } from "./permissions.ts";
 import type { LiveBehindEvent, WebBuildLoad } from "./live-behind.ts";
+import type { PreviewAiState } from "./preview-ai.ts";
 import type { FieldRow, RunSharingDeleteResult, RunSharingStatus } from "./run-sharing.ts";
 
 export type { ProjectAsset, ProjectAssets };
@@ -558,6 +559,8 @@ export interface StudioApi {
   claudeLoginCancel(): Promise<unknown>;
   /** OpenCode's own sign-in (`opencode auth login`), in the terminal dock. */
   openCodeSignIn(): Promise<{ started: boolean; missingCli?: boolean }>;
+  /** Pi's own TUI (`/login`), in the Settings row terminal. */
+  piSignIn(): Promise<{ started: boolean; missingCli?: boolean }>;
   /** Grok Build's own sign-in (`grok login`, a Grok account in the browser), in its Settings row. */
   grokSignIn(): Promise<{ started: boolean; missingCli?: boolean }>;
   /** Cursor's own sign-in (`cursor-agent login`), in a terminal in its Settings row. */
@@ -916,6 +919,18 @@ export interface StudioApi {
   playPreview(): Promise<boolean>;
   /** Full screen: the window goes full screen with the Live game over all of it; holding Esc, or its exit button, ends it. */
   previewFullScreen(): Promise<boolean>;
+  /** How this game's play-time models answer in Live (practice, real models, the cap) and its microphone ask, as `preview.ai` says it: read on mount. */
+  previewAi(project: string): Promise<PreviewAiState>;
+  /**
+   * The person pressed Start in Live's bar: real models answer this game in Live, paid from their
+   * Genex credits, at most `capCredits` for this play session. Answers the unavailable state, with
+   * its reason, where real models cannot start.
+   */
+  previewAiReal(project: string, capCredits: number): Promise<PreviewAiState>;
+  /** The person went back to practice answers (free, made up) for this game in Live. */
+  previewAiPractice(project: string): Promise<PreviewAiState>;
+  /** The person's answer to the game's microphone ask in Live: allowed for this game until the app quits, or not now. */
+  previewMicAnswer(project: string, allow: boolean): Promise<PreviewAiState>;
   /** What waits for this game's Live Reload and the build Live shows, as `live.behind` says it: read on mount. */
   liveBehind(project: string): Promise<LiveBehindEvent>;
   previewState(): Promise<unknown>;

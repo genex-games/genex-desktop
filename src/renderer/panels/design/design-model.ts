@@ -4,7 +4,7 @@
  * asked to bring into view. `DesignStage.tsx` draws them.
  */
 import { DesignItemKind, displayName } from "../../../shared/design-board.ts";
-import { MINUTE_MS } from "../../../shared/duration.ts";
+import { MINUTE_MS, SECOND_MS } from "../../../shared/duration.ts";
 import { CANVAS_ZOOM_PROPERTY, type CanvasBounds } from "../../canvas-view.ts";
 
 /** A page's sheet before it says what it holds: a landscape page that reads at a glance. */
@@ -28,7 +28,8 @@ const ROW_MAX_WIDTH = 5400;
 /** A picture's height on the canvas, large enough to be seen and felt beside a page, and the widths it keeps between. */
 const PICTURE_HEIGHT = 760;
 const PICTURE_MIN_WIDTH = 480;
-const PICTURE_MAX_WIDTH = 1800;
+/** The widest a picture hangs, however wide its own shape. */
+export const PICTURE_MAX_WIDTH = 1800;
 /** A picture's shape before it has loaded. */
 const PICTURE_ASPECT = 16 / 9;
 /** A 3D model's tile: a square as tall as a picture. */
@@ -87,13 +88,63 @@ interface Row {
   height: number;
 }
 
+/** A rectangle of the canvas an artboard laid out must keep clear of: one the person put somewhere, caption included. */
+export type Obstacle = CanvasBounds;
+
+/** The most times one artboard is moved on past what is in its way, so a layout always ends. */
+const STEPS_PAST_MAX = 200;
+
+/** Whether two rectangles come closer than an artboard's gap to each other. */
+function crowds(a: CanvasBounds, b: CanvasBounds): boolean {
+  const apart = PAGE_GAP;
+  return a.x < b.x + b.w + apart && b.x < a.x + a.w + apart && a.y < b.y + b.h + apart && b.y < a.y + a.h + apart;
+}
+
+/** What an artboard at `x` of `row` would cover: itself, its caption, and a section's name above it when it starts one. */
+function roomAt(row: Row, x: number, item: PageSize, labelled: boolean): CanvasBounds {
+  const above = labelled ? SECTION_LABEL_HEIGHT : 0;
+  return { x, y: row.top - above, w: item.width, h: above + CAPTION_HEIGHT + item.height };
+}
+
+/** The row under `row`: below its tallest artboard, or, for a row still empty, below what blocks it. */
+function rowBelow(row: Row, blocking: readonly CanvasBounds[]): Row {
+  const under = row.height > 0 ? row.top + CAPTION_HEIGHT + row.height : Math.min(...blocking.map((b) => b.y + b.h));
+  return { x: 0, top: Math.max(row.top + 1, under) + ROW_GAP, height: 0 };
+}
+
+/**
+ * Where in `row` an artboard goes so it crowds nothing in `around`: at the row's next place, else
+ * just past what is in its way, else in a row below (the row it lands in is returned with it).
+ */
+function clearPlace(row: Row, item: PageSize, labelled: boolean, around: readonly Obstacle[]): { row: Row; x: number } {
+  let at = row;
+  let x = row.x;
+  for (let step = 0; step < STEPS_PAST_MAX; step += 1) {
+    const room = roomAt(at, x, item, labelled);
+    const blocking = around.filter((obstacle) => crowds(room, obstacle));
+    if (blocking.length === 0) return { row: at, x };
+    const past = Math.max(...blocking.map((obstacle) => obstacle.x + obstacle.w)) + PAGE_GAP;
+    if (past + item.width <= ROW_MAX_WIDTH) {
+      x = past;
+      continue;
+    }
+    at = rowBelow(at, blocking);
+    x = 0;
+  }
+  return { row: at, x };
+}
+
 /**
  * The canvas: artboards in the board's order, section under section. A section's name stands above
  * its artboards (the board's top has none), which run in rows that wrap once a row is
- * `ROW_MAX_WIDTH` wide, each row hanging from one line with every caption's room above it. `bounds`
- * is what a fit has to show; null for an empty canvas.
+ * `ROW_MAX_WIDTH` wide, each row hanging from one line with every caption's room above it. An
+ * artboard never crowds what is `around` (the ones the person put somewhere): it goes on past them.
+ * `bounds` is what a fit has to show; null for an empty canvas.
  */
-export function boardLayout(items: ReadonlyArray<PageSize & { file: string; section: string }>): {
+export function boardLayout(
+  items: ReadonlyArray<PageSize & { file: string; section: string }>,
+  around: readonly Obstacle[] = [],
+): {
   frames: WallFrame[];
   labels: SectionLabel[];
   bounds: CanvasBounds | null;
@@ -101,23 +152,30 @@ export function boardLayout(items: ReadonlyArray<PageSize & { file: string; sect
   const frames: WallFrame[] = [];
   const labels: SectionLabel[] = [];
   let wide = 0;
+  let deep = 0;
   let row: Row = { x: 0, top: 0, height: 0 };
   let section: string | null = null;
   for (const item of items) {
-    if (item.section !== section) {
+    const starts = item.section !== section;
+    if (starts) {
       const below = section === null ? 0 : row.top + CAPTION_HEIGHT + row.height + SECTION_GAP;
-      if (item.section) labels.push({ section: item.section, file: item.file, x: 0, y: below });
       row = { x: 0, top: below + (item.section ? SECTION_LABEL_HEIGHT : 0), height: 0 };
       section = item.section;
     } else if (row.x + item.width > ROW_MAX_WIDTH) {
       row = { x: 0, top: row.top + CAPTION_HEIGHT + row.height + ROW_GAP, height: 0 };
     }
-    frames.push({ file: item.file, x: row.x, y: row.top + CAPTION_HEIGHT, width: item.width, height: item.height });
-    wide = Math.max(wide, row.x + item.width);
-    row = { x: row.x + item.width + PAGE_GAP, top: row.top, height: Math.max(row.height, item.height) };
+    const labelled = starts && item.section !== "";
+    const clear = clearPlace(row, item, labelled, around);
+    row = clear.row;
+    if (labelled)
+      labels.push({ section: item.section, file: item.file, x: clear.x, y: row.top - SECTION_LABEL_HEIGHT });
+    frames.push({ file: item.file, x: clear.x, y: row.top + CAPTION_HEIGHT, width: item.width, height: item.height });
+    wide = Math.max(wide, clear.x + item.width);
+    deep = Math.max(deep, row.top + CAPTION_HEIGHT + item.height);
+    row = { x: clear.x + item.width + PAGE_GAP, top: row.top, height: Math.max(row.height, item.height) };
   }
   if (frames.length === 0) return { frames, labels, bounds: null };
-  return { frames, labels, bounds: { x: 0, y: 0, w: wide, h: row.top + CAPTION_HEIGHT + row.height } };
+  return { frames, labels, bounds: { x: 0, y: 0, w: wide, h: deep } };
 }
 
 /** The canvas's zoom as a mark drawn against it reads it, from the canvas's layer, in the same frame as the canvas. */
@@ -206,8 +264,8 @@ export function turnedModels(items: readonly { file: string; kind: string }[]): 
 
 /**
  * The canvas with the artboards the person moved: one that has a place hangs there, and the others
- * are laid out as if it were not on the board (`boardLayout`), so a section's name stands on its
- * first artboard that was not moved. Frames stay in the board's order, and `bounds` takes in
+ * are laid out as if it were not in the board's order (`boardLayout`), going on past it wherever it
+ * hangs so nothing lands on it, and a section's name stands on its first artboard that was not moved. Frames stay in the board's order, and `bounds` takes in
  * everything, a moved artboard's caption included.
  */
 export function placedLayout(
@@ -216,7 +274,14 @@ export function placedLayout(
 ): ReturnType<typeof boardLayout> {
   const placeOf = (file: string): { x: number; y: number } | undefined =>
     Object.hasOwn(places, file) ? places[file] : undefined;
-  const auto = boardLayout(items.filter((item) => !placeOf(item.file)));
+  const around = items.flatMap((item) => {
+    const place = placeOf(item.file);
+    return place ? [{ x: place.x, y: place.y - CAPTION_HEIGHT, w: item.width, h: item.height + CAPTION_HEIGHT }] : [];
+  });
+  const auto = boardLayout(
+    items.filter((item) => !placeOf(item.file)),
+    around,
+  );
   const hung = new Map(auto.frames.map((frame) => [frame.file, frame]));
   let left = auto.bounds?.x ?? Number.POSITIVE_INFINITY;
   let top = auto.bounds?.y ?? Number.POSITIVE_INFINITY;
@@ -238,19 +303,58 @@ export function placedLayout(
 
 /** How long what an agent said it is making stays on the canvas while its file has not arrived. */
 export const MAKING_FRESH_MS = 15 * MINUTE_MS;
+/**
+ * How long what an agent said it is making stays while no chat of its game is working: long enough
+ * for the turn that said it to be seen working, short enough that a stopped turn's leave at once.
+ */
+export const MAKING_IDLE_MS = 10 * SECOND_MS;
+
+/** An artboard as `makingNow` reads the board: its file, and when it last changed. */
+export interface HeldFile {
+  file: string;
+  modifiedAt: number;
+}
 
 /**
- * The artboards still to come of what an agent said it is making: the ones the board does not hold
- * yet, in the order it will make them. None once the list has gone stale (an agent that never made
- * them), or when it said nothing.
+ * The artboards still to come of what an agent said it is making, in the order it will make them:
+ * the ones the board does not hold yet, and the ones it holds that have not changed since the agent
+ * said it (being made again). None once the list has gone stale (an agent that never made them),
+ * once no chat of the game has been working for a moment (`working`: a turn that ended or was
+ * stopped), or when it said nothing.
  */
 export function makingNow(
   said: { files: readonly string[]; at: number } | null,
-  held: readonly string[],
+  held: readonly HeldFile[],
   now: number,
+  working = true,
 ): string[] {
-  if (!said || now - said.at > MAKING_FRESH_MS) return [];
-  return said.files.filter((file) => !held.includes(file));
+  if (!said || makingEnded(said, now, working)) return [];
+  const changedAt = new Map(held.map((item) => [item.file, item.modifiedAt]));
+  return said.files.filter((file) => {
+    const at = changedAt.get(file);
+    return at === undefined || at < said.at;
+  });
+}
+
+/**
+ * Whether what an agent said it is making is over: gone stale, or said a moment before no chat of
+ * the game was working any more. An ended list is forgotten, so a later turn does not revive it.
+ */
+export function makingEnded(said: { at: number } | null, now: number, working: boolean): boolean {
+  if (!said) return true;
+  const stale = now - said.at > MAKING_FRESH_MS;
+  return stale || (!working && now - said.at > MAKING_IDLE_MS);
+}
+
+/** Where an artboard of the board stands in what the agent is making: drawn now, waiting its turn, or neither. */
+export const Redraw = { Drawing: "drawing", Next: "next" } as const;
+export type Redraw = (typeof Redraw)[keyof typeof Redraw];
+
+/** Where `file` stands in `making`: the first is being drawn, the others wait; null for one not in it. */
+export function redrawOf(making: readonly string[], file: string): Redraw | null {
+  const at = making.indexOf(file);
+  if (at < 0) return null;
+  return at === 0 ? Redraw.Drawing : Redraw.Next;
 }
 
 /**

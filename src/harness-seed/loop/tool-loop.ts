@@ -11,6 +11,7 @@ import { EngineFailure, StopReason } from "./outage.ts";
 import { HostMethod } from "./host-methods.ts";
 import { EventKind, RunEvent } from "./run-events.ts";
 import { TurnFailureCode, TurnStop, sayInTurn, withTurnFailure } from "./turn-record.ts";
+import { GenexLine, sayGenexLine } from "./genex-lines.ts";
 import { lookAtPictures } from "./turn-prompts.ts";
 import { OUTPUT_LIMIT_NOTE } from "./tool-loop-prompts.ts";
 import { picturesNotShown } from "./unseen-pictures-prompts.ts";
@@ -37,6 +38,8 @@ const REPLY_RESERVE_TOKENS = 4096;
 const IMAGE_TOKENS = 2048;
 /** The context lengths a person is told to set when the model's is too small, smallest first. */
 const ADVISED_CONTEXTS = [16_384, 32_768, 65_536, 131_072] as const;
+/** The tool that makes a game: its result names the folder the rest of the turn works in. */
+const NEW_GAME_TOOL = "new_game";
 
 /** Whose compaction threshold a context policy carries (`mode`): the studio's default, or the user's. */
 const ContextPolicyMode = {
@@ -305,6 +308,11 @@ async function completionFailed(
     await switchEngine(ctx, turnId, state, fallbacks[0], kind, err?.message);
     return {};
   }
+  // A model too big for this computer's free memory is no outage: a resend meets the same wall.
+  if (kind === EngineFailure.OutOfMemory) {
+    await sayGenexLine(ctx, turnId, GenexLine.ModelOutOfMemory);
+    return { outcome: { stopped: TurnStop.EngineLimited, round, engine } };
+  }
   if (isThrottle(kind)) {
     await sayInTurn(ctx, turnId, MESSAGE.notSwitched(engine, kind, err?.message));
     return { outcome: { stopped: TurnStop.EngineLimited, round, engine } };
@@ -370,7 +378,7 @@ async function actOn(
     ctx.notify("chat.message", { role: "assistant", content: response.message.content });
     return { stopped: TurnStop.Done, round, engine: state.engine };
   }
-  return runToolCalls(ctx, options.turnId, tools, calls, state, round);
+  return runToolCalls(ctx, options, tools, calls, state, round);
 }
 
 /**
@@ -442,12 +450,13 @@ async function recordContextUsage(
 /** Run this round's tool calls in order; a tool may end the turn. Null when the turn goes on. */
 async function runToolCalls(
   ctx: HarnessCtx,
-  turnId: string,
+  options: TurnOptions,
   tools: ToolRegistry,
   calls: readonly ToolCall[],
   state: LoopState,
   round: number,
 ): Promise<TurnOutcome | null> {
+  const { turnId } = options;
   for (const call of calls) {
     if (ctx.cancelled) return null;
     await ctx.call(HostMethod.TurnAppend, {
@@ -460,6 +469,10 @@ async function runToolCalls(
 
     const result = await tools.execute(call, ctx);
     collectImages(result, state.images);
+    if (call.name === NEW_GAME_TOOL && result.ok && result.details?.project) {
+      options.project = String(result.details.project);
+      state.standing = undefined;
+    }
     await ctx.call(HostMethod.TurnAppend, {
       turnId,
       batch: [

@@ -362,7 +362,9 @@ export function WindowsSetup({
       title={words.title}
     >
       <p className={step === WindowsStep.Failed ? "text-orange" : "text-ink-2"}>{words.line}</p>
-      {problem.windowsNeeds?.includes(WindowsSetupNeed.LogonService) && <LogonServiceLine step={step} />}
+      {NEED_LINES.filter((need) => problem.windowsNeeds?.includes(need)).map((need) => (
+        <NeedLine key={need} need={need} step={step} />
+      ))}
       <BootUpdate update={update} onUpdate={onUpdate} />
       {step === WindowsStep.SettingUp && (
         <WorkingLine text={reinstall ? WORDS.windows.reinstall.updating : WORDS.windows.settingUp.step} />
@@ -381,15 +383,27 @@ export function WindowsSetup({
   );
 }
 
+/** The needs the card names in a line of their own, in the order shown. */
+const NEED_LINES = [WindowsSetupNeed.LogonService, WindowsSetupNeed.LogonRight] as const;
+
 /**
- * Windows' Secondary Logon service is disabled: Set up turns it back on, and after a Set up that
- * could not, the line says how to do it by hand.
+ * What Set up does about a need Windows itself holds back (a disabled Secondary Logon service, a
+ * sandbox user it will not sign in). After a Set up that could not, the service's line says what to
+ * do by hand; the sandbox user's goes, as the studio's sidebar says why once the window is back.
  */
-function LogonServiceLine({ step }: { step: WindowsStep }): JSX.Element {
+function NeedLine({ need, step }: { need: (typeof NEED_LINES)[number]; step: WindowsStep }): JSX.Element | null {
+  const failed = step === WindowsStep.Failed;
+  if (need === WindowsSetupNeed.LogonRight) {
+    return failed ? null : (
+      <p data-windows-need={need} className="text-ink-2">
+        {WORDS.windows.logonRight.line}
+      </p>
+    );
+  }
   const words = WORDS.windows.logonService;
   return (
-    <p data-windows-need={WindowsSetupNeed.LogonService} className="text-ink-2">
-      {step === WindowsStep.Failed ? words.fix : words.line}
+    <p data-windows-need={need} className="text-ink-2">
+      {failed ? words.fix : words.line}
     </p>
   );
 }

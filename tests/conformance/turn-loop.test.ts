@@ -502,6 +502,8 @@ describe("engine fallback (M2)", () => {
     );
     const serialized = JSON.stringify(events);
     assert.match(serialized, /Stopped\. Finished edits are preserved/);
+    // The app shows the line in its own language by this code (genex-line-entries.test.ts).
+    assert.match(serialized, /"genex_line":"stopped"/);
     assert.doesNotMatch(serialized, /Contractor finished|The game loads clean|build_observation/);
   });
 

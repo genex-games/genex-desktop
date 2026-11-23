@@ -528,8 +528,6 @@ export default {
   Blur: "Flou",
   "Bonsai currently requires an Apple Silicon Mac": "Bonsai nécessite pour l’instant un Mac avec Apple Silicon",
   "Bonsai installed · starts on demand": "Bonsai installé · démarre à la demande",
-  "Bonsai is answering a chat or build. Delete the model when it finishes.":
-    "Bonsai répond dans un chat ou un build. Supprime le modèle quand il aura fini.",
   "Bonsai requires Apple Silicon": "Bonsai nécessite Apple Silicon",
   "Bonsai requires at least 16 GiB of memory.": "Bonsai nécessite au moins 16 Go de mémoire.",
   "Bonsai runtime is unavailable": "Le runtime Bonsai est indisponible",
@@ -743,8 +741,8 @@ export default {
   Checkpoint: "Point de contrôle",
   Choose: "Choisir",
   "Choose Blender…": "Choisir Blender…",
-  "Choose PQ2_0 (recommended) or PTQ1_0 in Model setup.":
-    "Choisis PQ2_0 (recommandé) ou PTQ1_0 dans la configuration du modèle.",
+  "Download Bonsai 2 27B or Bonsai 2 27B Lite in Settings › Local Models.":
+    "Télécharge Bonsai 2 27B ou Bonsai 2 27B Lite dans Réglages › Modèles locaux.",
   "Choose a PNG, JPEG or WebP image, or a valid cover recipe.":
     "Choisis une image PNG, JPEG ou WebP, ou une recette de couverture valide.",
   "Choose a coding model": "Choisis un modèle de code",
@@ -1470,7 +1468,7 @@ export default {
   "Fit every asset": "Afficher toutes les ressources",
   "Fit everything": "Tout ajuster",
   "Tidy up": "Ranger",
-  "Genex is drawing {title}": "Genex dessine {title}",
+  "Genex is drawing": "Genex dessine",
   "{title} · next": "{title} · ensuite",
   "{count, plural, one {# new pick} other {# new picks}}":
     "{count, plural, one {# nouveau choix} other {# nouveaux choix}}",
@@ -1930,6 +1928,9 @@ export default {
   "Install Ollama": "Installer Ollama",
   "Install OpenCode": "Installer OpenCode",
   "Install OpenCode from Settings › Model Providers.": "Installe OpenCode depuis Réglages › Fournisseurs de modèles.",
+  "Install Pi from Settings › Model Providers.": "Installe Pi depuis Réglages › Fournisseurs de modèles.",
+  "This version of Pi is too old for Genex. Update Pi, then check again.":
+    "Cette version de Pi est trop ancienne pour Genex. Mets Pi à jour, puis vérifie à nouveau.",
   "Install Unity 6": "Installer Unity 6",
   "Install Unreal {version}": "Installer Unreal {version}",
   "Install Xcode": "Installer Xcode",
@@ -2623,6 +2624,7 @@ export default {
   "Open Apple's downloads": "Ouvrir les téléchargements d’Apple",
   "Open Model providers to reconnect, then try again.":
     "Ouvre Fournisseurs de modèles pour te reconnecter, puis réessaie.",
+  "Open Pi and type /login to connect a provider.": "Ouvre Pi et tape /login pour connecter un fournisseur.",
   "Open Plugins": "Ouvrir Plugins",
   "Open Privacy settings": "Ouvrir les réglages de confidentialité",
   "Open Studio": "Ouvrir Studio",
@@ -2708,6 +2710,14 @@ export default {
   "OpenCode keeps each sign-in": "OpenCode garde chaque connexion",
   "OpenCode ready": "OpenCode prêt",
   "OpenCode ready · free models": "OpenCode prêt · modèles gratuits",
+  "Pi didn't answer. Check the installation, then try again.":
+    "Pi ne répond pas. Vérifie l’installation, puis réessaie.",
+  "Pi has no model it can run yet.": "Pi n’a encore aucun modèle qu’il peut lancer.",
+  "Pi isn't installed on this computer.": "Pi n’est pas installé sur cet ordinateur.",
+  "Pi keeps each sign-in": "Pi garde chaque connexion",
+  "Pi sign-in": "Connexion à Pi",
+  "Pi {version}, {count, plural, other {# model(s)}}":
+    "Pi {version}, {count, plural, one {# modèle} other {# modèles}}",
   "OpenCode sign-in": "Connexion à OpenCode",
   "OpenCode {version}, {count, plural, other {# model(s)}}":
     "OpenCode {version}, {count, plural, one {# modèle} other {# modèles}}",
@@ -3486,6 +3496,8 @@ export default {
     "Connecte-toi à un fournisseur dans OpenCode pour utiliser ses modèles.",
   "Sign in to a provider with OpenCode from Settings › Model Providers.":
     "Connecte-toi à un fournisseur avec OpenCode depuis Réglages › Fournisseurs de modèles.",
+  "Sign in to a provider with Pi from Settings › Model Providers.":
+    "Connecte-toi à un fournisseur avec Pi depuis Réglages › Fournisseurs de modèles.",
   "Sign in to another provider": "Se connecter à un autre fournisseur",
   "Sign in to another provider…": "Se connecter à un autre fournisseur…",
   "Sign in to buy things in games": "Connecte-toi pour acheter dans les jeux",
@@ -3614,12 +3626,19 @@ export default {
   "Stop your builds and replies first, then move.": "Arrête d’abord tes builds et réponses, puis déplace.",
   Stopped: "Arrêté",
   "Stopped adding the Luau checks. Nothing was kept.": "Ajout des vérifications Luau arrêté. Rien n’a été gardé.",
+  "Stopped before it started — nothing was done. Send a message to go on.":
+    "Arrêté avant de commencer : rien n’a été fait. Envoie un message pour continuer.",
+  "Stopped before the build started — nothing was built.": "Arrêté avant le début du build : rien n’a été créé.",
   "Stopped getting Roblox Studio.": "Installation de Roblox Studio arrêtée.",
   "Stopped getting Roblox Studio. Anything Roblox's installer already put on this computer stays.":
     "Installation de Roblox Studio arrêtée. Ce que l’installateur de Roblox a déjà mis sur cet ordinateur reste.",
   "Stopped play": "Jeu arrêté",
+  "Stopped waiting. Send a message to go on once it's ready.":
+    "Attente arrêtée. Envoie un message pour continuer quand tout est prêt.",
   "Stopped.": "Arrêté.",
   "Stopped. Everything built so far is kept.": "Arrêté. Tout ce qui a été créé jusqu’ici est gardé.",
+  "Stopped. Finished edits are preserved; send a message to continue.":
+    "Arrêté. Les modifications terminées sont gardées ; envoie un message pour continuer.",
   "Stopped. What it built is in your game now.": "Arrêté. Ce qui a été créé est maintenant dans ton jeu.",
   "Stopped. What it built is kept in your project.": "Arrêté. Ce qui a été créé est gardé dans ton projet.",
   "Stopped. Your game is as you left it.": "Arrêté. Ton jeu est tel que tu l’as laissé.",
@@ -4169,6 +4188,8 @@ export default {
   "This model is unavailable. Check the connection or choose another model.":
     "Ce modèle est indisponible. Vérifie la connexion ou choisis un autre modèle.",
   "This model isn’t available right now": "Ce modèle n’est pas disponible pour l’instant",
+  "This model needs more memory than this computer has free, so resending won't help. Pick a smaller model, or close other apps and try again.":
+    "Ce modèle a besoin de plus de mémoire que ce qui est libre sur cet ordinateur, donc renvoyer le message ne servira à rien. Choisis un modèle plus petit, ou ferme d’autres apps et réessaie.",
   "This page isn't from the sign-in Genex started.": "Cette page ne vient pas de la connexion lancée par Genex.",
   "This paste has {count, plural, other {# servers}}. Pick one:":
     "Ton texte collé contient {count, plural, one {# serveur} other {# serveurs}}. Choisis-en un :",
@@ -4311,6 +4332,8 @@ export default {
     "Deux éditeurs Unreal sont ouverts. Quitte celui que tu veux depuis sa propre fenêtre.",
   "Two open Studios have a place named {name}, so Genex can't tell them apart. Save one under another name in Studio, then choose it again.":
     "Deux Studios ouverts ont un lieu nommé {name}, donc Genex ne peut pas les distinguer. Enregistre-en un sous un autre nom dans Studio, puis choisis-le à nouveau.",
+  "Type /login below and finish signing in. Pi keeps the sign-in.":
+    "Tape /login ci-dessous et termine la connexion. Pi garde la connexion.",
   "Type a name.": "Tape un nom.",
   "Type your email and password in the Unity Hub window and add a Unity license (Personal is free if Unity's terms allow it for you). Genex goes on by itself once you're in.":
     "Tape ton e-mail et ton mot de passe dans la fenêtre d’Unity Hub et ajoute une licence Unity (Personal est gratuite si les conditions d’Unity te le permettent). Genex continue tout seul dès que la connexion est faite.",
@@ -4416,6 +4439,7 @@ export default {
   "Update Claude Code": "Mettre à jour Claude Code",
   "Update Codex": "Mettre à jour Codex",
   "Update OpenCode": "Mettre à jour OpenCode",
+  "Update Pi": "Mettre à jour Pi",
   "Update Xcode": "Mettre à jour Xcode",
   "Update Xcode (this Mac has {version})": "Mettre à jour Xcode (ce Mac a {version})",
   "Update all": "Tout mettre à jour",
@@ -4594,6 +4618,8 @@ export default {
   "Windows app": "App Windows",
   "Windows didn't get permission to install. Press Do it for me again and choose Yes when Windows asks.":
     "Windows n’a pas eu la permission d’installer. Appuie encore sur « Fais-le pour moi » et choisis Oui quand Windows le demande.",
+  "Windows doesn’t let Genex’s agents sign in on this PC. Set up allows it.":
+    "Windows ne laisse pas les agents de Genex se connecter sur ce PC. « Configurer » l’autorise.",
   "Windows needs a one-time setup of the protected workspace, approved by an administrator.":
     "Windows doit configurer une fois l’espace de travail protégé, avec l’accord d’un administrateur.",
   "Windows will ask you to allow it once.": "Windows te demandera une seule fois de l’autoriser.",
@@ -5173,6 +5199,8 @@ export default {
   'the lead put a worker on "{task}" for {minutes}':
     "l’agent principal a mis un assistant sur « {task} » pendant {minutes}",
   "the model could not be reached": "impossible de joindre le modèle",
+  "the model needs more memory than this computer has free — close other apps or pick a smaller model, then press Resume":
+    "le modèle a besoin de plus de mémoire que ce qui est libre sur cet ordinateur — ferme d’autres apps ou choisis un modèle plus petit, puis appuie sur « Reprendre »",
   "the model provider hit your plan's session limit":
     "le fournisseur de modèles a atteint la limite de session de ton forfait",
   "the model provider hit your plan's usage cap":
@@ -5616,6 +5644,7 @@ export default {
     "{name} n’est pas encore configuré pour Genex. Configure-le d’abord.",
   "{name} isn’t on this computer any more.": "{name} n’est plus sur cet ordinateur.",
   "{name} needs Studio {version} or newer": "{name} nécessite Studio {version} ou plus récent",
+  "{name} still isn't signed in.": "{name} n’est toujours pas connecté.",
   "{name} needs a sign-in": "{name} demande une connexion",
   "{name} opens in Unreal {to} from now on.": "{name} s’ouvre désormais dans Unreal {to}.",
   "{name} settings": "Réglages de {name}",
@@ -6530,8 +6559,8 @@ export default {
     "Installe la CLI d’Antigravity pour créer avec ton forfait Google AI.",
   "Installing Antigravity. This can take a minute.": "Installation d’Antigravity. Ça peut prendre une minute.",
   "Not signed in to Antigravity.": "Tu n’es pas connecté à Antigravity.",
-  "Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in.":
-    "Ouvre la page de connexion, puis colle ici le code qu’elle te donne. Antigravity garde la connexion.",
+  "Sign in on Google's page in your browser, then paste the code it gives you here. Antigravity keeps the sign-in.":
+    "Connecte-toi sur la page de Google dans ton navigateur, puis colle ici le code qu’elle te donne. Antigravity garde la connexion.",
   "Sign in to Antigravity from Settings › Model Providers.":
     "Connecte-toi à Antigravity depuis Réglages › Fournisseurs de modèles.",
   "Sign in with your Google account to build with your plan.":
@@ -7241,4 +7270,36 @@ export default {
   "column\u0004System": "Système",
   "column\u0004Share": "Part",
   "column\u0004Opened": "Ouvert",
+  "Show all {count}": "Tout afficher ({count})",
+  "{at} of {count}": "{at} sur {count}",
+  "Add {cap} more": "Ajouter {cap} de plus",
+  Allow: "Autoriser",
+  "Genex's real models are switched off right now. Practice answers go on.":
+    "Les vrais modèles de Genex sont coupés pour l'instant. Les réponses d'entraînement continuent.",
+  "Most credits this play session may spend": "Crédits maximum pour cette session de jeu",
+  "Practice answers (free, made up)": "Réponses d'entraînement (gratuites, inventées)",
+  "Practice answers could not start: {error}": "Les réponses d'entraînement n'ont pas pu démarrer : {error}",
+  "Real AI is billed to this game's draft on Genex, and it has none yet. Ask the chat to publish a draft, then try again. Practice answers go on.":
+    "La vraie IA est facturée au brouillon de ce jeu sur Genex, et il n'en a pas encore. Demande au chat de publier un brouillon, puis réessaie. Les réponses d'entraînement continuent.",
+  "Real AI is not available in this test profile. Practice answers go on.":
+    "La vraie IA n'est pas disponible dans ce profil de test. Les réponses d'entraînement continuent.",
+  "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
+    "La vraie IA demande que tu sois connecté à Genex. Connecte-toi dans les Réglages, puis réessaie. Les réponses d'entraînement continuent.",
+  "Real AI stopped. Practice answers go on.": "La vraie IA s'est arrêtée. Les réponses d'entraînement continuent.",
+  "Real AI · {spent} of {cap} credits": "Vraie IA · {spent} sur {cap} crédits",
+  "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
+    "De vrais modèles répondent dans cet aperçu, payés avec tes crédits Genex : au plus {cap} crédits ({dollars}) pour cette session de jeu.",
+  Start: "Démarrer",
+  "Starting real AI…": "Démarrage de la vraie IA…",
+  "The cap is used up": "Le plafond est atteint",
+  "This game wants to hear you through your microphone.": "Ce jeu veut t'entendre avec ton micro.",
+  "Use real AI": "Utiliser la vraie IA",
+  "A local model is answering a chat or build. Delete the model when it finishes.":
+    "Un modèle local répond dans un chat ou un build. Supprime le modèle quand il aura fini.",
+  "Download Inkling 2 Mini in Settings › Local Models.": "Télécharge Inkling 2 Mini dans Réglages › Modèles locaux.",
+  "Download Inkling 2 Mini to build locally": "Télécharge Inkling 2 Mini pour créer en local",
+  "Inkling 2 Mini installed · starts on demand": "Inkling 2 Mini installé · démarre à la demande",
+  "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
+    "Les modèles locaux demandent un Mac avec Apple Silicon ou un PC 64 bits sous Windows ou Linux",
+  "{model} can't run on this computer.": "{model} ne peut pas tourner sur cet ordinateur.",
 } satisfies LocaleCatalog;

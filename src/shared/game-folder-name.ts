@@ -24,7 +24,11 @@ export function slugFromName(raw: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, MAX_SLUG_LENGTH);
   if (PROJECT_NAME_RE.test(slug)) return slug;
-  const padded = `game-${slug}`.replace(/[^a-z0-9-]+/g, "").slice(0, MAX_SLUG_LENGTH);
+  if (!slug) return "game";
+  const padded = `game-${slug}`
+    .replace(/[^a-z0-9-]+/g, "")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, MAX_SLUG_LENGTH);
   return PROJECT_NAME_RE.test(padded) ? padded : "game";
 }
 

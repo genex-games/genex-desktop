@@ -6,16 +6,21 @@ this preface, this preface wins.
 
 - `npx genex llm models`: `genex__cli {"command":"llm models"}`. `npx genex doctor`:
   `genex__cli {"command":"doctor"}`, or `genex__asset` with operation `status`.
-- `npx genex init --convert` does not apply in Studio. A game becomes a hosted Genex game when you
-  publish its first draft with `genex__publish {"operation":"draft"}` (the user approves it).
-- Then read the full procedure with `genex__skill {"name":"genex-llm-in-games"}`.
+- Only a game hosted on Genex can call a model. In Studio a game becomes one when you publish its
+  first draft with `genex__publish {"operation":"draft"}` (the user approves it); Genex's own
+  `npx genex init --convert` does not apply here, and the card's steps below leave it out.
+- Then read the full procedure with `genex__skill {"name":"genex-llm-in-games"}`. Its preface says
+  how a game made here ships with the calls on (provisional ceilings until a bench runs), and that
+  Studio's preview answers every call with practice answers (`source: 'practice'`, made up, free),
+  which the person can switch to real models in Live. The game labels its written lines whenever
+  they play instead.
 - Other commands map onto Studio tools as the `genex` skill describes
   (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-llm/SKILL.md v1.43.6 sha256 aea8c0be5ca9c270a47d59b132c1774f9ae30e8f0d3df5abca832f3abcf55ae7 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-llm/SKILL.md v1.45.2 sha256 fc87c7a9e032b15e6c7eecd1e279344d92d21efa961128aa1e23b55d322249d2 -->
 ---
 name: genex-tool-llm
-description: A language model running while somebody PLAYS the finished game — an NPC that answers in its own words, a quest written from what the player typed, a prompt box in the game. On Genex the player pays and approves it, so this is a platform feature, never a key on the author's meter.
+description: A language model running while somebody PLAYS the finished game — NPCs that answer in their own words, AI opponents, teammates or agents that plan and act, a narrator or game master, a quest written from what the player typed, a prompt box in the game. On Genex the player pays and approves it, so this is a platform feature, never a key on the author's meter.
 ---
 
 # Genex Tools · Models at play time
@@ -45,6 +50,9 @@ own.
 Any of these means a model at PLAY time, however it is phrased:
 
 - NPCs that talk, answer, argue, or decide in their own words
+- AI opponents, rivals, companions or teammates that choose their own moves
+- agents, a crew or factions that plan, negotiate, remember or act on their own
+- an AI narrator, storyteller, dungeon master or director reacting to play
 - anything written from what the player types — a name, a wish, a command, a question
 - a prompt box, a chat panel, an "ask the oracle" widget inside the game
 - quests, items, dialogue, or levels generated per save or per run
@@ -54,17 +62,12 @@ Any of these means a model at PLAY time, however it is phrased:
 ## Building it
 
 1. `npx genex llm models` — whether this stand serves the lane at all, and
-   which models. It answers in this folder as it is, before anything is
-   converted, so it comes first: if it says the lane is off, in-game calls
+   which models. If it says the lane is off, in-game calls
    answer 404 here. It prints
    the FEATURED models; `--all` lists the whole catalog. Whatever model is picked, the picker in the game
    shows the server's own label for it — a name you invent is a name that
    differs from the model they are billed for.
-2. `npx genex init --convert` — it connects this folder to a hosted Genex game
-   in place. The code, the files and this toolkit stay exactly as they are, and
-   generations still land in `./assets`. It is the user's yes that runs it, so
-   ask before you do if you have not already.
-3. Load `$genex-llm-in-games` — it arrives with the conversion and owns the
+2. Load `$genex-llm-in-games` — it owns the
    build: the SDK surface, one-time calls versus a standing budget, measuring
    the per-call ceiling before the game declares it, and honest handling of
    every refusal.

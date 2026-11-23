@@ -1,10 +1,10 @@
 /**
- * Settings → Model Providers: the rows of the CLIs that sign in in their own terminal, OpenCode,
+ * Settings → Model Providers: the rows of the CLIs that sign in in their own terminal, OpenCode, Pi,
  * Grok Build and Cursor. One row, each CLI's words and sign-in: install, sign in (the terminal opens inside
  * the row, so Settings stays open), the Account menu once connected, and the picker's models.
  * Loaded when Settings shows it (`MeteredProviders.tsx`): it is not on the first screen.
  */
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { type JSX, lazy, Suspense, useEffect, useRef, useState } from "react";
 import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
 import { t } from "../../shared/i18n.ts";
 import { EngineId } from "../../shared/providers.ts";
@@ -63,7 +63,6 @@ interface CliRowWords {
   card: ProviderWords;
   install: string;
   installLine: string;
-  installingLine: string;
   signIn: string;
   signInLine: string;
   signingIn: string;
@@ -72,6 +71,8 @@ interface CliRowWords {
   update: string;
   connectedLine: string;
   unreachable: string;
+  /** The line the row shows while its installer, or the CLI's own update, runs. */
+  installingLine: string;
   /** The Account menu's item that signs in again: OpenCode adds a provider, Grok switches accounts. */
   again: { title: string; line: string };
   /** OpenCode's own free models running with no provider signed in; Grok Build has none. */
@@ -123,6 +124,24 @@ const CURSOR_WORDS = {
   unreachable: t("Cursor didn't answer. Check the installation, then try again."),
 } as const;
 
+/** Pi's row: it has no in-app installer (`installsInApp`), so the row offers its guide, and Sign in is Pi's `/login`. */
+const PI_ROW: CliRowWords = {
+  card: { name: WORDS.pi.name, plans: "", guide: WORDS.pi.guide },
+  install: WORDS.installGuide,
+  installLine: WORDS.installByGuideLine(WORDS.pi.name),
+  installingLine: WORDS.pi.updatingLine,
+  signIn: WORDS.pi.signIn,
+  signInLine: WORDS.pi.signInLine,
+  signingIn: WORDS.pi.signingIn,
+  cancelSignIn: WORDS.pi.cancelSignIn,
+  openSignInPage: WORDS.pi.openSignInPage,
+  update: WORDS.pi.update,
+  connectedLine: WORDS.pi.connectedLine,
+  unreachable: WORDS.pi.unreachable,
+  outdatedLine: WORDS.pi.outdatedLine,
+  again: { title: WORDS.pi.addProvider, line: WORDS.pi.addProviderLine },
+};
+
 /** Antigravity's row, in the person's language (the renderer loads it before this module). */
 const ANTIGRAVITY_WORDS = {
   name: "Antigravity",
@@ -132,7 +151,9 @@ const ANTIGRAVITY_WORDS = {
   installingLine: t("Installing Antigravity. This can take a minute."),
   signIn: t("Sign in"),
   signInLine: t("Sign in with your Google account to build with your plan."),
-  signingIn: t("Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in."),
+  signingIn: t(
+    "Sign in on Google's page in your browser, then paste the code it gives you here. Antigravity keeps the sign-in.",
+  ),
   cancelSignIn: t("Cancel"),
   openSignInPage: t("Open sign-in page"),
   signInAgain: t("Sign in again…"),
@@ -168,6 +189,25 @@ const ANTIGRAVITY_ROW: CliRowWords = {
   again: { title: ANTIGRAVITY_WORDS.signInAgain, line: ANTIGRAVITY_WORDS.signInAgainLine },
 };
 
+/** The CLI's install guide where Genex can't install it, else the button `label` that runs its installer; and Check again. */
+function guideOrInstall(act: CliRowActions, label: string): JSX.Element {
+  const { openGuide } = act;
+  return (
+    <>
+      {openGuide ? (
+        <Button variant="default" onClick={openGuide}>
+          {WORDS.installGuide}
+        </Button>
+      ) : (
+        <Button variant="default" onClick={act.install}>
+          {label}
+        </Button>
+      )}
+      <Button onClick={act.recheck}>{WORDS.checkAgain}</Button>
+    </>
+  );
+}
+
 /** Not installed: Install, or where Genex can't install it, the CLI's install guide; and Check again. */
 function notInstalledView(act: CliRowActions, words: CliRowWords): RowView {
   const { openGuide } = act;
@@ -175,20 +215,7 @@ function notInstalledView(act: CliRowActions, words: CliRowWords): RowView {
     tone: RowTone.Off,
     status: WORDS.notInstalled,
     line: openGuide ? WORDS.installByGuideLine(words.card.name) : words.installLine,
-    actions: (
-      <>
-        {openGuide ? (
-          <Button variant="default" onClick={openGuide}>
-            {WORDS.installGuide}
-          </Button>
-        ) : (
-          <Button variant="default" onClick={act.install}>
-            {words.install}
-          </Button>
-        )}
-        <Button onClick={act.recheck}>{WORDS.checkAgain}</Button>
-      </>
-    ),
+    actions: guideOrInstall(act, words.install),
   };
 }
 
@@ -226,21 +253,15 @@ function cliRowView(state: OpenCodeRowState, act: CliRowActions, words: CliRowWo
 
 /**
  * The CLI is installed but too old to run: its installer puts the current one in place, as the
- * subscriptions' rows update theirs (its own update would first need it to run).
+ * subscriptions' rows update theirs (its own update is run only for a CLI that is ready). A CLI
+ * Genex can't install (Pi) is the person's to update, so its row opens the guide.
  */
 function outdatedView(act: CliRowActions, words: CliRowWords, line: string): RowView {
   return {
     tone: RowTone.Warning,
     status: t("Update needed"),
     line,
-    actions: (
-      <>
-        <Button variant="default" onClick={act.install}>
-          {words.update}
-        </Button>
-        <Button onClick={act.recheck}>{WORDS.checkAgain}</Button>
-      </>
-    ),
+    actions: guideOrInstall(act, words.update),
   };
 }
 
@@ -344,6 +365,7 @@ function connectedView(act: CliRowActions, words: CliRowWords): RowView {
 /** Each CLI's words. */
 const CLI_WORDS: Record<CliProvider, CliRowWords> = {
   [EngineId.OpenCode]: OPEN_CODE_ROW,
+  [EngineId.Pi]: PI_ROW,
   [EngineId.Grok]: GROK_ROW,
   [EngineId.Cursor]: CURSOR_ROW,
   [EngineId.Antigravity]: ANTIGRAVITY_ROW,

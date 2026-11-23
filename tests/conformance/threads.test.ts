@@ -12,6 +12,7 @@
  *  5. the engine's exact prompt size is logged (`context_usage`) so the UI meter never guesses.
  */
 import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, it } from "node:test";
 import type { Engine } from "../../src/substrate/engines/types.ts";
 import { StudioCore } from "../../src/main/studio-core.ts";
@@ -242,6 +243,152 @@ describe("per-game threads", () => {
     } finally {
       await revived.stop();
     }
+  });
+
+  it("scaffolds and binds a draft thread from a non-ASCII prompt", async () => {
+    const rig = await startRig({ replies: [] });
+    rigs.push(rig);
+    const briefs: Array<{ cwd: string }> = [];
+    rig.core.engines.register(vendorEngine(briefs));
+
+    const threadId = await rig.core.createGameThread();
+    await rig.core.sendUserMessage("做一个贪吃蛇游戏", { engine: "vendor", thread: threadId });
+    await waitForLog(
+      rig.core,
+      (log) => log.some((e) => e.thread_id === threadId && e.data.type === "turn_ended"),
+      30_000,
+      "draft non-ascii turn ended",
+    );
+    const record = await rig.core.store.getRecord(threadId);
+    assert.equal((record.metadata as { project?: string }).project, "game");
+    assert.equal(record.title, "做一个贪吃蛇游戏");
+    assert.ok(briefs[0]!.cwd.endsWith("game"));
+  });
+
+  it("rebinds a thread previously pointing to a removed game when scaffolding a new one", async () => {
+    const rig = await startRig({ replies: [] });
+    rigs.push(rig);
+    const briefs: Array<{ cwd: string }> = [];
+    rig.core.engines.register(vendorEngine(briefs));
+
+    await rig.core.games.scaffold("old-game", { title: "old-game" });
+    const threadId = await rig.core.threadForGame("old-game");
+    await rig.core.removeGame("old-game");
+
+    await rig.core.sendUserMessage("make a puzzle game", { engine: "vendor", thread: threadId });
+    await waitForLog(
+      rig.core,
+      (log) => log.some((e) => e.thread_id === threadId && e.data.type === "turn_ended"),
+      30_000,
+      "rebound turn ended",
+    );
+    const record = await rig.core.store.getRecord(threadId);
+    assert.equal((record.metadata as { project?: string }).project, "puzzle");
+    assert.ok((await rig.core.games.list()).some((g) => g.name === "puzzle"));
+    assert.equal(await rig.core.threadForGame("puzzle"), threadId);
+  });
+
+  it("scaffolding another game in a live game's chat leaves that chat with its game", async () => {
+    const rig = await startRig({ replies: [] });
+    rigs.push(rig);
+
+    await rig.core.games.scaffold("arena", { title: "arena" });
+    const chat = await rig.core.threadForGame("arena");
+    const api = rig.core.api() as unknown as Record<string, (payload: unknown) => Promise<unknown>>;
+    const made = (await api["game.scaffold"]!({ name: "maze", threadId: chat })) as { name: string };
+    assert.equal(made.name, "maze");
+    const meta = (await rig.core.store.getRecord(chat)).metadata as { project?: string };
+    assert.equal(meta.project, "arena", "a live game's chat is never moved to another game");
+    assert.notEqual(await rig.core.threadForGame("maze"), chat);
+  });
+
+  it("a local model's new_game with non-ASCII name creates a valid slug and binds the chat", async () => {
+    const rig = await startRig({
+      replies: [
+        { toolCalls: [{ id: "c1", name: "new_game", arguments: { name: "贪吃蛇", title: "贪吃蛇" } }] },
+        { text: "Scaffolded." },
+      ],
+    });
+    rigs.push(rig);
+
+    const threadId = await rig.core.createGameThread();
+    await rig.core.sendUserMessage("做一个贪吃蛇游戏", { thread: threadId });
+    await waitForLog(rig.core, (log) => log.some((e) => e.data.type === "turn_ended"), 30_000, "turn_ended");
+
+    const record = await rig.core.store.getRecord(threadId);
+    assert.equal((record.metadata as { project?: string }).project, "game");
+    const games = await rig.core.games.list();
+    assert.ok(games.some((g) => g.name === "game"));
+  });
+
+  it("a local model's new_game skips a removed game's name and keeps a live game's name", async () => {
+    const rig = await startRig({
+      replies: [
+        {
+          toolCalls: [{ id: "c1", name: "new_game", arguments: { name: "copper-lantern", title: "Copper Lantern" } }],
+        },
+        { text: "Scaffolded fresh empty folder." },
+        {
+          toolCalls: [
+            {
+              id: "c2",
+              name: "new_game",
+              arguments: { name: "copper-lantern", title: "Copper Lantern", kind: "web" },
+            },
+          ],
+        },
+        { text: "Scaffolded fresh web game." },
+      ],
+    });
+    rigs.push(rig);
+
+    const old = await rig.core.createGame("Copper Lantern");
+    const oldChat = await rig.core.threadForGame(old.name);
+    await rig.core.append([{ type: "messages", messages: [{ role: "user", content: "the old lantern" }] }], oldChat);
+    await rig.core.removeGame(old.name);
+
+    const draft = await rig.core.createGameThread();
+    await rig.core.sendUserMessage("make a copper lantern game", { thread: draft });
+    await waitForLog(
+      rig.core,
+      (log) => log.filter((e) => e.data.type === "turn_ended").length >= 1,
+      30_000,
+      "empty turn",
+    );
+
+    const draftMeta = (await rig.core.store.getRecord(draft)).metadata as { project?: string };
+    assert.equal(draftMeta.project, "copper-lantern-2");
+    assert.equal(await rig.core.threadForGame("copper-lantern-2"), draft);
+
+    const webDraft = await rig.core.createGameThread();
+    await rig.core.sendUserMessage("make another copper lantern game", { thread: webDraft });
+    await waitForLog(
+      rig.core,
+      (log) => log.filter((e) => e.data.type === "turn_ended").length >= 2,
+      30_000,
+      "web turn",
+    );
+
+    const webMeta = (await rig.core.store.getRecord(webDraft)).metadata as { project?: string };
+    assert.equal(webMeta.project, "copper-lantern-3");
+    assert.equal(await rig.core.threadForGame("copper-lantern-3"), webDraft);
+
+    const games = await rig.core.games.list();
+    assert.ok(!games.some((g) => g.name === "copper-lantern"), "removed game stays out of the library");
+    assert.ok(games.some((g) => g.name === "copper-lantern-2"));
+    assert.ok(games.some((g) => g.name === "copper-lantern-3" && g.facts.some((f) => f.id === "web-game")));
+    assert.equal(
+      ((await rig.core.store.getRecord(oldChat)).metadata as { project?: string }).project,
+      "copper-lantern",
+    );
+    assert.doesNotMatch(JSON.stringify(await rig.core.store.listEvents(draft)), /the old lantern/);
+    assert.doesNotMatch(JSON.stringify(await rig.core.store.listEvents(webDraft)), /the old lantern/);
+
+    const api = rig.core.api() as unknown as Record<string, (payload: unknown) => Promise<unknown>>;
+    const existingWeb = (await api["game.scaffold"]!({ name: "copper-lantern-3", kind: "web" })) as { name: string };
+    assert.equal(existingWeb.name, "copper-lantern-3", "a live game stays as it is");
+    const existingEmpty = (await rig.core.games.makeEmpty("copper-lantern-2")) as { name: string };
+    assert.equal(existingEmpty.name, "copper-lantern-2", "a live empty game stays as it is");
   });
 
   it("the Studio thread calls the model without building and keeps its answer", async () => {
@@ -698,7 +845,7 @@ describe("context management", () => {
   });
 
   it("a local model's identity names no engine and says where it runs and what the game holds; a web game's adds the web rules", async () => {
-    const seed = new URL("../../src/harness-seed", import.meta.url).pathname;
+    const seed = fileURLToPath(new URL("../../src/harness-seed", import.meta.url));
     const systemFor = async (game: Record<string, unknown> | null, kinds: unknown[] = []) => {
       const ctx = {
         workspace: seed,

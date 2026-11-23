@@ -2,7 +2,7 @@
  * The Builds tab's pictures that are not a single read: the newest saved frame of a round still
  * being built. Every still itself is read through `stills.ts`.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import { SECOND_MS } from "../../shared/duration.ts";
 import type { ProjectAsset } from "../../shared/game-assets.ts";
 import { type IterationNode, type RunGraph, runIdOf, type Shot } from "../run-graph.ts";
@@ -14,7 +14,7 @@ import {
   savePointShot,
 } from "../run-graph-pictures.ts";
 import { PictureSource, type WorkerPicture } from "../run-steps.ts";
-import { loadStill, type StillSource, useStill } from "../stills.ts";
+import { loadStill, type StillSource, StillsNear, useStill, useStillRead } from "../stills.ts";
 
 /** How often a round still in hand looks for a newer saved frame. */
 const LIVE_FRAME_POLL_MS = 5 * SECOND_MS;
@@ -107,7 +107,8 @@ export function readRoundPreview(request: BuildPreviewRequest, active: boolean):
 
 /**
  * What a round looks like: its judged still when it has one, else the newest frame the builder
- * saved — polled while the round is in hand, because that frame changes as it works.
+ * saved — polled while the round is in hand, because that frame changes as it works — at most
+ * `maxPx` on its largest side.
  */
 export function useRoundStill(
   graph: Pick<RunGraph, "runId">,
@@ -115,26 +116,29 @@ export function useRoundStill(
   iteration: number,
   shot: string | null,
   active: boolean,
+  maxPx: number = NODE_PICTURE_PX,
 ): string | null {
-  const judged = useStill(shot ? { run: shot, maxPx: 640 } : null);
+  const judged = useStill(shot ? { run: shot, maxPx } : null);
   const [live, setLive] = useState<string | null>(null);
+  // A Builds row far from the screen asks for no frame until it nears it.
+  const near = useContext(StillsNear);
   // A chat turn's graph has no run whose saved frames could be asked for.
   const runId = runIdOf(graph);
   useEffect(() => {
     setLive(null);
     // No part named: nothing to ask for (a caller whose picture comes from elsewhere).
-    if (shot || !facetId || !runId) return;
+    if (shot || !facetId || !runId || !near) return;
     const read = async (isCurrent: () => boolean): Promise<void> => {
       try {
         const frame = await readRoundPreview({ runId, facetId, iteration }, active);
-        const src = frame ? await loadStill({ run: frame.path, version: frame.capturedAt, maxPx: 640 }) : null;
+        const src = frame ? await loadStill({ run: frame.path, version: frame.capturedAt, maxPx }) : null;
         if (isCurrent() && src) setLive(src);
       } catch {
         /* no frame yet */
       }
     };
     return pollWhile(read, active, LIVE_FRAME_POLL_MS);
-  }, [runId, facetId, iteration, shot, active]);
+  }, [runId, facetId, iteration, shot, active, near, maxPx]);
   return judged ?? live;
 }
 
@@ -239,29 +243,35 @@ export interface WorkerStill {
   src: string | null;
   asset: ProjectAsset | null;
   borrowed: boolean;
+  /** its still is on its way: a skeleton stands in */
+  loading: boolean;
 }
 
-/** Where a worker's picture is read from, when it is a still. */
-function workerStillSource(
+/** Where a worker's picture is read from, when it is a still, at most `maxPx` on its largest side. */
+export function workerStillSource(
   project: string | null,
   picture: WorkerPicture | undefined,
   reviewed: Shot | null,
+  maxPx: number = NODE_PICTURE_PX,
 ): StillSource | null {
-  if (picture?.source === PictureSource.File)
-    return project ? { project, asset: picture.file, maxPx: NODE_PICTURE_PX } : null;
+  if (picture?.source === PictureSource.File) return project ? { project, asset: picture.file, maxPx } : null;
   // A render, a kept copy and the merged build are files under the run's folder.
-  if (picture && "path" in picture) return { run: picture.path, maxPx: NODE_PICTURE_PX };
-  return reviewed ? { run: reviewed.path, maxPx: NODE_PICTURE_PX } : null;
+  if (picture && "path" in picture) return { run: picture.path, maxPx };
+  return reviewed ? { run: reviewed.path, maxPx } : null;
 }
 
 /**
  * A worker's picture (`run-steps.ts` `WorkerPicture`): a picture it delivered, its model as the
  * Assets stage draws it, or for a reader the save point it looked at, borrowed.
  */
-export function useWorkerStill(project: string | null, picture: WorkerPicture | undefined): WorkerStill {
+export function useWorkerStill(
+  project: string | null,
+  picture: WorkerPicture | undefined,
+  maxPx: number = NODE_PICTURE_PX,
+): WorkerStill {
   const round = picture?.source === PictureSource.Reviewed ? picture.round : null;
   const reviewed = useSavePointShot(round, null);
-  const src = useStill(workerStillSource(project, picture, reviewed));
+  const { src, loading } = useStillRead(workerStillSource(project, picture, reviewed, maxPx));
   const asset = picture?.source === PictureSource.Asset && project ? picture.asset : null;
-  return { src, asset, borrowed: round !== null };
+  return { src, asset, borrowed: round !== null, loading };
 }

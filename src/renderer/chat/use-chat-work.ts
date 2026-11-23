@@ -99,6 +99,8 @@ export function useChatWork(props: ChatPanelProps, chat: ChatThread, busy: boole
     stop,
     line,
     visibleEntries,
+    /** The work group the line shows under its words now, which the transcript takes over once it is done. */
+    liveWorkId: currentDetails?.id ?? null,
     answering: state.answering,
     stoppable: state.stoppable,
   };

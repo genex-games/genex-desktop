@@ -23,6 +23,8 @@ import { startFakeOllama, type FakeOllama } from "../helpers/fake-ollama.ts";
 import { cliName, writeCliLauncher } from "../helpers/external-cli.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import { readFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -62,6 +64,35 @@ describe("ollama management API", () => {
     const shown = await client.show("qwen3.6:27b");
     assert.ok(shown.capabilities.includes("tools"));
     assert.equal(shown.contextLength, 262144);
+  });
+
+  it("reports no Ollama when the server on its port answers without a version", async () => {
+    const other = createServer((_request, response) => response.end("{}"));
+    await new Promise<void>((resolve) => other.listen(0, "127.0.0.1", resolve));
+    try {
+      const { port } = other.address() as AddressInfo;
+      assert.equal(await new OllamaClient(`http://127.0.0.1:${port}`).version(), null);
+    } finally {
+      other.close();
+    }
+  });
+
+  it("names a catalog model by its name and any other model by its tag", async () => {
+    // A person picks "Inkling 2 Mini", not "inkling-2-mini:26b-a5b".
+    const server = await fake({
+      models: [
+        { name: "inkling-2-mini:26b-a5b", size: 100, capabilities: ["completion", "tools"], contextLength: 4096 },
+        { name: "my-finetune:7b", size: 100, capabilities: ["completion"], contextLength: 4096 },
+      ],
+    });
+    const models = await new OllamaEngine({ host: server.host }).models();
+    assert.deepEqual(
+      models.map((model) => [model.id, model.label]),
+      [
+        ["inkling-2-mini:26b-a5b", "Inkling 2 Mini"],
+        ["my-finetune:7b", "my-finetune:7b"],
+      ],
+    );
   });
 
   it("reports no server rather than throwing when nothing is listening", async () => {
@@ -521,6 +552,46 @@ describe("ollama engine completions (real pi-ai over real HTTP)", () => {
     assert.equal(server.requests.filter((r) => r.path.startsWith("/v1/chat/completions")).length, 3);
   });
 
+  // Live, 2026-11-21: Inkling 2 Mini on a Mac ran out of Metal's memory, and the chat said Ollama was
+  // unreachable and to wait and resend.
+  it("names a model that does not fit this computer's memory, not an unreachable Ollama", async () => {
+    const server = await fake({ replies: [metalOutOfMemory()] });
+    await assert.rejects(
+      () =>
+        new OllamaEngine({ host: server.host }).complete({
+          model: "inkling-2-mini",
+          messages: [{ role: "user", content: "make a platformer" }],
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof EngineError);
+        assert.equal(err.kind, EngineFailureKind.OutOfMemory);
+        assert.match(err.message, /inkling-2-mini needs more memory than this computer has free/);
+        assert.match(err.message, /Insufficient Memory/, "Ollama's own words stay for the log");
+        assert.equal(isTransientProviderError(err), false, "the run's outage patience never waits on it");
+        return true;
+      },
+    );
+  });
+
+  it("reads a malformed tool call that quotes memory words as the tool call, not as memory", async () => {
+    const quoting = toolCallParseFailure("throw new Error('Insufficient memory: failed to allocate buffer')");
+    const server = await fake({ replies: [quoting, quoting, quoting] });
+    await assert.rejects(
+      () =>
+        new OllamaEngine({ host: server.host }).complete({
+          model: "gpt-oss:20b",
+          messages: [{ role: "user", content: "make a platformer" }],
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof EngineError);
+        assert.equal(err.kind, EngineFailureKind.Other, "the model's own words are no memory failure");
+        assert.match(err.message, /tool call/i);
+        return true;
+      },
+    );
+    assert.equal(server.requests.filter((r) => r.path.startsWith("/v1/chat/completions")).length, 3, "sent again");
+  });
+
   it("says Ollama is not running when nothing answers, as a failure a fallback can take over", async () => {
     const server = await fake();
     const host = server.host;
@@ -707,14 +778,26 @@ describe("live check against the user's Ollama", () => {
 });
 
 /** Ollama's 500 for a model that wrote plain reasoning where its template expected a tool call. */
-function toolCallParseFailure(): { httpStatus: number; body: string } {
+function toolCallParseFailure(raw = "The user wants a modern 3-D platformer. We need to interpret the request"): {
+  httpStatus: number;
+  body: string;
+} {
   return {
     httpStatus: 500,
     body: JSON.stringify({
       error: {
-        message:
-          "error parsing tool call: raw='The user wants a modern 3-D platformer. We need to interpret the request', err=invalid character 'T' looking for beginning of value",
+        message: `error parsing tool call: raw='${raw}', err=invalid character 'T' looking for beginning of value`,
       },
+    }),
+  };
+}
+
+/** Ollama's 500 for a model whose generation ran out of the Mac's GPU memory (MLX on Metal). */
+function metalOutOfMemory(): { httpStatus: number; body: string } {
+  return {
+    httpStatus: 500,
+    body: JSON.stringify({
+      error: { message: "mlx runner failed: panic: mlx: [METAL] Command buffer execution failed: Insufficient Memory" },
     }),
   };
 }

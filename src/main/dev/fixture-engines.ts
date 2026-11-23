@@ -1,6 +1,7 @@
 /**
  * The scripted engines of a fixture session: Ollama, Claude Code, Codex, OpenCode, Grok Build, Cursor,
- * Genex, OpenRouter and local server stand-ins that answer from fixed text, never reach an account, a key, a server or the
+ * Pi, Genex, OpenRouter and local server stand-ins that answer from fixed text, never reach an
+ * account, a key, a server or the
  * network, and start no vendor worker. Markers in
  * the user's words (`fixture:pending`, `fixture:stream`, `fixture:plan`, …) choose the script.
  */
@@ -36,6 +37,7 @@ const FIXTURE_ENGINES = [
   EngineId.ClaudeCode,
   EngineId.Codex,
   EngineId.OpenCode,
+  EngineId.Pi,
   EngineId.Grok,
   EngineId.Cursor,
   EngineId.Antigravity,
@@ -137,6 +139,8 @@ const MESSAGE = {
   streamedReply:
     "The bridge is ready. **You can cross the river now.** I kept the path level with the river bank and added rails along both sides. The village lights are warm and the cover is ready in Assets. You can try the crossing in the preview. The water keeps moving beneath it.",
   modelLimit: "You have reached your model limit. Choose another model.",
+  outOfMemory:
+    "fixture-v1 needs more memory than this computer has free (mlx runner failed: panic: mlx: [METAL] Command buffer execution failed: Insufficient Memory)",
   stoppedByYou: "stopped by you",
   commandReply:
     "Converting the engine recordings needs ffmpeg, and my sandbox can’t download it. Run this once, then I’ll convert them:\n\n```bash\nbrew install ffmpeg\n```",
@@ -146,6 +150,8 @@ const MESSAGE = {
 const LONG_STREAM_MARKER = "fixture:stream-long";
 /** The marker that keeps a fixture session working until a real Stop. */
 const PENDING_MARKER = "fixture:pending";
+/** The marker whose model runs out of the computer's memory, as a local model too big for it does. */
+const OUT_OF_MEMORY_MARKER = "fixture:out-of-memory";
 /** The marker whose reply offers the user a command to run, as a reply the sandbox blocked does. */
 const COMMAND_MARKER = "fixture:command";
 /** The session a command reply opens; the turn that tells it how the command went resumes it. */
@@ -162,6 +168,7 @@ export const FIRST_LAUNCH_STATUS: Record<string, EngineStatus> = {
   },
   [EngineId.Codex]: { code: EngineStatusCode.NotInstalled, detail: "AG-933 fixture; no Codex app" },
   [EngineId.OpenCode]: { code: EngineStatusCode.NotInstalled, detail: "AG-933 fixture; no OpenCode CLI" },
+  [EngineId.Pi]: { code: EngineStatusCode.NotInstalled, detail: "AG-933 fixture; no Pi CLI" },
   [EngineId.Grok]: { code: EngineStatusCode.NotInstalled, detail: "AG-933 fixture; no Grok Build CLI" },
   [EngineId.Cursor]: NO_CURSOR,
   [EngineId.Antigravity]: NO_ANTIGRAVITY,
@@ -303,6 +310,8 @@ async function completeFixture(id: EngineId, request: CompleteRequest) {
     return reply(id, backdropReply(latestUser));
   }
   if (latestUser.includes(PENDING_MARKER)) await pending(request.signal, id);
+  if (latestUser.includes(OUT_OF_MEMORY_MARKER))
+    throw new EngineError(EngineFailureKind.OutOfMemory, id, MESSAGE.outOfMemory);
   if (request.systemPrompt?.startsWith("You are the Harness assistant")) return studioReply(id, request, latestUser);
   const transcript = JSON.stringify(request.messages);
   const asksForPlan = request.systemPrompt?.includes("planning-only") && transcript.includes("fixture:plan");
@@ -404,6 +413,8 @@ async function planReply(id: EngineId, transcript: string) {
 
 async function delegateFixture(id: EngineId, request: DelegateRequest, pendingSessions: Set<string>) {
   const reads = steerReads(request);
+  if (request.prompt.includes(OUT_OF_MEMORY_MARKER))
+    throw new EngineError(EngineFailureKind.OutOfMemory, id, MESSAGE.outOfMemory);
   if (request.resume === COMMAND_SESSION) return reads.answer(commandReply(id, MESSAGE.commandFollowUp));
   if (request.prompt.includes(COMMAND_MARKER)) return reads.answer(commandReply(id, MESSAGE.commandReply));
   if (request.interviewTools?.some((tool) => tool.name === "ask_user"))

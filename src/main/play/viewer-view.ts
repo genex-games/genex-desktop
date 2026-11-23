@@ -204,7 +204,7 @@ interface ViewerEvents {
  * Whether the person's microphone may be used. macOS asks the person the first time (the app's
  * own prompt, once); Windows answers its privacy switch; elsewhere the browser's own rules apply.
  */
-async function microphoneAccess(): Promise<boolean> {
+export async function microphoneAccess(): Promise<boolean> {
   const { platform } = process;
   if (platform !== "darwin" && platform !== "win32") return true;
   const status = systemPreferences.getMediaAccessStatus("microphone");

@@ -23,6 +23,9 @@ const options = { loginPath: "", home: root, env: { PATH: "" }, standardDirs: []
 const WINDOWS = process.platform === "win32";
 const FLAGS =
   "--json --output-schema --ignore-user-config --skip-git-repo-check --input-format --output-format --strict-mcp-config --setting-sources --permission-mode --mcp-config --allowedTools --disallowedTools";
+/** Every option a Pi session, a one-shot answer or the model list passes. */
+const PI_FLAGS =
+  "--mode --session-id --fork --model --list-models --thinking --tools --no-tools --no-session --no-extensions --no-approve --offline";
 const exe = cliName;
 const launcher = writeCliLauncher;
 
@@ -112,6 +115,37 @@ test("invalid manual override never falls back; bundled and project dependencies
     excludedRoots: [path.dirname(external)],
   });
   assert.equal(excluded.status.state, "missing");
+});
+test("a Bun global install is kept: its real path is install/global/node_modules, not a Studio dependency", {
+  skip: WINDOWS && "the fixture is a symlink to a shell launcher, the shape of a Bun install on macOS and Linux",
+}, async () => {
+  const home = path.join(root, "bun-home");
+  const real = path.join(home, ".bun/install/global/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js");
+  await launcher(real, `#!/bin/sh\ncase "$1" in\n --version) echo 'pi 0.1';;\n *) echo '${PI_FLAGS}';;\nesac\n`, "");
+  const bin = path.join(home, ".bun/bin");
+  await mkdir(bin, { recursive: true });
+  const shim = path.join(bin, exe("pi"));
+  await symlink(real, shim);
+  const found = await discoverCodingCli("pi", { ...options, loginPath: bin, home });
+  assert.equal(found.status.state, "ready");
+  assert.equal(found.status.path, shim);
+});
+test("a Pi that lacks an option a session passes needs an update, whichever option it is", async () => {
+  // `--mode` is left out: the help is searched for each option's text, and `--model` holds it.
+  for (const missing of PI_FLAGS.split(" ").filter((flag) => flag !== "--mode")) {
+    const flags = PI_FLAGS.split(" ")
+      .filter((flag) => flag !== missing)
+      .join(" ");
+    const file = path.join(root, `pi-without${missing}`, exe("pi"));
+    await launcher(
+      file,
+      `#!/bin/sh\ncase "$1" in\n --version) echo 'pi 0.1';;\n *) echo '${flags}';;\nesac\n`,
+      `console.log(process.argv.includes("--version") ? "pi 0.1" : ${JSON.stringify(flags)});\n`,
+    );
+    const found = await discoverCodingCli("pi", { ...options, override: file });
+    // `--no-approve` and `--no-extensions` keep a game's own Pi files and extensions out of a session.
+    assert.equal(found.status.state, "incompatible", `a Pi with no ${missing} is not run`);
+  }
 });
 test("npm launchers report missing Node and carry the required launch environment", async () => {
   const shim = await cli("npm/claude");

@@ -150,6 +150,8 @@ const STEPS: Readonly<Record<string, StepRule>> = {
   "EditorAppToolset.IsPIERunning": { action: StepAction.CheckedPlay },
   "EditorAppToolset.CaptureEditorImage": { action: StepAction.Screenshot },
   "EditorAppToolset.CaptureViewport": { action: StepAction.ViewportShot },
+  "SceneCaptureToolset.CaptureEditorViewport": { action: StepAction.ViewportShot },
+  "SceneCaptureToolset.CaptureActiveEditorView": { action: StepAction.ViewportShot },
   "EditorAppToolset.CaptureAssetImage": { action: StepAction.PictureOf, object: asset("assetPath") },
   "LogsToolset.GetLogEntries": { action: StepAction.ReadLog },
   "GenexPlayTools.hold": { action: StepAction.HeldInput, object: named("name") },

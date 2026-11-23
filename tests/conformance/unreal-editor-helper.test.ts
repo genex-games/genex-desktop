@@ -114,9 +114,17 @@ test("the built Unreal plugin carries the editor helper, which Unreal loads with
   assert.equal(descriptor.EnabledByDefault, true, "the game's .uproject stays untouched");
   assert.equal(descriptor.CanContainContent, true, "Unreal runs Content/Python only for content plugins");
   assert.equal(descriptor.EditorOnly, true, "a packaged game never carries it");
-  assert.deepEqual([descriptor.Version, descriptor.VersionName], [39, "0.34.1"]);
+  assert.deepEqual([descriptor.Version, descriptor.VersionName], [40, "0.34.2"]);
   const geometry = descriptor.Plugins.filter((plugin: { Name: string }) => plugin.Name === "GeometryScripting");
-  assert.deepEqual(geometry, [{ Name: "GeometryScripting", Enabled: true }], "the terrain tool needs Geometry Script");
+  assert.deepEqual(
+    geometry,
+    [{ Name: "GeometryScripting", Enabled: true, TargetAllowList: ["Editor"] }],
+    "the terrain tool needs Geometry Script",
+  );
+  // A packaged game still knows the helper, and stops at its start over any plugin the helper asks
+  // for that its platform leaves out (the web build has no Geometry Script).
+  for (const plugin of descriptor.Plugins)
+    assert.deepEqual(plugin.TargetAllowList, ["Editor"], `${plugin.Name} is asked for in the editor only`);
 });
 
 /** A Mac with nothing running: inspecting a project reads its files only. */

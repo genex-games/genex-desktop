@@ -36,6 +36,7 @@ import {
   DesignHosts,
   type DesignItemFile,
   type DesignPageFacts,
+  type DesignSettled,
   designPageUrl,
   type DesignServed,
   listDesignBoard,
@@ -90,6 +91,8 @@ export class DesignBoardService {
   readonly #hosts = new DesignHosts();
   /** What was read in each page listed, so a board read every two seconds reads a page's text once. */
   readonly #facts: DesignPageFacts = new Map();
+  /** What the tab was last shown of each artboard: a file still being written is shown as it was until it settles. */
+  readonly #settled: DesignSettled = new Map();
   /**
    * Each game's last change to its marks file: a change waits for the one before it, so two saves
    * never write the file at once (a mix of both would read back as an empty board) and an offer's
@@ -97,8 +100,11 @@ export class DesignBoardService {
    */
   readonly #marksChanges = new Map<string, Promise<unknown>>();
 
-  constructor(core: DesignCore) {
+  readonly #now: () => number;
+
+  constructor(core: DesignCore, options: { now?: () => number } = {}) {
     this.#core = core;
+    this.#now = options.now ?? Date.now;
   }
 
   /** The game's real folder, or null for a game that is not there. */
@@ -114,7 +120,8 @@ export class DesignBoardService {
   async board(project: string): Promise<DesignBoard> {
     const root = await this.#root(project);
     if (!root) return { items: [], stamp: "" };
-    const { items, stamp } = await listDesignBoard(root, this.#facts);
+    const settling = { settled: this.#settled, now: this.#now() };
+    const { items, stamp } = await listDesignBoard(root, this.#facts, settling);
     const host = this.#hosts.hostFor(project);
     const placed = items.map(({ version, ...item }) => ({ ...item, url: designPageUrl(host, item.file, version) }));
     return { items: placed, stamp };
@@ -252,7 +259,7 @@ export class DesignBoardService {
 
   /**
    * `show_design`'s `making`: the artboards the agent is about to make, told to the canvas, which
-   * shows them being drawn until their files are there. Nothing is written; the files told, in order.
+   * shows them being drawn until their files are written. Nothing is written; the files told, in order.
    */
   making(project: string, files: unknown): string[] {
     const making = readDesignMaking(files);

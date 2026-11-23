@@ -5,6 +5,9 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   candidateDirs,
   envPath,
@@ -14,6 +17,7 @@ import {
   parseRegistryPath,
   parseRegistryValue,
   readLoginPath,
+  readLoginVariable,
   readRegistryPath,
   resolveToolchain,
   withEnvPath,
@@ -26,6 +30,27 @@ const WINDOWS_ENV = {
   PATHEXT: ".COM;.EXE;.BAT;.CMD",
   Path: "C:\\Windows\\system32;C:\\Windows",
 };
+
+describe("a variable of the login shell", () => {
+  it("is never asked for on Windows, nor by anything but a plain name", async () => {
+    assert.equal(await readLoginVariable("HOME", "win32"), null);
+    const marker = path.join(os.tmpdir(), `genex-login-variable-${process.pid}`);
+    for (const name of ["", "1A", "A B", "A;touch x", `A$(touch ${marker})`, "A`id`", "A\nB", "A-B"])
+      assert.equal(await readLoginVariable(name, "darwin"), null, JSON.stringify(name));
+    assert.equal(existsSync(marker), false, "nothing ran in the shell");
+  });
+
+  it("reads what the shell has, and null for one it doesn't set", { skip: process.platform === "win32" }, async () => {
+    const name = `GENEX_TEST_LOGIN_${process.pid}`;
+    process.env[name] = "/opt/emsdk folder";
+    try {
+      assert.equal(await readLoginVariable(name), "/opt/emsdk folder");
+      assert.equal(await readLoginVariable(`${name}_UNSET`), null);
+    } finally {
+      delete process.env[name];
+    }
+  });
+});
 
 describe("the toolchain on Windows", () => {
   it("never starts a login shell", async () => {

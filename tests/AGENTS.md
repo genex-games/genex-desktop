@@ -96,12 +96,17 @@ Tests that read local projects or open the network are skipped unless opted in:
 local Ollama probes (on Windows also Local Blender's and Godot's real downloads and sandboxed
 jobs, `blender-windows-live.test.ts` and `godot-windows-live.test.ts`, and a Play game's reach to
 Genex's API, `windows-game-live.test.ts`), `STUDIO_GODOT_LIVE=1` for the Godot plugin against this Mac's own Godot
-(`godot-live.test.ts`), `STUDIO_CLAUDE_CLI_TESTS=1` for the real Claude Code CLI against
+(`godot-live.test.ts`), `STUDIO_UNITY_LIVE=1` for the Unity plugin against this computer's own Unity 6, signed in
+(`unity-live.test.ts`; it opens Unity's windows and takes several minutes a case), `STUDIO_CLAUDE_CLI_TESTS=1` for the real Claude Code CLI against
 `fake-anthropic.ts` (`claude-studio-shell-cli.test.ts`, `claude-tool-loading.test.ts`, `claude-steer-cli.test.ts`),
 `STUDIO_CODEX_CLI_TESTS=1` for the real Codex CLI against `fake-openai-responses.ts`
 (`codex-sandbox-cli.test.ts`), `STUDIO_GROK_CLI_TESTS=1` for the real Grok Build CLI in the real
 sandbox against `fake-xai-responses.ts` (`grok-cli-live.test.ts`; `STUDIO_GROK_BIN` names one, which
-must sit outside `~/.grok`: the test's sandbox denies the person's own Grok home). `STUDIO_ANTIGRAVITY_CLI_TESTS=1`
+must sit outside `~/.grok`: the test's sandbox denies the person's own Grok home), `STUDIO_PI_CLI_TESTS=1` for the real Pi CLI in the real
+sandbox against `fake-openai-chat.ts` (`pi-cli-live.test.ts`; `STUDIO_PI_BIN` names one; on Linux the fake
+listens on `127.0.0.2`, which a session reaches through the sandbox's proxy),
+`STUDIO_OPENCODE_CLI_TESTS=1` for a real OpenCode 2.x CLI in the real sandbox against the same fake
+(`opencode-cli-live.test.ts`; `STUDIO_OPENCODE_BIN` names one). `STUDIO_ANTIGRAVITY_CLI_TESTS=1`
 runs the real Antigravity CLI in the real sandbox on the Google account it is signed in to
 (`antigravity-cli-live.test.ts`; it uses that account's plan, so only with permission). Never make a default test depend on this machine. `STUDIO_RIG_UNSANDBOXED=1`
 runs rigs without the process sandbox, for a container where it cannot start (no user

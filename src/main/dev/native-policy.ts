@@ -39,6 +39,8 @@ const NATIVE_CHANNELS = [
   "studio:subscription.use-account",
   // OpenCode's sign-in runs its CLI in a terminal and reaches the provider the person picks.
   "studio:opencode.signin",
+  // Pi's sign-in runs its TUI in a terminal so the person can `/login`.
+  "studio:pi.signin",
   // Grok Build's sign-in runs its CLI in a terminal and signs in to the person's Grok account.
   "studio:grok.signin",
   // Cursor's sign-in runs its CLI in a terminal and opens Cursor in the browser; signing out has
@@ -266,6 +268,14 @@ const FIXTURE_SAFE = [
   "studio:live.behind",
   "studio:preview.state",
   "studio:preview.live",
+  // Live's play-time models: the state and practice answers reach only the app's own helper on this
+  // computer's loopback. Real models answer only where the core may spend (`previewAiLive`, never in
+  // a fixture launch): there the call answers the unavailable state and nothing starts.
+  "studio:preview-ai.state",
+  "studio:preview-ai.real",
+  "studio:preview-ai.practice",
+  // The answer to a game's microphone ask in Live; a fixture's preview has no microphone to open.
+  "studio:preview-ai.mic",
   "studio:build.preview",
   "studio:build.show",
   "studio:build.land",

@@ -180,11 +180,11 @@ describe("a Studio-run Genex CLI command, through an injected sandbox", () => {
       scratch: p.root,
     });
     const hook = genexHostTool({ cli: service(p, sandbox), packages, room: unusedRoom(p.root) });
-    const args = { command: "llm bench", args: "Say hi", options: { "max-coins": 5 } };
+    const args = { command: "llm bench", args: "Say hi", options: { "max-credits": 5 } };
     await assert.rejects(hook("genex", PluginHostTool.GenexCli, args, binding(p)), GenexCliRefusal);
     assert.equal(sandbox.seen.length, 0, "the free tool starts nothing for a paid command");
     await hook("genex", PluginHostTool.GenexCliPaid, args, binding(p));
-    assert.ok(sandbox.seen[0]?.request.command.includes("'--max-coins' '5' '--user-approved'"));
+    assert.ok(sandbox.seen[0]?.request.command.includes("'--max-credits' '5' '--user-approved'"));
   });
 
   it("keeps a failing command's output, redacted, and still removes the run folder", async () => {
@@ -559,8 +559,9 @@ describe("what the user is asked about a host tool call", () => {
       args: `Costs 5. ${"x".repeat(3000)}`,
       options: { samples: 2, "max-coins": 400 },
     });
-    assert.deepEqual(Object.keys(shown).slice(0, 2), ["command", "max-coins"]);
-    assert.equal(shown["max-coins"], "400");
+    // The agent used the flag's old name: the card names the ceiling as the CLI now does, in credits.
+    assert.deepEqual(Object.keys(shown).slice(0, 2), ["command", "max-credits"]);
+    assert.equal(shown["max-credits"], "400");
   });
   it("names a package with the version Studio pins, whatever the agent adds", () => {
     assert.deepEqual(

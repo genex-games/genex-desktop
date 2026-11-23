@@ -61,9 +61,15 @@ import {
   type FolderOwnEditorSync,
   GrantAccess,
 } from "./windows-folder-ace.ts";
+import { LOGON_TYPE_NOT_GRANTED_HRESULT, SANDBOX_ACCOUNT, sandboxLogonAllowed } from "./windows-logon-right.ts";
 import { logonServiceStartType, ServiceStartType } from "./windows-logon-service.ts";
 import { atomicWriteText } from "./fsx.ts";
-import { SandboxLaunchCode, SandboxLaunchError } from "./sandbox-unavailable.ts";
+import {
+  SandboxLaunchCode,
+  SandboxLaunchError,
+  SandboxUnavailableError,
+  windowsNeedProblem,
+} from "./sandbox-unavailable.ts";
 
 const win = path.win32;
 const run = promisify(execFile);
@@ -234,6 +240,10 @@ const MESSAGE = {
     "own entries: Windows PowerShell could not run Genex's batch (an antivirus or a policy may block it)",
   OtherRelease: (installed: number | undefined, needed: number) =>
     `The sandbox was set up by another release (setup version ${installed ?? "unknown"}; this one needs ${needed}).`,
+  /** Windows refused the sandbox user's logon type: the log keeps srt-win's words, which blame the service. */
+  LogonTypeRefused: (error: unknown) =>
+    `egress check: Windows does not let the sandbox user sign in on this PC (no "Allow log on locally"): ${errorMessage(error)}`,
+  LogonRightMissing: `Windows does not let Genex's sandbox user (${SANDBOX_ACCOUNT}) sign in on this PC: a policy or a security program took its "Allow log on locally" right.`,
   LogonServiceDisabled:
     "The Secondary Logon service (seclogon) is disabled, so Windows refuses to start commands as the sandbox user.",
 } as const;
@@ -1515,6 +1525,8 @@ export interface WindowsSessionDeps {
   logonRetryMs?: readonly number[];
   /** Told of each write root the session left out because Windows refused its grant ({@link refusedWriteRoot}), once a launch. */
   refused?: (root: string) => void;
+  /** Whether Set up already gave the sandbox user its sign-in right this run (default {@link sandboxLogonAllowed}). */
+  logonAllowed?: () => boolean;
 }
 
 /** How many grants and denies a config hands srt-win. */
@@ -1534,16 +1546,30 @@ function entryKey(entry: OwnAclEntry): string {
   return [pathKey(entry.path), entry.deny, entry.guard, entry.grant ?? ""].join("|");
 }
 
+/** Windows' HRESULT for a start as the sandbox user it refused at the egress check; null for any other failure. */
+function logonRefusalHresult(error: unknown): number | null {
+  if (typeof error !== "object" || error === null) return null;
+  if (!("code" in error) || error.code !== WFP_VERIFY_UNPARSEABLE) return null;
+  const hresult = LOGON_REFUSAL.exec(errorMessage(error))?.[1];
+  return hresult === undefined ? null : Number(hresult);
+}
+
 /**
  * Whether Windows refused to start srt-win as the sandbox user for the egress check
  * (CreateProcessWithLogonW, ERROR_ACCESS_DENIED): that user could not open the program then. A
  * disabled Secondary Logon service answers another HRESULT, which Set up handles.
  */
 export function sandboxUserRefused(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  if (!("code" in error) || error.code !== WFP_VERIFY_UNPARSEABLE) return false;
-  const hresult = LOGON_REFUSAL.exec(errorMessage(error))?.[1];
-  return hresult !== undefined && Number(hresult) === ACCESS_DENIED_HRESULT;
+  return logonRefusalHresult(error) === ACCESS_DENIED_HRESULT;
+}
+
+/**
+ * Whether Windows refused the sandbox user's logon type at the egress check
+ * (ERROR_LOGON_TYPE_NOT_GRANTED): the account may not sign in locally on this PC, which Set up
+ * allows (`windows-logon-right.ts`). srt-win's words blame the Secondary Logon service, which runs.
+ */
+export function sandboxLogonTypeRefused(error: unknown): boolean {
+  return logonRefusalHresult(error) === LOGON_TYPE_NOT_GRANTED_HRESULT;
 }
 
 /** `p` without the extended-length prefix srt-win names paths with: `\\?\D:\x` is `D:\x`, `\\?\UNC\s\x` is `\\s\x`. */
@@ -1852,9 +1878,23 @@ export class WindowsSandboxSession {
     if (srtWinTimedOut(error)) {
       return new SandboxLaunchError(SandboxLaunchCode.SrtWinTimeout, errorMessage(error), { cause: error });
     }
+    if (sandboxLogonTypeRefused(error)) return this.#logonTypeFailure(error);
     if (!sandboxUserRefused(error)) return error;
     this.#deps.log?.(MESSAGE.LogonRefusedAtLast(error));
     return new SandboxLaunchError(SandboxLaunchCode.SandboxUserRefused, undefined, { cause: error });
+  }
+
+  /**
+   * A sandbox user Windows will not sign in: the setup problem whose Set up gives it the right, or,
+   * once Set up has this run, plain words for the policy that still holds it out.
+   */
+  #logonTypeFailure(error: unknown): Error {
+    this.#deps.log?.(MESSAGE.LogonTypeRefused(error));
+    if ((this.#deps.logonAllowed ?? sandboxLogonAllowed)()) {
+      return new SandboxLaunchError(SandboxLaunchCode.LogonRightRefused, undefined, { cause: error });
+    }
+    const problem = windowsNeedProblem(WindowsSetupNeed.LogonRight, [MESSAGE.LogonRightMissing]);
+    return new SandboxUnavailableError(problem);
   }
 
   /** Run `step`, logging how long it took whether it ends or throws. */

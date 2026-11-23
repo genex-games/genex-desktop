@@ -2,7 +2,7 @@
  * Starting a run: the refusals a run meets before it is registered, the loop that conducts it, and
  * the record a run that died still owes its chat.
  */
-import { type FactsOfDescriptor, kindUnknown, startWebIfPending } from "./folder-facts.ts";
+import { type FactsOfDescriptor, startWebIfPending } from "./folder-facts.ts";
 import { leadsInPlace } from "./engine-seat.ts";
 import { OPEN_LOOP_REFUSAL } from "./open-loop-prompts.ts";
 import { EngineId, withRoles } from "./model-roles.ts";
@@ -15,6 +15,7 @@ import { EventKind, ExecutionStatus, RunEvent, writeRunArtifact } from "./run-ev
 import { type ActiveRun, RunnerKind, type RunStart, type Studio, heldRuns } from "./studio-state.ts";
 import { resumeStopped } from "./after-loop-run.ts";
 import { forgetProviderLosses } from "./provider-loss.ts";
+import { GenexLine, genexLineRecord } from "./genex-lines.ts";
 import type { AnyRecord, ForwardedCall, HarnessCtx, HarnessEvent, Host, HostCall, Run } from "../types/harness.d.ts";
 import type { EngineDescriptor, GameProject } from "../types/host-api.d.ts";
 
@@ -45,7 +46,6 @@ const MESSAGE = {
     `A build is already running for **${project}** — nothing new was started. Ask here about the one that is running, or stop it first.`,
   engineExport: (name: string | undefined) =>
     `${name} was exported from a game engine, so the studio cannot edit it — it can only open it, play it and take screenshots. Open the folder with the project's own scenes and scripts, and start the build there.`,
-  stoppedBeforeStart: "Stopped before the build started — nothing was built.",
   olderBuild:
     "This build was paused by an earlier version of Genex and can't go on in this one, so it is closed as it stood: what it built is kept. Ask here for what you want next.",
 } as const;
@@ -402,7 +402,7 @@ async function startReservedRun(
   if (studio.cancels.has(threadId)) {
     // The chat was promised a build: it is told that none started.
     await host
-      .call(HostMethod.EventsAppend, { threadId, batch: [assistantSays(MESSAGE.stoppedBeforeStart)] })
+      .call(HostMethod.EventsAppend, { threadId, batch: [genexLineRecord(GenexLine.StoppedBeforeBuild)] })
       .catch(() => {});
     return;
   }
@@ -491,8 +491,8 @@ function resumedRoute(journal: AnyRecord | null, runId: string): Route | null {
 /**
  * The run's route (`Route`): a resumed run by its own journal (`resumedRoute`). A journal the host
  * can't read, or a game list it can't give, refuses the run with words (a resume stays paused). A
- * game with no kind yet takes the web starter before the Loop starts, but never under a paused Loop,
- * nor a resumed one on a folder of a kind Genex can't name.
+ * game with no kind yet takes the web starter before the Loop starts, but never under a paused Loop;
+ * a folder of a kind Genex can't name takes none and starts as it is.
  */
 async function routeOf(host: Host, run: Run, { threadId, resume }: { threadId: string; resume: boolean }) {
   let journal: AnyRecord | null = null;
@@ -505,9 +505,7 @@ async function routeOf(host: Host, run: Run, { threadId, resume }: { threadId: s
   if (resumed) return resumed;
   const games = await listedGames(host);
   if (!games) return { refusal: OPEN_LOOP_REFUSAL.gamesUnreadable };
-  const game = games.find((listed) => listed.name === run.project);
-  const unknownOnResume = resume && game !== undefined && kindUnknown(game);
-  if (!journal && !unknownOnResume) await startWebIfPending(host, run.project, games);
+  if (!journal) await startWebIfPending(host, run.project, games);
   return { refusal: null };
 }
 

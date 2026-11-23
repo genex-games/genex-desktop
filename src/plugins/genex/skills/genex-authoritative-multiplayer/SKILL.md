@@ -88,7 +88,7 @@ as listed, for example
 `genex__publish {"operation":"gallery"}`; both carry the room module (above). Other commands map
 onto Studio tools as the `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/SKILL.md v1.43.6 sha256 eb1a5e376f1bc1eec23ca59e0d9fa5c9c3f8d5640fa4a21ac56df1e272adbfc3 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/SKILL.md v1.45.2 sha256 4df517a65e24c3011cc106a7993ebaaccdb8a9376a0b86f713c3c7f7187f67bb -->
 ---
 name: genex-authoritative-multiplayer
 description: Server-authoritative multiplayer for Genex games — the game's own room module runs on Genex's servers, players only send input, and the server decides every move and hit (lag-compensated). Use for competitive play where cheating matters: ranked PvP, arenas, shooters (first-person, hitscan or dodgeable projectiles), car football, "so nobody can cheat". Casual co-op and hangouts use genex-threejs-multiplayer instead. Load before writing the room module or any networking code.
@@ -154,8 +154,8 @@ and no shared objects — the server owns all state.
    from `session.entities()`.
 4. **The packages**: `npm i @genex-ai/multiplayer@latest @genex-ai/embed-sdk@latest` and
    `npm i -D @genex-ai/authority-dev@latest`. Everything this skill teaches is in
-   `@genex-ai/multiplayer` 0.17.19, `@genex-ai/embed-sdk` 0.36.0 and `@genex-ai/authority-dev`
-   0.1.10; a game on older ones lacks what came after them. Projectiles need `@genex-ai/multiplayer`
+   `@genex-ai/multiplayer` 0.17.21, `@genex-ai/embed-sdk` 0.38.0 and `@genex-ai/authority-dev`
+   0.1.11; a game on older ones lacks what came after them. Projectiles need `@genex-ai/multiplayer`
    0.17.4 or newer; `home` and `getAuthorityHome` need 0.17.12 (and embed SDK 0.36.0); `region` and
    `rttMs` need 0.17.13; predicted hits and a render delay that follows the link need 0.17.14; the
    update rate (60 a second by default) needs 0.17.15; bodies as targets (`height`, `duckHeight`) and

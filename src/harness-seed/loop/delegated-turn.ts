@@ -37,6 +37,7 @@ import {
   waitReady,
 } from "./hooks.ts";
 import { momentLines } from "./moment-lines.ts";
+import { GenexLine, sayGenexLine } from "./genex-lines.ts";
 import { EngineFailure, StopReason } from "./outage.ts";
 import { HostMethod } from "./host-methods.ts";
 import { EventKind, RunEvent } from "./run-events.ts";
@@ -98,7 +99,6 @@ const MESSAGE = {
     `${outageWords(engine, kind, detail)} — continuing on ${next}.`,
   notSwitched: (engine: string, kind: string, detail: string | undefined) =>
     `${engine} is ${kind === EngineFailure.RateLimit ? "throttled right now" : "unreachable"} (${detail ?? kind}). I didn't switch to another model — wait a bit and resend, or pick a different engine.`,
-  stopped: "Stopped. Finished edits are preserved; send a message to continue.",
   stoppedBeforeWork: "stopped before it started",
   launchedAnyway: (ending: string) =>
     `The session ended early (${ending}) after recording the launch — starting the build anyway.`,
@@ -275,7 +275,7 @@ async function afterDelegation(ctx: HarnessCtx, seat: Seat, delegation: Delegati
   // Stop must not launch a recorded build or start a new preview health pass.
   if (result.stopReason === StopReason.Stopped) {
     ctx.notify("game.changed", { project: handoff.project });
-    await sayInTurn(ctx, turnId, MESSAGE.stopped);
+    await sayGenexLine(ctx, turnId, GenexLine.Stopped);
     return { stopped: TurnStop.Aborted, round: 0, engine };
   }
   // Before anything the turn recorded starts (a build, a run), and before the folder is compared.
@@ -617,7 +617,7 @@ async function waitUntilReady(ctx: HarnessCtx, options: DelegatedOptions, handof
   await clock.sleep(READY_POLL_MS);
   const ready = await waitReady(ctx, handoff.descriptor, scope, clock, until);
   if (ctx.cancelled) {
-    await sayInTurn(ctx, options.turnId, READY_WORDS.stopped);
+    await sayGenexLine(ctx, options.turnId, GenexLine.StoppedWaiting);
     return { wait: ReadyWait.Stopped };
   }
   if (ready.ok) return READY;
@@ -673,7 +673,7 @@ async function legInSession(
   await recordDelegateResult(ctx, turnId, callId, result);
   await bookmarkSession(ctx, sessionOptions(seat), handoff.project, result);
   if (result.stopReason === StopReason.Stopped) {
-    await sayInTurn(ctx, turnId, MESSAGE.stopped);
+    await sayGenexLine(ctx, turnId, GenexLine.Stopped);
     return { outcome: { stopped: TurnStop.Aborted, round: 0, engine }, result };
   }
   // The leg that built in the new kind's app is the one most likely to leave its work there unsaved.
@@ -1082,6 +1082,11 @@ async function handleDelegateFailure(
   if (options.runId && !canFallBack(kind, fallbacks)) throw err;
   if (kind === EngineFailure.UsageLimit) {
     await sayInTurn(ctx, turnId, MESSAGE.outOfUsage(engine, err?.message));
+    return { stopped: TurnStop.EngineLimited, round: 0, engine };
+  }
+  // A local session's model too big for this computer's free memory: a resend meets the same wall.
+  if (kind === EngineFailure.OutOfMemory) {
+    await sayGenexLine(ctx, turnId, GenexLine.ModelOutOfMemory);
     return { stopped: TurnStop.EngineLimited, round: 0, engine };
   }
   if (!canFallBack(kind, fallbacks)) throw err;

@@ -33,10 +33,12 @@ export type CliInstallProblem = (typeof CliInstallProblem)[keyof typeof CliInsta
 
 /**
  * The systems a CLI's vendor publishes no installer for that Genex can run: OpenCode installs on
- * Windows only through a package manager (Chocolatey, Scoop or npm), never a PowerShell script.
+ * Windows only through a package manager (Chocolatey, Scoop or npm), never a PowerShell script,
+ * and Pi installs only through npm on every system.
  */
 const NO_IN_APP_INSTALL: Readonly<Record<string, readonly StudioPlatform[]>> = {
   [EngineId.OpenCode]: [StudioPlatform.Windows],
+  [EngineId.Pi]: Object.values(StudioPlatform),
 } satisfies Partial<Record<CodingProvider, readonly StudioPlatform[]>>;
 
 /** Whether Genex can install `provider` itself on `platform` (`process.platform` spelling); else its guide does. */

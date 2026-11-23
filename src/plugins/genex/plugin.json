@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "genex",
-  "version": "1.16.28",
+  "version": "1.16.34",
   "name": "Genex plugin",
   "publisher": "Genex",
   "description": "3D models, characters, sound and art for your games, made in chat with Genex credits. Coding stays on your own provider.",
@@ -91,7 +91,7 @@
     },
     {
       "name": "cli-paid",
-      "description": "Run a Genex CLI command that spends Nex or credits or changes what this game sells: llm bench (with a whole-number max-coins option), shop set or shop remove on an item in the store (a local draft's go through genex__cli), shop test, items add or items remove. A new item's draft is genex__cli shop add, never this tool. shop set takes the item's id in args and genex__cli shop add's options plus rename; the answer is the item's draft. items add with an item id in args adds another creator's item to this game and Studio writes its genex-items/<id>/ folder (item.json and the author's files) into the game for you to integrate; read the genex-items skill first. The user approves each call, so it can wait several minutes for the answer; never repeat a declined or expired request unless the user asks again. Parameters are as for genex__cli. The commands need a published Genex draft first.",
+      "description": "Run a Genex CLI command that spends Nex or credits or changes what this game sells: llm bench (it spends the user's own credits, never Nex: its whole-number max-credits option is the most one attempt may spend, and its schema option names the game's .json answer-shape file, at most 16 KB, which Studio copies in), shop set or shop remove on an item in the store (a local draft's go through genex__cli), shop test, items add or items remove. A new item's draft is genex__cli shop add, never this tool. shop set takes the item's id in args and genex__cli shop add's options plus rename; the answer is the item's draft. items add with an item id in args adds another creator's item to this game and Studio writes its genex-items/<id>/ folder (item.json and the author's files) into the game for you to integrate; read the genex-items skill first. The user approves each call, so it can wait several minutes for the answer; never repeat a declined or expired request unless the user asks again. Parameters are as for genex__cli. The commands need a published Genex draft first.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -246,14 +246,14 @@
     {
       "name": "genex-llm-in-games",
       "engines": ["web"],
-      "summary": "Calling a language model from a running game that the player pays for and approves on Genex: the call modes, benchmarking the price with genex__cli-paid, and its refusals.",
+      "summary": "Building AI opponents, teammates, NPCs, a game master or a judge that call a language model from the running game, paid for and approved by the player on Genex: one call or a standing budget, judge() for decisions, streaming, benchmarking the ceiling with genex__cli-paid, and its refusals.",
       "file": "skills/genex-llm-in-games/SKILL.md",
-      "references": ["skills/genex-llm-in-games/references/pricing.md"]
+      "references": ["skills/genex-llm-in-games/references/pricing.md", "skills/genex-llm-in-games/references/voice.md"]
     },
     {
       "name": "genex-tool-llm",
       "engines": ["web"],
-      "summary": "A language model running while someone plays the finished game: on Genex a platform feature the player pays for and approves, never a key on the author's account.",
+      "summary": "A language model that runs while someone plays, read first: AI opponents, teammates or agents, NPCs that talk, plan or remember, factions or leaders that negotiate, an AI game master or narrator, a referee or judge of free-form input, quests or items made per save. The player pays, never the author.",
       "file": "skills/genex-tool-llm/SKILL.md"
     },
     {

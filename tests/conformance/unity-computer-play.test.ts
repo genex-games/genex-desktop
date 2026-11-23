@@ -284,7 +284,6 @@ describe("Unity computer play", () => {
     assert.deepEqual(captured.body.parameters, {
       ...ENGINE_PLAY_VIEW,
       source: "screen",
-      include_inline_image: true,
     });
   });
 

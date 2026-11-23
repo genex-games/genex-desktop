@@ -41,7 +41,7 @@ import {
 } from "./codex-app-server.ts";
 import { stopChild } from "../process-tree.ts";
 import { relativizeWorkspace } from "../paths.ts";
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathExists } from "../fsx.ts";
@@ -1780,11 +1780,18 @@ async function writeStills(
   return paths;
 }
 
-/** A builder's stills, in a folder of their own that the caller removes afterwards. */
-export async function writeDelegateStills(all: DelegateImage[]): Promise<{ dir: string | null; paths: string[] }> {
+/**
+ * A builder's stills, in a folder of their own that the caller removes afterwards: under `root`
+ * (a folder the session's sandbox reads), or the temp folder.
+ */
+export async function writeDelegateStills(
+  all: DelegateImage[],
+  root: string = os.tmpdir(),
+): Promise<{ dir: string | null; paths: string[] }> {
   const images = all.filter((image) => image?.data);
   if (!images.length) return { dir: null, paths: [] };
-  const dir = await mkdtemp(path.join(os.tmpdir(), "studio-stills-"));
+  await mkdir(root, { recursive: true });
+  const dir = await mkdtemp(path.join(root, "studio-stills-"));
   const paths = await writeStills(
     dir,
     images,

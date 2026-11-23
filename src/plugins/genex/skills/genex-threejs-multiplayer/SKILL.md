@@ -91,7 +91,7 @@ listed: `skills/genex-threejs-multiplayer/references/realtime-patterns.md`, for 
 built from the SDK calls the card shows. Commands map onto Studio tools as the `genex` skill
 describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-threejs-multiplayer/SKILL.md v1.43.6 sha256 b04bf271ca8269ca4ee3d0fff7c60bc3e3a56f9d0386bd167d6b644fed89bd26 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-threejs-multiplayer/SKILL.md v1.45.2 sha256 b04bf271ca8269ca4ee3d0fff7c60bc3e3a56f9d0386bd167d6b644fed89bd26 -->
 ---
 name: genex-threejs-multiplayer
 description: Realtime multiplayer for Genex Three.js games with `@genex-ai/multiplayer` — a relay whose SDK auto-smooths remote players AND shared objects (you do NOT write interpolation). Use whenever 2+ players share a world: movement sync, a shared ball/NPC via objects + ownership, host-authoritative scores/waves, shots/emotes, presence.

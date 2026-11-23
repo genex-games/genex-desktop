@@ -8,6 +8,7 @@ import { flushSync } from "react-dom";
 import type { ReactNode } from "react";
 import { MorningCard } from "../../src/renderer/panels/MorningCard.tsx";
 import { TranscriptEntry, type TranscriptContext } from "../../src/renderer/chat/TranscriptEntry.tsx";
+import { fixedRowFact } from "../../src/renderer/chat/row-facts.ts";
 import { EntryAction, EntryKind } from "../../src/renderer/chat-entries.ts";
 import { Onboarding } from "../../src/renderer/onboarding/Onboarding.tsx";
 import { EngineStatusCode } from "../../src/shared/engine-descriptor.ts";
@@ -81,8 +82,7 @@ async function morningCard() {
 
 async function resumeLine() {
   const context: TranscriptContext = {
-    activeRunId: null,
-    pausedRunId: "run_line",
+    runs: fixedRowFact({ activeRunId: null, pausedRunId: "run_line" }),
     project: "racer",
     threadId: "t-racer",
     images: new Map(),
@@ -105,7 +105,7 @@ async function resumeLine() {
   document.querySelector<HTMLElement>('[data-run-resume="run_line"]')?.click();
   await settle(2);
   const calls = fake.callsOf("resumeAutopilot");
-  render(<TranscriptEntry entry={entry} context={{ ...context, activeRunId: "run_other" }} />);
+  render(<TranscriptEntry entry={entry} context={{ ...context, runs: fixedRowFact({ activeRunId: "run_other", pausedRunId: "run_line" }) }} />);
   await settle();
   return { offered, calls, whileRunning: resumes() };
 }

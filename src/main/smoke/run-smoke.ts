@@ -752,7 +752,7 @@ async function checkModelRoles(buildSmoke: BuildSmoke): Promise<void> {
     models: async () => [
       {
         id: "bonsai-2:27b-pq2_0",
-        label: "Bonsai 2 27B · PQ2_0",
+        label: "Bonsai 2 27B",
         contextWindow: 102400,
         maxTokens: 4096,
         supportsTools: true,
@@ -781,22 +781,22 @@ async function checkModelRoles(buildSmoke: BuildSmoke): Promise<void> {
   await wc.executeJavaScript(`document.querySelector('nav [aria-label="Settings"]')?.click()`);
   await waitFor(`!!document.querySelector('#settings-tab-local')`);
   await wc.executeJavaScript(`document.querySelector('#settings-tab-local')?.click()`);
-  // Each row names the model and its variant apart ("Bonsai 2 27B", "PQ2_0").
+  // Each row names the model by its name alone ("Bonsai 2 27B", "Bonsai 2 27B Lite"), never its tag.
   check(
-    "Bonsai setup offers installed PQ2_0 and downloadable PTQ1_0",
+    "Bonsai setup offers installed Bonsai 2 27B and downloadable Bonsai 2 27B Lite",
     await waitFor(
-      `(()=>{const d=document.querySelector('[data-testid="settings-dialog"]');const row=v=>Array.from(d?.querySelectorAll('span')??[]).find(e=>e.textContent===v)?.closest('.border-b');return !!row('PQ2_0')?.textContent.includes('Installed')&&!!document.querySelector('button[aria-label="Download Bonsai 2 27B PTQ1_0"]');})()`,
+      `(()=>{const d=document.querySelector('[data-testid="settings-dialog"]');const row=v=>Array.from(d?.querySelectorAll('span')??[]).find(e=>e.textContent===v)?.closest('.border-b');return !!row('Bonsai 2 27B')?.textContent.includes('Installed')&&!!document.querySelector('button[aria-label="Download Bonsai 2 27B Lite"]');})()`,
     ),
   );
   const setupShot = flagValue(StudioFlag.BuildShot);
   if (setupShot) {
     await wc.executeJavaScript(
-      `Array.from(document.querySelectorAll('[data-testid="settings-dialog"] span')).find(e=>e.textContent==='PQ2_0')?.scrollIntoView({block:'center'})`,
+      `Array.from(document.querySelectorAll('[data-testid="settings-dialog"] span')).find(e=>e.textContent==='Bonsai 2 27B')?.scrollIntoView({block:'center'})`,
     );
     await sleep(300);
     await fs.writeFile(setupShot.replace(/\.png$/, "-downloads.png"), (await wc.capturePage()).toPNG());
   }
-  await wc.executeJavaScript(`document.querySelector('button[aria-label="Download Bonsai 2 27B PTQ1_0"]')?.click()`);
+  await wc.executeJavaScript(`document.querySelector('button[aria-label="Download Bonsai 2 27B Lite"]')?.click()`);
   check(
     "model download rejection clears progress and displays its error",
     await waitFor(
@@ -1852,7 +1852,7 @@ async function checkFollowRounds(buildSmoke: BuildSmoke): Promise<FollowRun> {
     await waitFor(`${working("step:fish:2")}&&${working("step:water:2")}`),
   );
   await wc.executeJavaScript(`document.querySelector('[data-graph-node="step:water:1"]')?.click()`);
-  const waterCard = `!!document.querySelector('[data-builds-list] [data-graph-node="step:water:1"][aria-expanded="true"] + [data-graph-panel="step:water:1"]')`;
+  const waterCard = `!!document.querySelector('[data-builds-list] [data-graph-node="step:water:1"]:has(> button[aria-expanded="true"]) + [data-graph-panel="step:water:1"]')`;
   check("selecting a row opens its card in place, under the row's own header", await waitFor(waterCard));
   await followEvent(CustomEvent.FacetBuildStarted, { facetId: "water", facetTitle: "water", iteration: 3 });
   pushUiEvent({ type: UiEvent.AutopilotFacet, payload: { runId: followRun } });
@@ -1868,7 +1868,7 @@ async function checkFollowRounds(buildSmoke: BuildSmoke): Promise<FollowRun> {
   check(
     "Escape closes the open card back into its row",
     await waitFor(
-      `!document.querySelector('[data-graph-panel]')&&!!document.querySelector('[data-graph-node="step:water:1"][aria-expanded="false"]')`,
+      `!document.querySelector('[data-graph-panel]')&&!!document.querySelector('[data-graph-node="step:water:1"] > button[aria-expanded="false"]')`,
     ),
   );
   return { followRun, followEvent };
@@ -2242,10 +2242,10 @@ async function checkPartRows(buildSmoke: BuildSmoke): Promise<void> {
     ),
   );
   wc.focus();
-  await wc.executeJavaScript(`document.querySelector('[data-graph-node="step:task-1:1"]')?.focus()`);
+  await wc.executeJavaScript(`document.querySelector('[data-graph-node="step:task-1:1"] > button')?.focus()`);
   check(
     "a step's row accepts keyboard focus",
-    await waitFor(`document.activeElement===document.querySelector('[data-graph-node="step:task-1:1"]')`),
+    await waitFor(`document.activeElement===document.querySelector('[data-graph-node="step:task-1:1"] > button')`),
   );
   wc.sendInputEvent({ type: "keyDown", keyCode: "Return" });
   wc.sendInputEvent({ type: "char", keyCode: "\r" });

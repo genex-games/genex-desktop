@@ -103,6 +103,7 @@ import {
   snapshotWords,
   soundsLikeTrouble,
   firstSentence,
+  GENEX_LINE_WORDS,
   TRANSCRIPT_WORDS,
   WORKER_LINE_WORDS,
   toolActivityWords,
@@ -892,14 +893,28 @@ function readMessages(chat: ChatDraft, eventId: string, data: Extract<EventData,
       chat.entries.push(bubble);
       placeTagCard(chat, chat.tagged.queueIds.get(eventId), bubble);
     } else if (message.role === "assistant") {
-      readReply(chat, messageId, message, data.usage?.model);
+      readReply(chat, messageId, message, { model: data.usage?.model, line: data.genex_line });
     } else if (message.role === "system") {
       chat.entries.push(systemMessage(messageId, message.content));
     }
   }
 }
 
-function readReply(chat: ChatDraft, messageId: string, message: Message, model: string | undefined): void {
+/** What a reply's record says besides its words: the model that wrote it, or the Genex line it is. */
+interface ReplyOrigin {
+  model: string | undefined;
+  line: string | undefined;
+}
+
+/** A Genex line in the app's words; null for a code this app doesn't know (a newer harness's). */
+function genexLineWords(line: string | undefined): string | null {
+  const words: Readonly<Record<string, () => string>> = GENEX_LINE_WORDS;
+  const say = line && Object.hasOwn(words, line) ? words[line] : undefined;
+  return say ? say() : null;
+}
+
+function readReply(chat: ChatDraft, messageId: string, message: Message, origin: ReplyOrigin): void {
+  const { model, line } = origin;
   // A local thinking model's reasoning rides the same event; show it collapsed.
   const reasoning = (message as { reasoning?: string }).reasoning;
   if (reasoning?.trim()) chat.entries.push({ id: `${messageId}-r`, kind: EntryKind.Thinking, text: reasoning });
@@ -907,7 +922,7 @@ function readReply(chat: ChatDraft, messageId: string, message: Message, model: 
   chat.entries.push({
     id: takeContractorBubble(chat.entries, message.content) ?? messageId,
     kind: EntryKind.Assistant,
-    text: message.content,
+    text: genexLineWords(line) ?? message.content,
     ...(model ? { meta: model } : {}),
   });
 }

@@ -544,6 +544,36 @@ export interface Engine {
 /** How many characters of an HTTP error body an engine error quotes. */
 const HTTP_BODY_EXCERPT_CHARS = 200;
 
+/**
+ * What a model server on the person's own computer says when the model does not fit its memory:
+ * Ollama's load refusal ("model requires more system memory … than is available"), Apple's Metal
+ * ("Insufficient Memory", `kIOGPUCommandBufferCallbackErrorOutOfMemory`), CUDA, ROCm and Vulkan
+ * allocations that failed, and llama.cpp's own ("failed to allocate").
+ */
+const OUT_OF_MEMORY =
+  /insufficient memory|out of (?:device |GPU |video )?memory|OutOfMemory|OutOfDeviceMemory|requires more (?:system |video |GPU )?memory|more (?:system |video |GPU )?memory than (?:is )?available|(?:unable|failed) to allocate (?:[\w-]+ ){0,2}(?:buffers?|memory)|(?:cuda|hip)Malloc failed/i;
+
+/**
+ * A local model that ran out of the computer's memory, or null when `said` names another failure.
+ * Only engines that run the model on the person's own hardware ask: a hosted provider's "out of
+ * memory" is its own outage, and a wait does fix that.
+ */
+export function outOfMemoryFailure(engine: string, said: string, model?: string): EngineError | null {
+  if (!OUT_OF_MEMORY.test(said)) return null;
+  const who = model ? `${model} needs` : "the model needs";
+  const detail = said.slice(0, HTTP_BODY_EXCERPT_CHARS);
+  return new EngineError(
+    EngineFailureKind.OutOfMemory,
+    engine,
+    `${who} more memory than this computer has free (${detail}) — sending again won't fit it; pick a smaller model or close other apps`,
+  );
+}
+
+/** A local model server's HTTP failure: its model out of memory, else as any model server's. */
+export function classifyLocalFailure(engine: string, status: number, body: string, model?: string): EngineError {
+  return outOfMemoryFailure(engine, body, model) ?? classifyHttpFailure(engine, status, body);
+}
+
 /** An HTTP failure from a model server, as the engine error the run policy reacts to. */
 export function classifyHttpFailure(engine: string, status: number, body: string): EngineError {
   const excerpt = body.slice(0, HTTP_BODY_EXCERPT_CHARS);

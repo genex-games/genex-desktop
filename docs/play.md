@@ -54,7 +54,7 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
 - Games, Tools and Assets, each with tabs and search (the sidebar's Assets row is hidden until its
   rework, [#654](https://github.com/genex-games/genex-desktop/issues/654)); Recent once something
   was played (opened in the viewer, a native-only game's page shown however it was reached, or a
-  native app launched). A
+  native app launched), each row a small rounded-square cover and the title. A
   Recent row takes the newest cover any card or page shows for its game; one still without a cover,
   or whose cover no longer loads, reads its game's page once a window. A game with no cover shows a
   still wire floor (`NoCover.tsx`) on its row and card. Top creators (the last 30 days) above
@@ -79,6 +79,17 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   idle moment, staggered, only while half in view and the window shows (none under the viewer);
   out of view for 10 s a clip lets its decoder go. One pause after the tabs stops every clip and is
   remembered; Reduce Motion, a failed clip or a refused play stops them for the session.
+- A read that fails is tried again by itself, so a network not up yet as Genex starts, or genex.games
+  restarting, never leaves Play empty until a press. Main reads a GET again after 1 s and 3 s when its
+  connection fails or the edge answers 502, 503, 504, 52x or 530 (never a write, never after a
+  timeout, never while the computer is offline, and never the store's reads, which a purchase's
+  `STORE_SHEET_OPEN_MS` bounds) and logs each failed read in `studio.log` (`genex api <route>: …`). A tab's games, a
+  game's page, a profile, and the Assets catalog or library that still failed are read again after
+  3 s, 10 s, 30 s and then each minute (never on the timer while offline), and at once when the Mac
+  is back online or Genex's window comes forward (`useTriesAgain` in `renderer/ui/use-online.ts`).
+  Until its first try again also failed (`QUIET_TRIES`, about 10 s), the failure stays out of sight
+  and the screen shows it loading; then "Couldn't load" and Try again show. Offline, the offline
+  notice shows at once.
 - A card's ⋯ (on the cover's corner while hovered or focused, or a right-click on the card) is
   genex.games' card menu (`src/renderer/play/card-menu/`). The game's owner gets Copy link,
   remixing off or on, Rename, Change link, Change cover, Unpublish and Delete game; an account `/api/me` names
@@ -200,6 +211,24 @@ Back. genex.games computes every number: Studio asks, checks what came back, and
   beside it, over a kit (`kit/`: tiles, charts, tables, funnels, heatmaps; a missing or unknown
   value is a dash, never a zero; days are UTC, instants the viewer's own time). The period switch is
   shared with Stats (`PeriodSwitch.tsx`). Styles are `renderer/styles/game-analytics*.css`.
+- **Selectors.** Entry: a game's row in `[data-stats-table]` on the Stats page, signed in to a
+  fixture account (`STUDIO_FIXTURE_GENEX_ACCOUNT=1`; `quiet`: games silent, `fresh`: one young
+  game); its own games only. `[data-game-analytics-open="<slug>"]` (the row's title) →
+  `[data-game-analytics-page="<tab>"]`;
+  `[data-game-analytics-tab="overview|acquisition|retention|engagement|events|revenue|installs|links|sdk"]`
+  (installs only with an app build), `[data-game-analytics-period="7|30|90"]` (none on sdk); the
+  panel
+  `[data-game-analytics-state="signed-out|offline|loading|failed|unavailable|no_game|no_report|ready"]`
+  with `data-refreshing`, `[data-game-analytics-stale]`, `[data-game-analytics-retry]`; tab roots
+  `[data-game-analytics-report="<report>"]`, `[data-game-analytics-links]`,
+  `[data-game-analytics-sdk]`; inside (prefix `data-game-analytics-`): `section`, `tile`, `switch` →
+  `option="<value>"`, `chart`, `table` (`row`, `expand`, `pick`), `funnel`, `bars`, `heatmap`,
+  `cohorts`, each `="<id>"`; links: `link-form` (`link-field`, `link-source`, `link-save`,
+  `link-refused`), `link-remove="<id>"` → `link-confirm`, `link-keep`; funnels: `new-funnel` →
+  `funnel-form` (`field`, `add-step`, `save-funnel`), `funnel-card="<id>"` (`remove-funnel` →
+  `remove-yes`, `remove-keep`); `copy-text="<what>"`. Back returns to Stats; the period is Stats'; a
+  failed re-read keeps the last numbers with the stale line; sdk re-reads every 5 s; replays mask
+  names (`data-analytics-mask`).
 - **The contract** is `shared/game-analytics.ts`: its header says what a player, a play, a visit and
   a source are, and lists the wire; `game-analytics-asks.ts` holds what it leaves open (the options
   each report takes, the limits on what is typed). Usage analytics names the page by its tab, never
@@ -475,10 +504,13 @@ is.
     (`directGenexEnv`: an https origin, nothing after it) and reaches it, and the relays, authority
     servers and fast endpoints its answers name, over the internet (`internetClient`, outbound TCP
     and UDP); there "Genex only" is not enforced.
-  - **What goes through.** Requests and WebSockets go on to their own Genex host over TLS. Relay and
-    authority addresses in JSON answers (relay lists, `authorityUrls`, `authorityRegions`, a seat's
-    `publicAddress`) are rewritten to their local port, so region probes, joins and room sockets
-    come back through the gateway. An authority room names its fast@1 endpoint inside its WebSocket
+  - **What goes through.** Requests and WebSockets go on to their own Genex host over TLS, on the
+    port its address named (443 when none; the API names authority regions on 2053, 2083 and
+    8443). Relay and authority addresses in JSON answers (relay lists, `authorityUrls`,
+    `authorityRegions`, a seat's `publicAddress`) are rewritten to their local port, which replaces
+    the named one, so region probes, joins and room sockets come back through the gateway. Each
+    host and port gets a local port of its own; an address naming a port Cloudflare doesn't proxy
+    HTTPS on is left as it was. An authority room names its fast@1 endpoint inside its WebSocket
     (`__fast`, multiplayer PROTOCOL.md §17.12): the gateway reads the room's frames (never the
     game's), rewrites that url to a datagram port (`gateway-frames.ts`) and drops the compression
     offer so it can. Each game socket on a datagram port gets its own UDP socket to the endpoint, so

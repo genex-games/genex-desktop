@@ -20,6 +20,7 @@ import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { SandboxFolderKind, SandboxProblemCode, WindowsSetupNeed } from "../../src/shared/boot.ts";
 import { launchGameBridge } from "../../src/main/core/game-bridge-target.ts";
 import { openCodeEvents } from "../../src/substrate/engines/opencode.ts";
+import { piEvents } from "../../src/substrate/engines/pi.ts";
 import { HarnessHost } from "../../src/substrate/harness-host.ts";
 import {
   SandboxLaunchCode,
@@ -1787,6 +1788,7 @@ function session(
     walks?: string[];
     walkDelayMs?: number;
     logonRetryMs?: number[];
+    logonAllowed?: () => boolean;
   } = {},
 ) {
   const runtime = fakeSessionRuntime();
@@ -1807,6 +1809,7 @@ function session(
     ...(options.exists ? { exists: options.exists } : {}),
     ...(options.walkDelayMs === undefined ? {} : { walkDelayMs: options.walkDelayMs }),
     ...(options.logonRetryMs ? { logonRetryMs: options.logonRetryMs } : {}),
+    ...(options.logonAllowed ? { logonAllowed: options.logonAllowed } : {}),
     log: (line) => logged.push(line),
     refused: (root) => refused.push(root),
   });
@@ -2071,6 +2074,48 @@ describe("the grant session", () => {
     assert.ok(
       stuck.logged.some((line) => line.includes("0x80070005")),
       "the log keeps srt-win's words",
+    );
+  });
+
+  it("asks Set up for the sandbox user's right to sign in when Windows refuses that logon type", async () => {
+    // Feedback from 0.1.46, a Chinese Windows 11: a policy or a security program took "Allow log on
+    // locally" from the sandbox user. srt-win's own words blame the Secondary Logon service, which ran.
+    const notGranted = refusedLogon("0x80070569", "登录失败: 未授予用户在此计算机上的请求登录类型。");
+    const s = session({ logonRetryMs: [0, 0] });
+    s.runtime.failInitializeWith(notGranted);
+    await assert.rejects(
+      s.session.join({}, { grants: { write: [GAMES], read: [] }, config: BASE_CONFIG }),
+      (error: unknown) => {
+        assert.ok(error instanceof SandboxUnavailableError, String(error));
+        assert.equal(error.problem.code, SandboxProblemCode.NotProvisioned);
+        assert.deepEqual(error.problem.windowsNeeds, [WindowsSetupNeed.LogonRight]);
+        assert.doesNotMatch(error.message, /seclogon|Secondary Logon/, "the service is not what is wrong");
+        return true;
+      },
+    );
+    assert.equal(s.runtime.calls.length, 1, "waiting changes no policy: no second try");
+    assert.ok(
+      s.logged.some((line) => line.includes("0x80070569")),
+      "the log keeps srt-win's words",
+    );
+  });
+
+  it("says a policy holds the sandbox user out once Set up has already allowed its sign-in", async () => {
+    const notGranted = refusedLogon(
+      "0x80070569",
+      "Logon failure: the user has not been granted the requested logon type at this computer.",
+    );
+    const s = session({ logonRetryMs: [0, 0], logonAllowed: () => true });
+    s.runtime.failInitializeWith(notGranted);
+    await assert.rejects(
+      s.session.join({}, { grants: { write: [GAMES], read: [] }, config: BASE_CONFIG }),
+      (error: unknown) => {
+        assert.ok(error instanceof SandboxLaunchError, String(error));
+        assert.equal(error.code, SandboxLaunchCode.LogonRightRefused);
+        assert.match(error.message, /srt-sandbox/, "the account to allow, by name");
+        assert.doesNotMatch(error.message, /seclogon|Secondary Logon|CreateProcessWithLogonW/, "plain words");
+        return true;
+      },
     );
   });
 
@@ -3358,6 +3403,30 @@ describe("ProcessSandbox on Windows", () => {
     const leftovers = (await readdir(w.sandbox.scratchDir)).filter((name) => name.startsWith(".stdin-"));
     assert.deepEqual(leftovers, [], "the stdin file is gone once the CLI has opened it");
     assert.equal(w.session.session.active, 0, "the CLI gave the session back");
+  });
+
+  it("delivers Pi's brief through the stdin file too", async () => {
+    // Pi reads its message from stdin; written down the pipe, it never reached a Windows session.
+    const w = await windowsSandbox();
+    const brief = "Write hello to out.txt\nit's $(echo ran)";
+    const cli = path.join(w.root, "pi.cjs");
+    await writeFile(
+      cli,
+      'process.stdout.write(JSON.stringify({ brief: require("node:fs").readFileSync(0, "utf8") }) + "\\n");\n',
+    );
+    const seen: Array<Record<string, unknown>> = [];
+    const invocation = {
+      argv: [cli.replaceAll("\\", "/")],
+      cwd: w.workspace,
+      prompt: brief,
+      env: {},
+      signal: new AbortController().signal,
+      domains: [],
+    };
+    const node = process.execPath.replaceAll("\\", "/");
+    for await (const event of piEvents(w.sandbox, node, invocation)) seen.push(event);
+    assert.deepEqual(seen, [{ brief }]);
+    assert.equal(w.session.session.active, 0, "Pi gave the session back");
   });
 
   it("drives a Play Protocol game it started, its requests reaching the game through the input relay", async () => {

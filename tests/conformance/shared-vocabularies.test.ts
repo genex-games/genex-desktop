@@ -76,6 +76,7 @@ describe("engines", () => {
       // local ones, and a server the person runs comes last. Flipped (Cursor): a metered one, after Grok Build.
       // Flipped (Genex): Claude Code on Genex credits, metered, after Cursor.
       // Flipped (Antigravity): on a Google AI plan, after Cursor.
+      // Flipped (Pi): metered too, after OpenRouter.
       [
         EngineId.ClaudeCode,
         EngineId.Codex,
@@ -87,6 +88,7 @@ describe("engines", () => {
         EngineId.Antigravity,
         EngineId.Genex,
         EngineId.OpenRouter,
+        EngineId.Pi,
         EngineId.LocalServer,
       ],
     );

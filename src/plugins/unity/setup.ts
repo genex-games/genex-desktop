@@ -7,6 +7,10 @@
  * Setup never writes through a link out of the project, keeps a copy of the manifest in the
  * plugin's storage before its first change, and records what it added, so Undo takes back exactly
  * that line and only while it is still as Genex wrote it: a version the person chose since stays.
+ *
+ * A project that still asks for a version Genex wrote before is moved to the one it asks for now
+ * when Genex next opens it ({@link moveToCurrentPipeline}), since the package renamed its commands
+ * between them; a version the person chose is theirs and stays.
  */
 import { copyFile, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
@@ -20,7 +24,7 @@ import {
 } from "../../substrate/fsx.ts";
 import { containedReal } from "../../substrate/paths.ts";
 import { isUnity6 } from "./editors.ts";
-import { PIPELINE_PACKAGE, PIPELINE_VERSION } from "./pipeline.ts";
+import { PAST_PIPELINE_VERSIONS, PIPELINE_PACKAGE, PIPELINE_VERSION } from "./pipeline.ts";
 
 /** A project's package manifest, relative to the project. */
 const MANIFEST_FILE = "Packages/manifest.json";
@@ -171,4 +175,22 @@ export async function undoSetup(place: SetupPlace): Promise<{ changed: boolean }
   }
   await rm(recordFile(place), { force: true });
   return { changed: ours };
+}
+
+/**
+ * Moves a project from a version of the Pipeline package Genex asked for before to the one it asks
+ * for now, for a project no editor has open: Unity downloads it as the project opens. Any other
+ * version is the person's choice and stays, as does a manifest that can't be read. The record of a
+ * setup follows, so Undo still takes back the line Genex wrote. Answers whether the manifest changed.
+ */
+export async function moveToCurrentPipeline(root: string, place?: { storage: string; game: string }): Promise<boolean> {
+  const manifest = await readManifest(root).catch(() => undefined);
+  const asked = manifest?.dependencies[PIPELINE_PACKAGE];
+  if (!manifest || typeof asked !== "string" || !PAST_PIPELINE_VERSIONS.includes(asked)) return false;
+  await writeManifest(manifest, { ...manifest.dependencies, [PIPELINE_PACKAGE]: PIPELINE_VERSION });
+  const setup = place ? { root, ...place } : undefined;
+  const record = setup ? await readRecord(setup) : undefined;
+  if (setup && record?.version === asked)
+    await atomicWriteJson(recordFile(setup), { ...record, version: PIPELINE_VERSION });
+  return true;
 }

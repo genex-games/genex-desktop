@@ -2,10 +2,11 @@
  * The way out of a native game's sandbox to Genex, and nowhere else. A game from Play may connect
  * only to this gateway's ports on 127.0.0.1 (macOS's sandbox names no host but "localhost"): the
  * first is Genex's API, each other one a relay or an authority server as the API's and their own
- * answers name them. Every request and WebSocket goes on to that one host over TLS; relay and
- * authority addresses in JSON answers (an API's relay and authority lists and regions, a seat
- * reservation's `publicAddress`) are rewritten to their local port, so the game's next connection
- * (a region probe, a join, the room's socket) comes back through the gateway too. An authority
+ * answers name them. Every request and WebSocket goes on to that one host, on the port its address
+ * named (443 when none), over TLS; relay and authority addresses in JSON answers (an API's relay and
+ * authority lists and regions, a seat reservation's `publicAddress`) are rewritten to their local
+ * port, which replaces the named one, so the game's next connection (a region probe, a join, the
+ * room's socket) comes back through the gateway too. An authority
  * room's fast@1 binding, which names its UDP endpoint inside the room's WebSocket, is pointed at
  * one of the gateway's datagram ports (`gateway-frames.ts`), which carry the game's datagrams to
  * that endpoint and back (`gateway-datagrams.ts`). A port with no Genex host behind it, or a host
@@ -36,6 +37,12 @@ const MAX_REQUEST_BYTES = 1024 * 1024;
 const MAX_JSON_BYTES = 4 * 1024 * 1024;
 const LOOPBACK = "127.0.0.1";
 const HTTPS_PORT = 443;
+/**
+ * The ports a relay or authority address may name: the HTTPS ports Cloudflare proxies, which Genex's
+ * servers answer on (the API names its authority regions on 2053, 2083 and 8443). An address naming
+ * any other port is left as it was.
+ */
+const GENEX_TLS_PORTS: ReadonlySet<number> = new Set([HTTPS_PORT, 2053, 2083, 2087, 2096, 8443]);
 /** Headers that belong to one connection, never passed on. */
 const HOP_HEADERS: ReadonlySet<string> = new Set([
   "connection",
@@ -56,9 +63,18 @@ const MESSAGE = {
   Upstream: "Genex didn't answer.",
 } as const;
 
-/** How the gateway reaches a Genex host: TLS on 443, or (tests) plain TCP on a local port. */
-export type Upstream = (host: string) => { host: string; port: number; secure: boolean };
-const genexUpstream: Upstream = (host) => ({ host, port: HTTPS_PORT, secure: true });
+/** How the gateway reaches a Genex host on the port its address named: TLS, or (tests) plain TCP on a local port. */
+export type Upstream = (host: string, port: number) => { host: string; port: number; secure: boolean };
+const genexUpstream: Upstream = (host, port) => ({ host, port, secure: true });
+
+/** A Genex server one local port reaches: its host and the port its address named. */
+interface Address {
+  host: string;
+  port: number;
+}
+
+/** The `Host` header for an address, as a browser sends it: the port only when it isn't 443. */
+const hostHeader = (to: Address) => (to.port === HTTPS_PORT ? to.host : `${to.host}:${to.port}`);
 
 /**
  * One game's gateway: the API's local address, every reserved TCP port and datagram port (its
@@ -119,11 +135,12 @@ interface Pool {
 }
 
 /**
- * Which Genex host each local port reaches: the API's, then relays' and authority servers', each
- * given out from its own pool as an answer first names it; and which ports reach an authority server.
+ * Which Genex server (host and named port) each local port reaches: the API's, then relays' and
+ * authority servers', each given out from its own pool as an answer first names it; and which ports
+ * reach an authority server.
  */
 class PortMap {
-  readonly #hostOf = new Map<number, string>();
+  readonly #addressOf = new Map<number, Address>();
   readonly #portOf = new Map<string, number>();
   readonly #authority = new Set<number>();
   readonly #pools: { relay: Pool; authority: Pool };
@@ -137,45 +154,58 @@ class PortMap {
 
   /** The ports the gateway listens on: the first reaches the API, the rest wait for relays and authority servers. */
   open(apiPort: number, relayPorts: readonly number[], authorityPorts: readonly number[]): void {
-    this.#hostOf.set(apiPort, this.#apiHost);
+    this.#addressOf.set(apiPort, { host: this.#apiHost, port: HTTPS_PORT });
     this.#pools.relay.free.push(...relayPorts);
     this.#pools.authority.free.push(...authorityPorts);
     for (const port of authorityPorts) this.#authority.add(port);
   }
 
-  host(port: number): string | undefined {
-    return this.#hostOf.get(port);
+  /** The Genex server a local port reaches; undefined while it reaches none. */
+  address(port: number): Address | undefined {
+    return this.#addressOf.get(port);
   }
 
   /** Whether `port` reaches an authority server: its WebSocket carries a fast binding. */
   isAuthority(port: number): boolean {
-    return this.#authority.has(port) && this.#hostOf.has(port);
+    return this.#authority.has(port) && this.#addressOf.has(port);
   }
 
-  /** The local port for a relay or authority host, given out now if its pool has one free; undefined for any other host. */
-  portFor(host: string): number | undefined {
-    const known = this.#portOf.get(host);
+  /**
+   * The local port for a relay or authority host on `named` (one of `GENEX_TLS_PORTS`), given out now
+   * if its pool has one free; undefined for any other host or port.
+   */
+  portFor(host: string, named: number): number | undefined {
+    if (!GENEX_TLS_PORTS.has(named)) return undefined;
+    const key = `${host}:${named}`;
+    const known = this.#portOf.get(key);
     if (known !== undefined) return known;
     const pool = [this.#pools.relay, this.#pools.authority].find((one) => one.hosts.test(host));
     const port = pool?.free.shift();
     if (port === undefined) return undefined;
-    this.#portOf.set(host, port);
-    this.#hostOf.set(port, host);
+    this.#portOf.set(key, port);
+    this.#addressOf.set(port, { host, port: named });
     return port;
   }
 }
 
-/** JSON text with each relay and authority address pointed at its local port; one it can't map stays as it was. */
-export function rewriteRelays(text: string, portOf: (host: string) => number | undefined): string {
+/** The port an address named: its own digits, or 443 when it named none. */
+const namedPort = (digits: string | undefined) => (digits === undefined ? HTTPS_PORT : Number(digits));
+
+/**
+ * JSON text with each relay and authority address (`wss://<host>[:<port>]`, a seat's
+ * `<host>[:<port>][/<path>]`) pointed at its local port, which replaces the port it named; one it
+ * can't map stays as it was.
+ */
+export function rewriteRelays(text: string, portOf: (host: string, port: number) => number | undefined): string {
   return text
-    .replace(/wss:\/\/([a-z0-9.-]+)(?![\w.-])/g, (all, host: string) => {
-      const port = portOf(host);
+    .replace(/wss:\/\/([a-z0-9.-]+)(?::(\d{1,5}))?(?![\w.:-])/g, (all, host: string, digits?: string) => {
+      const port = portOf(host, namedPort(digits));
       return port === undefined ? all : `ws://${LOOPBACK}:${port}`;
     })
     .replace(
-      /("publicAddress"\s*:\s*")([a-z0-9.-]+)((?:[:/][^"]*)?")/g,
-      (all, key: string, host: string, rest: string) => {
-        const port = portOf(host);
+      /("publicAddress"\s*:\s*")([a-z0-9.-]+)(?::(\d{1,5}))?((?:\/[^"]*)?")/g,
+      (all, key: string, host: string, digits: string | undefined, rest: string) => {
+        const port = portOf(host, namedPort(digits));
         return port === undefined ? all : `${key}${LOOPBACK}:${port}${rest}`;
       },
     );
@@ -227,18 +257,24 @@ async function answer(upstream: IncomingMessage, res: ServerResponse, ports: Por
     res.writeHead(502).end(MESSAGE.Upstream);
     return;
   }
-  const text = Buffer.from(rewriteRelays(body.toString("utf8"), (host) => ports.portFor(host)));
+  const text = Buffer.from(rewriteRelays(body.toString("utf8"), (host, port) => ports.portFor(host, port)));
   res.writeHead(status, { ...headers, "content-length": String(text.length) }).end(text);
 }
 
-/** One HTTP request to the port's Genex host. */
-async function forward(req: IncomingMessage, res: ServerResponse, host: string, ports: PortMap, upstream: Upstream) {
+/** One HTTP request to the port's Genex server. */
+async function forward(
+  req: IncomingMessage,
+  res: ServerResponse,
+  address: Address,
+  ports: PortMap,
+  upstream: Upstream,
+) {
   const body = await readBody(req, MAX_REQUEST_BYTES);
   if (body === null) {
     res.writeHead(413, { connection: "close" }).end(MESSAGE.TooLarge, () => req.destroy());
     return;
   }
-  const to = upstream(host);
+  const to = upstream(address.host, address.port);
   const send = to.secure ? https.request : http.request;
   const outgoing = send({
     host: to.host,
@@ -246,7 +282,7 @@ async function forward(req: IncomingMessage, res: ServerResponse, host: string, 
     servername: to.secure ? to.host : undefined,
     method: req.method,
     path: req.url ?? "/",
-    headers: { ...forwardHeaders(req.headers, host), "content-length": String(body.length) },
+    headers: { ...forwardHeaders(req.headers, hostHeader(address)), "content-length": String(body.length) },
   });
   outgoing.on("response", (incoming) => void answer(incoming, res, ports).catch(() => res.destroy()));
   outgoing.on("error", () => {
@@ -263,11 +299,18 @@ const AUTHORITY_TUNNEL_DROPPED = [...TUNNEL_DROPPED, "sec-websocket-extensions"]
 /** How a tunnel treats the room's side: as it comes, or (an authority server's) with each fast binding pointed at the gateway. */
 type RoomSide = ((genex: Socket) => NodeJS.ReadableStream) | null;
 
-/** One WebSocket to the port's Genex host: its upgrade sent on as asked, then both ends joined. */
-function tunnel(req: IncomingMessage, client: Socket, head: Buffer, host: string, upstream: Upstream, room: RoomSide) {
-  const to = upstream(host);
+/** One WebSocket to the port's Genex server: its upgrade sent on as asked, then both ends joined. */
+function tunnel(
+  req: IncomingMessage,
+  client: Socket,
+  head: Buffer,
+  address: Address,
+  upstream: Upstream,
+  room: RoomSide,
+) {
+  const to = upstream(address.host, address.port);
   const dropped = room ? AUTHORITY_TUNNEL_DROPPED : TUNNEL_DROPPED;
-  const lines = [`GET ${req.url ?? "/"} HTTP/1.1`, `Host: ${host}`];
+  const lines = [`GET ${req.url ?? "/"} HTTP/1.1`, `Host: ${hostHeader(address)}`];
   for (let i = 0; i + 1 < req.rawHeaders.length; i += 2) {
     const name = req.rawHeaders[i] ?? "";
     if (!dropped.includes(name.toLowerCase())) lines.push(`${name}: ${req.rawHeaders[i + 1] ?? ""}`);
@@ -294,22 +337,22 @@ function tunnel(req: IncomingMessage, client: Socket, head: Buffer, host: string
 /** A server on 127.0.0.1 for one port of the gateway: the Genex host behind it, or a refusal. */
 function portServer(ports: PortMap, upstream: Upstream, fastPortOf: DatagramPortOf) {
   const server = http.createServer((req, res) => {
-    const host = ports.host((req.socket.localPort as number | undefined) ?? 0);
-    if (!host) {
+    const address = ports.address((req.socket.localPort as number | undefined) ?? 0);
+    if (!address) {
       res.writeHead(403).end(MESSAGE.NotGenex);
       return;
     }
-    void forward(req, res, host, ports, upstream).catch(() => res.destroy());
+    void forward(req, res, address, ports, upstream).catch(() => res.destroy());
   });
   server.on("upgrade", (req, client: Socket, head: Buffer) => {
-    const host = ports.host(client.localPort ?? 0);
-    if (!host) {
+    const address = ports.address(client.localPort ?? 0);
+    if (!address) {
       client.end("HTTP/1.1 403 Forbidden\r\n\r\n");
       return;
     }
     const port = client.localPort ?? 0;
     const room: RoomSide = ports.isAuthority(port) ? (genex) => genex.pipe(serverFrames(fastPortOf)) : null;
-    tunnel(req, client, head, host, upstream, room);
+    tunnel(req, client, head, address, upstream, room);
   });
   return server;
 }

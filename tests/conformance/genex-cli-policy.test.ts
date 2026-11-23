@@ -11,6 +11,7 @@ import {
   GenexCliRefusalCode,
   genexCliConsentArgs,
   genexCliRequest,
+  SCHEMA_MAX_BYTES,
 } from "../../src/main/core/genex-cli-policy.ts";
 import { consentArgsDigest } from "../../src/main/core/plugin-tools.ts";
 import { consentAskWords } from "../../src/renderer/words.ts";
@@ -38,7 +39,14 @@ describe("commands the agent may not run", () => {
     ["player", { command: "player install" }, FREE, GenexCliRefusalCode.Unavailable],
     ["remix", { command: "remix" }, FREE, GenexCliRefusalCode.Unavailable],
     ["domain", { command: "domain" }, PAID, GenexCliRefusalCode.Unavailable],
-    ["llm price", { command: "llm price" }, FREE, GenexCliRefusalCode.Unavailable],
+    [
+      "llm price, whose saved bench no Studio run folder keeps",
+      { command: "llm price" },
+      FREE,
+      GenexCliRefusalCode.Unavailable,
+      /folder it removes.*answer of llm bench/,
+    ],
+    ["llm price through the paid tool", { command: "llm price" }, PAID, GenexCliRefusalCode.Unavailable, /removes/],
     ["help", { command: "help" }, FREE, GenexCliRefusalCode.Unavailable],
     ["an empty command", { command: "  " }, FREE, GenexCliRefusalCode.Unavailable],
     ["publish", { command: "publish" }, FREE, GenexCliRefusalCode.UseTool, /genex__publish/],
@@ -48,7 +56,7 @@ describe("commands the agent may not run", () => {
     ["a flag in the command", { command: "doctor --json" }, FREE, GenexCliRefusalCode.Unavailable],
     [
       "a paid command through the free tool",
-      { command: "llm bench", args: "hi", options: { "max-coins": 5 } },
+      { command: "llm bench", args: "hi", options: { "max-credits": 5 } },
       FREE,
       GenexCliRefusalCode.PaidTool,
       /genex__cli-paid/,
@@ -98,7 +106,7 @@ describe("flags and values the agent may not pass", () => {
     ["--dir", { command: "llm models", options: { dir: "/" } }, FREE, GenexCliRefusalCode.ReservedFlag],
     [
       "--user-approved",
-      { command: "llm bench", args: "hi", options: { "max-coins": 5, "user-approved": true } },
+      { command: "llm bench", args: "hi", options: { "max-credits": 5, "user-approved": true } },
       PAID,
       GenexCliRefusalCode.ReservedFlag,
     ],
@@ -118,9 +126,9 @@ describe("flags and values the agent may not pass", () => {
     ],
     ["--json", { command: "doctor", options: { json: true } }, FREE, GenexCliRefusalCode.ReservedFlag],
     [
-      "--schema, a file in Studio's folder",
-      { command: "llm bench", args: "hi", options: { "max-coins": 5, schema: "a.json" } },
-      PAID,
+      "--schema on a command that reads no answer shape",
+      { command: "llm status", options: { schema: "answer.schema.json" } },
+      FREE,
       GenexCliRefusalCode.UnknownOption,
     ],
     [
@@ -140,25 +148,43 @@ describe("flags and values the agent may not pass", () => {
     ["a positional with a NUL", { command: "llm cancel", args: "a\u0000b" }, FREE, GenexCliRefusalCode.InvalidValue],
     [
       "an overlong positional",
-      { command: "llm bench", args: "x".repeat(4001), options: { "max-coins": 5 } },
+      { command: "llm bench", args: "x".repeat(4001), options: { "max-credits": 5 } },
       PAID,
       GenexCliRefusalCode.InvalidValue,
     ],
     ["a positional to a command without one", { command: "doctor", args: "x" }, FREE, GenexCliRefusalCode.InvalidValue],
     ["a missing positional", { command: "llm cancel" }, FREE, GenexCliRefusalCode.InvalidValue],
     [
-      "max-coins 1.5",
-      { command: "llm bench", args: "hi", options: { "max-coins": 1.5 } },
+      "max-credits 1.5",
+      { command: "llm bench", args: "hi", options: { "max-credits": 1.5 } },
       PAID,
       GenexCliRefusalCode.InvalidValue,
     ],
     [
-      "max-coins 0",
+      "max-credits 0",
+      { command: "llm bench", args: "hi", options: { "max-credits": 0 } },
+      PAID,
+      GenexCliRefusalCode.InvalidValue,
+    ],
+    [
+      "max-coins 0, the ceiling under its old name",
       { command: "llm bench", args: "hi", options: { "max-coins": 0 } },
       PAID,
       GenexCliRefusalCode.InvalidValue,
     ],
-    ["no max-coins", { command: "llm bench", args: "hi" }, PAID, GenexCliRefusalCode.InvalidValue],
+    ["no max-credits", { command: "llm bench", args: "hi" }, PAID, GenexCliRefusalCode.InvalidValue],
+    [
+      "max-credits and its old name max-coins with different ceilings",
+      { command: "llm bench", args: "hi", options: { "max-credits": 5, "max-coins": 6 } },
+      PAID,
+      GenexCliRefusalCode.InvalidValue,
+    ],
+    [
+      "the old name first, then a different max-credits",
+      { command: "llm bench", args: "hi", options: { "max-coins": 6, "max-credits": 5 } },
+      PAID,
+      GenexCliRefusalCode.InvalidValue,
+    ],
     [
       "a text value starting with a dash",
       { command: "shop add", args: "Key", options: { price: 100, icon: "--env" } },
@@ -205,15 +231,49 @@ describe("the argv Studio runs", () => {
     assert.deepEqual(request.argv, ["llm", "models", "--all"]);
     assert.equal(request.project, false);
   });
-  it("adds --user-approved itself to a paid bench, after the whole-number max-coins", () => {
+  it("adds --user-approved itself to a paid bench, after the whole-number max-credits", () => {
     const request = genexCliRequest(
-      { command: "llm bench", args: "Say hi", options: { "max-coins": 5, samples: 3 } },
+      { command: "llm bench", args: "Say hi", options: { "max-credits": 5, samples: 3 } },
       PAID,
     );
-    assert.deepEqual(request.argv, ["llm", "bench", "Say hi", "--max-coins", "5", "--samples", "3", "--user-approved"]);
+    assert.deepEqual(request.argv, [
+      "llm",
+      "bench",
+      "Say hi",
+      "--max-credits",
+      "5",
+      "--samples",
+      "3",
+      "--user-approved",
+    ]);
     assert.equal(request.argv.at(-1), "--user-approved");
     assert.equal(request.project, true);
     assert.equal(request.paid, true);
+  });
+  // The CLI renamed --max-coins to --max-credits (a bench spends credits) and prints a deprecation
+  // line for the old name: an agent that learned it still gets its bench, under the current flag.
+  it("reads the old max-coins as max-credits, and passes the CLI the current flag once", () => {
+    const bench = (options: Record<string, unknown>) =>
+      genexCliRequest({ command: "llm bench", args: "Say hi", options }, PAID).argv;
+    const current = ["llm", "bench", "Say hi", "--max-credits", "5", "--user-approved"];
+    assert.deepEqual(bench({ "max-coins": 5 }), current);
+    assert.deepEqual(bench({ "max-coins": "5", "max-credits": 5 }), current, "the same ceiling under both names");
+    assert.deepEqual(bench({ samples: 2, "max-coins": 9 }).slice(3), [
+      "--samples",
+      "2",
+      "--max-credits",
+      "9",
+      "--user-approved",
+    ]);
+  });
+  it("says which option a bench needs, and which names disagree, by the current name", () => {
+    assert.match(refusal({ command: "llm bench", args: "hi" }, PAID).message, /needs the max-credits option/);
+    const both = refusal({ command: "llm bench", args: "hi", options: { "max-credits": 5, "max-coins": 6 } }, PAID);
+    assert.match(both.message, /max-credits.*max-coins.*5.*6/);
+    const unknown = refusal({ command: "llm bench", args: "hi", options: { "max-credits": 5, coins: 1 } }, PAID);
+    assert.equal(unknown.code, GenexCliRefusalCode.UnknownOption);
+    assert.match(unknown.message, /max-credits/);
+    assert.doesNotMatch(unknown.message, /max-coins/, "the old name is accepted, never advertised");
   });
   it("binds project commands to the hosted project and leaves free ones unbound", () => {
     assert.equal(genexCliRequest({ command: "llm status" }, FREE).project, true);
@@ -251,12 +311,12 @@ describe("what the consent card shows for a paid call", () => {
       tool: "genex__cli-paid",
       args: consentArgsDigest(genexCliConsentArgs(args, PAID)),
     });
-  const longText = `Benchmark with max-coins 5. ${"x".repeat(2100)}`;
+  const longText = `Benchmark with max-credits 5. ${"x".repeat(2100)}`;
   const rows: Array<[string, Record<string, unknown>, RegExp]> = [
     [
       "a bench whose long prompt comes first",
-      { command: "llm bench", args: longText, options: { model: "m".repeat(400), samples: 25, "max-coins": 250000 } },
-      /max-coins: 250000/,
+      { command: "llm bench", args: longText, options: { model: "m".repeat(400), samples: 25, "max-credits": 250000 } },
+      /max-credits: 250000/,
     ],
     [
       "a shop item change whose long id comes first",
@@ -277,8 +337,21 @@ describe("what the consent card shows for a paid call", () => {
     });
   }
   it("never shows the agent's own words before the amount", () => {
-    const text = card({ command: "llm bench", args: longText, options: { "max-coins": 250000 } });
-    assert.ok(text.indexOf("max-coins: 250000") < text.indexOf("Benchmark"), text);
+    const text = card({ command: "llm bench", args: longText, options: { "max-credits": 250000 } });
+    assert.ok(text.indexOf("max-credits: 250000") < text.indexOf("Benchmark"), text);
+  });
+  it("names the ceiling in credits whichever name the agent used", () => {
+    const shown = genexCliConsentArgs({ command: "llm bench", args: "hi", options: { "max-coins": 40 } }, PAID);
+    assert.equal(shown["max-credits"], "40");
+    assert.equal(shown["max-coins"], undefined);
+  });
+  it("shows the answer-shape file a bench reads, after what it spends", () => {
+    const shown = genexCliConsentArgs(
+      { command: "llm bench", args: "hi", options: { schema: "answer.schema.json", "max-credits": 40 } },
+      PAID,
+    );
+    assert.deepEqual(Object.keys(shown), ["command", "max-credits", "schema", "args"]);
+    assert.equal(shown.schema, "answer.schema.json");
   });
   it("refuses before anyone is asked when Studio would refuse the call", () => {
     assert.throws(() => genexCliConsentArgs({ command: "llm bench", args: "hi" }, PAID), GenexCliRefusal);
@@ -289,6 +362,64 @@ describe("what the consent card shows for a paid call", () => {
     assert.throws(() => genexCliConsentArgs(draft, PAID), GenexCliRefusal);
     assert.equal(genexCliRequest(draft, FREE).paid, false);
   });
+});
+
+describe("the answer-shape file a bench reads (`--schema`)", () => {
+  // Genex's pricing card benchmarks with the game's own JSON schema file, and the CLI never runs in
+  // the game: the option names a small .json file inside it, which Studio checks by real path and
+  // copies into the run folder (`genex-cli-game-paths.test.ts` holds that table).
+  const bench = (schema: unknown) => ({ command: "llm bench", args: "hi", options: { "max-credits": 5, schema } });
+
+  it("names a .json file inside the game for Studio to check and copy in", () => {
+    const request = genexCliRequest(bench("src/npc/answer.schema.json"), PAID);
+    assert.deepEqual(request.argv, [
+      "llm",
+      "bench",
+      "hi",
+      "--max-credits",
+      "5",
+      "--schema",
+      "src/npc/answer.schema.json",
+      "--user-approved",
+    ]);
+    assert.deepEqual(request.gamePaths, [
+      {
+        option: "schema",
+        path: "src/npc/answer.schema.json",
+        target: "file",
+        index: 6,
+        small: { extension: ".json", maxBytes: SCHEMA_MAX_BYTES },
+      },
+    ]);
+    assert.equal(SCHEMA_MAX_BYTES, 16 * 1024, "Genex takes a schema of at most 16 KB");
+    assert.equal(genexCliRequest(bench("Answer.Schema.JSON"), PAID).gamePaths?.[0]?.path, "Answer.Schema.JSON");
+  });
+
+  const refusals: Array<[string, unknown]> = [
+    ["an absolute path", "/etc/answer.schema.json"],
+    ["a home-relative path", "~/answer.schema.json"],
+    ["a drive-letter path", "C:\\Users\\me\\answer.schema.json"],
+    ["a network share", "\\\\host\\share\\answer.schema.json"],
+    ["a path behind ../", "../other-game/answer.schema.json"],
+    ["a path with ../ inside", "src/../../answer.schema.json"],
+    ["a path with a backslash ..", "src\\..\\..\\answer.schema.json"],
+    ["a path with a NUL", "answer\u0000.schema.json"],
+    ["a path with a line break", "answer.schema.json\n--env"],
+    ["a path that reads as a flag", "--env.json"],
+    ["a file that is not .json", "answer.schema.txt"],
+    ["a .json name with something after it", "answer.schema.json.bak"],
+    ["a path with no extension", ".env"],
+    ["the game itself", "."],
+    ["an empty path", ""],
+    ["a path longer than a path is", `${"a/".repeat(260)}s.json`],
+    ["a path that is not text", { path: "answer.schema.json" }],
+    ["a list of paths", ["a.json", "b.json"]],
+  ];
+  for (const [name, schema] of refusals) {
+    it(`refuses ${name}`, () => {
+      assert.equal(refusal(bench(schema), PAID).code, GenexCliRefusalCode.InvalidValue);
+    });
+  }
 });
 
 describe("a store item's picture", () => {

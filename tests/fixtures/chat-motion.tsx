@@ -1,7 +1,8 @@
 /**
  * Test-owned production ChatPanel driven through what a person watches happen in a game chat — a
- * message sent, the work it starts, tools, a streamed reply, a permission question and a build —
- * recording every frame (`motion-recorder.ts`). No engine, account or network.
+ * message sent, the work it starts, tools, a streamed reply, a permission question, a build and
+ * sent pictures — recording every frame (`motion-recorder.ts`) and how often the transcript's rows
+ * were drawn (`PerformanceComponent.TranscriptRow`). No engine, account or network.
  */
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
@@ -12,7 +13,9 @@ import { CustomEvent } from "../../src/shared/custom-events.ts";
 import { SteerDelivery } from "../../src/shared/message-queue.ts";
 import type { EngineDescriptor } from "../../src/shared/engine-descriptor.ts";
 import { type EventData, type EventEnvelope, EventKind, ThreadKind } from "../../src/shared/event-log.ts";
+import { PerformanceComponent } from "../../src/shared/performance.ts";
 import { ToolPermissionState } from "../../src/shared/permissions.ts";
+import type { ReferenceFrame } from "../../src/shared/protocol.ts";
 import { UiEvent, type UiEventMap } from "../../src/shared/ui-events.ts";
 import { fakeStudioApi } from "../helpers/fake-studio-api.ts";
 import { type Held, heldStill, type MotionReport, motionReport, recordFrames } from "./motion-recorder.ts";
@@ -27,8 +30,17 @@ const DATE = "2026-10-02T00:00:00.000Z";
 const IDLE = "idle";
 /** The harness's status while the chat's own turn runs (statusWords: "Building motion-game"). */
 const TURN_STATUS = `claude-code building ${PROJECT}`;
-/** How many earlier messages the long chat holds: enough to scroll several screens. */
-const HISTORY_MESSAGES = 40;
+/** How many earlier messages each size of chat holds: two, enough to scroll several screens, and a long session's. */
+const HISTORY_MESSAGES = { short: 2, long: 40, huge: 400 } as const;
+type ChatSize = keyof typeof HISTORY_MESSAGES;
+/** How many tool calls the busy turn makes, and how quickly one follows another. */
+const MANY_TOOLS = 30;
+const TOOL_GAP_MS = 60;
+/** Every how many earlier requests one was sent with pictures, and how many. */
+const PICTURE_EVERY = 4;
+const PICTURES_PER_MESSAGE = 2;
+/** A sent picture's size in pixels: a screenshot scaled down, as the composer keeps it. */
+const PICTURE_SIZE = { width: 1280, height: 800 } as const;
 const REPLY =
   "The sky now warms toward the horizon at dusk. **The sun sits lower**, and the clouds pick up a soft orange edge as it sets. I kept the night colours as they were, so the stars still come out on time. Try it in the preview and watch the light change over the village.";
 const STREAM_PIECE_CHARS = 9;
@@ -76,8 +88,33 @@ const claude: EngineDescriptor = {
   models: [model],
 };
 
+/** One sent picture, drawn once: a gradient big enough to take a real decode. */
+function drawPicture(): ReferenceFrame {
+  const canvas = document.createElement("canvas");
+  canvas.width = PICTURE_SIZE.width;
+  canvas.height = PICTURE_SIZE.height;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+    gradient.addColorStop(0, "#3b6fd8");
+    gradient.addColorStop(1, "#f0a24a");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    for (let i = 0; i < 400; i++) {
+      ctx.fillStyle = `hsl(${(i * 37) % 360} 70% 60%)`;
+      ctx.fillRect((i * 97) % canvas.width, (i * 61) % canvas.height, 24, 24);
+    }
+  }
+  const data = canvas.toDataURL("image/png").split(",")[1] ?? "";
+  return { label: "screenshot.png", mimeType: "image/png", data };
+}
+const PICTURE = drawPicture();
+
 const fake = fakeStudioApi();
-window.studio = fake.api;
+window.studio = {
+  ...fake.api,
+  messageImages: async () => Array.from({ length: PICTURES_PER_MESSAGE }, () => PICTURE),
+};
 let events: EventEnvelope[] = [];
 let status = IDLE;
 let sent: string[] = [];
@@ -139,20 +176,33 @@ const setStatus = (value: string): void => {
 const stream = (streamId: string) => ({ threadId: THREAD, streamId });
 const delta = (payload: UiEventMap[typeof UiEvent.ChatDelta]) => fake.emit({ type: UiEvent.ChatDelta, payload });
 
-/** The chat as a person opens it: a few messages, or enough to scroll several screens. */
-function seed(long: boolean): void {
+/** An earlier request, with pictures on every few: its row, and the queue's records that saved its pictures. */
+function earlierRequest(index: number, pictures: boolean): EventEnvelope[] {
+  const text = `Earlier request ${index + 1}: move the lanterns along the bridge.`;
+  const row = said("user", text);
+  if (!pictures || index % PICTURE_EVERY !== 0) return [row];
+  const messageId = `pictures-${index}`;
+  const action = { text, attachmentsArtifact: `${messageId}.json`, imageCount: PICTURES_PER_MESSAGE };
+  return [
+    row,
+    custom(CustomEvent.CoordinatorMessageQueued, { messageId, eventId: row.id, action }),
+    custom(CustomEvent.CoordinatorMessageHandled, { messageId }),
+  ];
+}
+
+/** The chat as a person opens it: a few messages, enough to scroll several screens, or a long session's. */
+function seed(size: ChatSize, pictures = false): void {
   sequence = 0;
   sent = [];
   host = null;
   steadyFrom = null;
   status = IDLE;
   startedAt.clear();
-  const count = long ? HISTORY_MESSAGES : 2;
-  events = Array.from({ length: count }, (_, i) =>
+  events = Array.from({ length: HISTORY_MESSAGES[size] }, (_, i) =>
     i % 2 === 0
-      ? said("user", `Earlier request ${i / 2 + 1}: move the lanterns along the bridge.`)
-      : said("assistant", `Done. The lanterns now line both rails of the bridge, ${i} metres apart.`),
-  );
+      ? earlierRequest(i / 2, pictures)
+      : [said("assistant", `Done. The lanterns now line both rails of the bridge, ${i} metres apart.`)],
+  ).flat();
   flushSync(() => root.render(null));
   render();
 }
@@ -328,7 +378,64 @@ async function steer(): Promise<void> {
   await sleep(900);
 }
 
-const SCENES = { turn, question, clock, build, longStream, steer } as const;
+/** A busy turn: many tools, one after another, then a short reply. */
+async function tools(): Promise<void> {
+  status = TURN_STATUS;
+  append(said("user", "Tidy up every lantern file"), envelope({ type: EventKind.TurnStarted }));
+  await sleep(300);
+  for (let i = 0; i < MANY_TOOLS; i++) {
+    const id = `tool-${i}`;
+    append(toolCall(id, i % 3 === 0 ? "Edit" : "Read", `src/lanterns/part-${i}.js`));
+    await sleep(TOOL_GAP_MS);
+    append(toolDone(id));
+  }
+  append(said("assistant", "Every lantern file is tidy now."));
+  append(envelope({ type: EventKind.TurnEnded, status: "ok" }), activity(ChatActivityPhase.Completed));
+  setStatus(IDLE);
+  await sleep(900);
+}
+
+const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+/** How far the pictures scene scrolls in one frame, px: a brisk scroll. */
+const SCROLL_STEP_PX = 120;
+
+/** The conversation's scroller. */
+function scroller(): HTMLElement {
+  const element = document.querySelector<HTMLElement>("[data-chat-scroll]");
+  if (!element) throw new Error("Missing conversation");
+  return element;
+}
+
+/** Scroll the conversation to its end a step a frame, as a person scrolling back down does. */
+async function scrollDown(): Promise<void> {
+  const element = scroller();
+  while (element.scrollTop + element.clientHeight < element.scrollHeight - 1) {
+    element.scrollTop += SCROLL_STEP_PX;
+    await frame();
+  }
+  await sleep(300);
+}
+
+/**
+ * Sent pictures that were already shown come back: scrolled back down to after they were scrolled
+ * far out of sight (their rows left the window), and the chat opened again after another one.
+ */
+async function pictures(): Promise<void> {
+  await scrollDown();
+  flushSync(() => root.render(null));
+  await sleep(120);
+  render();
+  await sleep(600);
+}
+
+/** Before the pictures scene records: its pictures loaded, then scrolled far out of sight. */
+async function beforePictures(): Promise<void> {
+  await sleep(600);
+  scroller().scrollTop = 0;
+  await sleep(600);
+}
+
+const SCENES = { turn, question, clock, build, longStream, steer, tools, pictures } as const;
 type Scene = keyof typeof SCENES;
 
 /** How many frames in a row nothing may move before the seeded chat counts as settled. */
@@ -340,7 +447,6 @@ const SETTLE_LIMIT_MS = 3000;
 async function settled(): Promise<void> {
   const rows = () =>
     [...document.querySelectorAll("[data-chat-entry]")].map((row) => row.getBoundingClientRect().top).join();
-  const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   const until = performance.now() + SETTLE_LIMIT_MS;
   let still = 0;
   let last = rows();
@@ -352,29 +458,45 @@ async function settled(): Promise<void> {
   }
 }
 
-/** Play one scene in a short or long chat and report what moved; `record: false` only plays it (to time the app alone). */
+/** How many times the transcript's rows have been drawn (mounted or updated) so far. */
+const rowCommits = (): number => window.__studioPerformance?.[PerformanceComponent.TranscriptRow]?.commits ?? 0;
+
+/**
+ * Play one scene in a chat of a size (`true` is long, `false` short) and report what moved and how
+ * many times its rows were drawn; `record: false` only plays it (to time the app alone).
+ */
 async function runMotionScene(
   scene: Scene,
-  long = true,
+  size: ChatSize | boolean = true,
   record = true,
-): Promise<MotionReport & { scene: Scene; held?: Held }> {
-  seed(long);
+): Promise<MotionReport & { scene: Scene; held?: Held; rowCommits: number }> {
+  const chat: ChatSize = typeof size === "string" ? size : size ? "long" : "short";
+  seed(chat, scene === "pictures");
   await sleep(400);
   await settled();
-  const history = new Set([...document.querySelectorAll<HTMLElement>("[data-chat-entry]")].map((row) => `row:${row.dataset.chatEntry}`));
+  const rowsOnScreen = () =>
+    [...document.querySelectorAll<HTMLElement>("[data-chat-entry]")].map((row) => `row:${row.dataset.chatEntry}`);
+  // History is every row the chat already had: scrolled away from, too.
+  const history = new Set(rowsOnScreen());
+  if (scene === "pictures") {
+    await beforePictures();
+    for (const row of rowsOnScreen()) history.add(row);
+  }
+  const drawnBefore = rowCommits();
   if (!record) {
     await SCENES[scene]();
-    return { scene, ...motionReport({ frames: [], longTasks: [] }, history) };
+    return { scene, ...motionReport({ frames: [], longTasks: [] }, history), rowCommits: rowCommits() - drawnBefore };
   }
   const start = performance.now();
   const stop = recordFrames();
   await SCENES[scene]();
   const recording = stop();
+  const drawn = rowCommits() - drawnBefore;
   // Kept for a closer look at a failure (`window.lastMotionFrames`).
   Object.assign(window, { lastMotionFrames: recording.frames });
   const from = steadyFrom === null ? null : steadyFrom - start;
   const held = from === null ? {} : { held: heldStill(recording.frames.filter((frame) => frame.at >= from), "build", "composer") };
-  return { scene, ...motionReport(recording, history), ...held };
+  return { scene, ...motionReport(recording, history), ...held, rowCommits: drawn };
 }
 
 Object.assign(window, { runMotionScene });

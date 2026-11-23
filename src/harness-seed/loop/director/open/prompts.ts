@@ -77,4 +77,10 @@ export const OPEN_NEWS = {
     "Before the Loop paused you asked to restart the project's app; it paused first, so it wasn't restarted.",
   /** The app answers again after Genex's watch saw it stop (`app-look.ts`): the lead or the person opened it. */
   appAnswers: "The project's app answers again.",
+  /** The Loop's folder holds files of its own of a kind Genex has no rules for (`kindUnknown`): said as it starts. */
+  ownFilesKind:
+    "This project's folder holds files of its own of a kind Genex has no rules for: look through them first to learn what the project is and how it runs, and work on them as they are. Never write a web starter or a web page into it unless the goal asks for one.",
+  /** The Loop's folder could not be read as Genex listed it: said as it starts. */
+  unreadableFolder:
+    "Genex could not read this project's folder: before anything else, check that it is there and that you can read it, and pause the Loop for the person if you can't.",
 } as const;

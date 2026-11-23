@@ -23,10 +23,11 @@ run only in a Loop. Both survive a main-agent change; models unlisted twice fall
 check a Loop's finish.
 
 Local Models (Bonsai/Ollama) downloads and deletes. Metered
-[OpenRouter, OpenCode](../connections-and-context.md#openrouter-and-opencode),
-[Grok Build](../connections-and-context.md#grok-build), [Cursor](../connections-and-context.md#cursor),
+[OpenRouter, OpenCode](../connections-and-context.md#openrouter-and-opencode), Pi and
+[Cursor](../connections-and-context.md#cursor) (each shows three),
+[Grok Build](../connections-and-context.md#grok-build),
 [Antigravity](../connections-and-context.md#antigravity) and
-[Genex](../connections-and-context.md#build-with-genex-credits) are never auto-chosen unless Free and alone; OpenRouter, OpenCode and Cursor show three. Local server connects LM
+[Genex](../connections-and-context.md#build-with-genex-credits) are never auto-chosen unless Free and alone. Local server connects LM
 Studio, llama.cpp or TabbyAPI ([details](../connections-and-context.md#your-own-model-server)).
 
 ## What the model knows

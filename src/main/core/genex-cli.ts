@@ -13,7 +13,9 @@
  * object storage beside it only for a call that moves a store item's files. A store
  * item's picture, model and package are files of the bound game: Studio checks each by real path
  * inside it and copies it into the run folder first; `items add` writes `genex-items/<id>/` in the
- * run folder, and Studio moves it into the game afterwards (`genex-game-paths.ts`). The game's local
+ * run folder, and Studio moves it into the game afterwards (`genex-game-paths.ts`). A bench's
+ * answer-shape file (`--schema`) is checked and copied in the same way, a small `.json` file the CLI
+ * reads into its request: no object storage opens for it. The game's local
  * item drafts (`.genex/items/`, made before the game is on Genex) are copied in for the shop's
  * commands, and a change carried back (`local-item-files.ts`); a `shop add|set|remove` in a game with
  * no hosted project runs on them alone. Studio itself uploads them after a publish
@@ -115,6 +117,8 @@ export interface GenexCliDeps {
   api?: string;
   /** The Node that runs the CLI: Electron as node in the app. */
   execPath?: string;
+  /** The pinned CLI's entry: the plugin build's copy in resources unless a test names one. */
+  cliPath?: string;
   parentEnv?: NodeJS.ProcessEnv;
   /**
    * The game's real folder by its name, for a run Studio makes itself (a sync after a publish, the
@@ -156,6 +160,31 @@ interface RunFolder {
 interface HostedProject {
   id: string;
   slug: string;
+}
+
+/** Why the practice helper cannot run on real models (`practiceLaunch`). Wire values: never rename one. */
+export const PracticeRefusal = {
+  /** The app holds no Genex credential. */
+  SignedOut: "signed_out",
+  /** The game has no hosted project (no published draft) to bill real calls to. */
+  NoDraft: "no_draft",
+} as const;
+export type PracticeRefusal = (typeof PracticeRefusal)[keyof typeof PracticeRefusal];
+
+/** A {@link PracticeRefusal} as an error, its code beside its words. */
+const practiceRefusal = (code: PracticeRefusal): Error & { code: PracticeRefusal } =>
+  Object.assign(new Error(`genex llm practice --live: ${code}`), { code });
+
+/** How to start the practice helper in the sandbox (`spawnLongLived`), and the run folder to remove after it. */
+export interface PracticeLaunch {
+  command: string;
+  cwd: string;
+  env: Record<string, string>;
+  /** The credential line, for real models only. */
+  stdin?: string;
+  label: string;
+  policy: { allowedDomains: string[]; allowWrite: string[]; denyWrite: string[] };
+  root: string;
 }
 
 /** What an agent reads back: the command, whether it succeeded, and its (parsed) output. */
@@ -231,9 +260,14 @@ export function standCredentialFile(stand: GenexStand): () => Promise<string | u
   };
 }
 
-/** Whether a call moves a store item's files: it uploads a picture, model or package, adds a shared item, or syncs. */
-const movesItemFiles = (request: GenexCliRequest): boolean =>
-  (request.gamePaths?.length ?? 0) > 0 || request.delivers !== undefined || request.localItems === LocalItemsUse.Sync;
+/**
+ * Whether a call moves a store item's files: it uploads a picture, model or package, adds a shared
+ * item, or syncs. A small file the CLI only reads into its request (a bench's schema) is no upload.
+ */
+function movesItemFiles(request: GenexCliRequest): boolean {
+  const uploads = request.gamePaths?.some((arg) => !arg.small) ?? false;
+  return uploads || request.delivers !== undefined || request.localItems === LocalItemsUse.Sync;
+}
 
 /** An object, not a list or null. */
 const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
@@ -492,6 +526,58 @@ export class GenexCliService {
   }
 
   /**
+   * How to start the pinned CLI's practice helper (`genex llm practice --json`) beside a game's
+   * preview, in a run folder of its own like every command's. Made-up answers (`live` null) need no
+   * account, no project and no network: the helper only listens on this computer's loopback. Real
+   * models (`live`) are billed to the game's hosted project at most `maxCredits` for the whole run:
+   * the run folder names that project, the credential goes on stdin as for every command, and the
+   * network opens to the Genex API alone. The caller passes `live` only for a cap the person
+   * approved (`PreviewAiService`). The caller removes `root` once the helper is gone.
+   */
+  async practiceLaunch(project: string, live: { maxCredits: number } | null): Promise<PracticeLaunch> {
+    const hosted = live ? await this.#hostedProjectOrNull(project) : null;
+    if (live && !hosted) throw practiceRefusal(PracticeRefusal.NoDraft);
+    const credential = live ? await this.#deps.credentialFile() : undefined;
+    if (live && !credential) throw practiceRefusal(PracticeRefusal.SignedOut);
+    const root = path.join(this.#deps.runsRoot, randomUUID().replaceAll("-", "").slice(0, RUN_ID_CHARS));
+    const work = await this.#prepare(root, hosted);
+    const node = this.#deps.execPath ?? process.execPath;
+    const cli = this.#cliPath();
+    const preload = live ? ["--import", path.join(this.#deps.resources, PRELOAD_IN_RESOURCES)] : [];
+    const liveFlags = live ? ["--live", "--max-credits", String(live.maxCredits), "--user-approved"] : [];
+    const hostFlags = live ? ["--env", CREDENTIALS_ENV_FILE, "--api-url", this.#api, "--no-auth"] : [];
+    const argv = [node, ...preload, cli, "llm", "practice", ...liveFlags, ...hostFlags, "--json"];
+    return {
+      command: argv.map(shellQuote).join(" "),
+      cwd: work,
+      env: this.#env(root),
+      ...(credential ? { stdin: credential } : {}),
+      label: live ? "genex-cli:llm-practice-live" : "genex-cli:llm-practice",
+      policy: {
+        allowedDomains: live ? [new URL(this.#api).hostname] : [],
+        allowWrite: [root],
+        denyWrite: await this.#deps.protectedWrites(),
+      },
+      root,
+    };
+  }
+
+  /** Whether the app holds a Genex credential now (signed in and unlocked). */
+  async signedIn(): Promise<boolean> {
+    return (await this.#deps.credentialFile()) !== undefined;
+  }
+
+  /** Whether the game has a hosted project on Genex (a published draft) that real calls are billed to. */
+  async hasHostedProject(project: string): Promise<boolean> {
+    return (await this.#hostedProjectOrNull(project)) !== null;
+  }
+
+  /** The pinned CLI's entry point. */
+  #cliPath(): string {
+    return this.#deps.cliPath ?? path.join(this.#deps.resources, CLI_IN_RESOURCES);
+  }
+
+  /**
    * The run folder: `<root>` is HOME, `<root>/work` the working folder. HOME carries a fresh
    * update-check record so the CLI does not try the npm registry, which the sandbox keeps closed.
    */
@@ -520,7 +606,7 @@ export class GenexCliService {
       node,
       "--import",
       path.join(this.#deps.resources, PRELOAD_IN_RESOURCES),
-      path.join(this.#deps.resources, CLI_IN_RESOURCES),
+      this.#cliPath(),
       ...request.argv,
     ];
     const hostFlags = `--env ${shellQuote(CREDENTIALS_ENV_FILE)} --api-url ${shellQuote(this.#api)} --no-auth --json`;

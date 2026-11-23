@@ -118,7 +118,9 @@ const ANTIGRAVITY_WORDS: CliWayWords = {
   signIn: t("Sign in"),
   signInNote: t("Sign in with your Google account to build with your plan."),
   terminal: t("Antigravity sign-in"),
-  signingInNote: t("Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in."),
+  signingInNote: t(
+    "Sign in on Google's page in your browser, then paste the code it gives you here. Antigravity keeps the sign-in.",
+  ),
   readyNote: t("Uses your Google AI plan"),
   update: t("Update Antigravity"),
   unreachable: t("Antigravity didn't answer. Check the installation, then try again."),

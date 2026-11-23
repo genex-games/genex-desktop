@@ -23,7 +23,7 @@ const THREAD_TITLE_MAX = 80;
 /** The tool that scaffolds a game: its `name` argument is the game it built. */
 const NEW_GAME_TOOL = "new_game";
 
-type GameThreadMeta = { kind?: string; project?: string | null; archived?: boolean };
+export type GameThreadMeta = { kind?: string; project?: string | null; archived?: boolean };
 
 const metaOf = (thread: ConversationRecord): GameThreadMeta => (thread.metadata ?? {}) as GameThreadMeta;
 
@@ -35,6 +35,16 @@ function isBoundGameThread(meta: GameThreadMeta): meta is GameThreadMeta & { pro
 /** A live game chat bound to nothing yet: a draft. */
 function isUnboundGameThread(meta: GameThreadMeta): boolean {
   return meta.kind === ThreadKind.Game && !meta.project && !meta.archived;
+}
+
+/**
+ * A live game chat the library has no game for: it was never bound, or the game it was bound to
+ * was removed from the sidebar. Only such a chat may be named after a game made in it; a chat of a
+ * game still in the library belongs to that game.
+ */
+export function isGameThreadWithoutGame(meta: GameThreadMeta, games: ReadonlySet<string>): boolean {
+  if (meta.kind !== ThreadKind.Game || meta.archived) return false;
+  return !meta.project || !games.has(meta.project);
 }
 
 export class GameThreadService {

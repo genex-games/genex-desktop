@@ -3,12 +3,14 @@
  * writes into it (marketplace plan 8.1). The CLI never runs in the game (`genex-cli.ts`), so a store
  * item's picture, model and package are checked here by real path inside the game and copied into
  * the run folder before the run, and `items add`'s `genex-items/<id>/` is moved from the run folder
- * into the game after it, never through a link the game holds. A refused path stops the call before
+ * into the game after it, never through a link the game holds. A bench's answer-shape file
+ * (`--schema`) is one more file of the game the CLI reads: one small `.json` file by its real name,
+ * copied whole and never past its cap. A refused path stops the call before
  * anything is copied; a refused delivery leaves the game as it was.
  */
 import { randomBytes } from "node:crypto";
-import { constants, createWriteStream } from "node:fs";
-import { lstat, mkdir, open, readdir, realpath, rename, rm } from "node:fs/promises";
+import { constants, createWriteStream, type Stats } from "node:fs";
+import { type FileHandle, lstat, mkdir, open, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { containedReal, isBelow } from "../../substrate/paths.ts";
@@ -18,11 +20,13 @@ import {
   GenexCliRefusal,
   GenexCliRefusalCode,
   PICTURE_OPTION,
+  type SmallGameFile,
 } from "./genex-cli-policy.ts";
 import { GENEX_CLI_PROMPT } from "./genex-cli-prompts.ts";
 import { fitsItemCard, readPictureSize } from "./item-pictures.ts";
 
-const MIB = 1024 * 1024;
+const KIB = 1024;
+const MIB = 1024 * KIB;
 /** The most files of a package folder Studio copies: Genex refuses an item package with more (D47). */
 export const PACKAGE_FILES_MAX = 2000;
 /** The most bytes of a package folder Studio copies: Genex refuses a larger unpacked package (D47). */
@@ -54,7 +58,7 @@ const plainRelative = (given: string): string =>
 /** The real path `arg` names inside `game` (the game's real folder), of the kind it should be; refused otherwise. */
 export async function resolveGamePath(
   game: string,
-  arg: Pick<GamePathArg, "option" | "path" | "target">,
+  arg: Pick<GamePathArg, "option" | "path" | "target" | "small">,
 ): Promise<string> {
   let real: string;
   try {
@@ -65,6 +69,7 @@ export async function resolveGamePath(
     throw refuse(message(arg.option, arg.path));
   }
   const stats = await lstat(real);
+  if (arg.small) checkSmallFile(real, stats, arg, arg.small);
   if (arg.target === GamePathTarget.File && !stats.isFile())
     throw refuse(GENEX_CLI_PROMPT.GamePathNotFile(arg.option, arg.path));
   if (arg.target === GamePathTarget.Folder && !stats.isDirectory())
@@ -78,6 +83,64 @@ async function checkPicture(real: string, given: string): Promise<void> {
   const size = await readPictureSize(real);
   if (!size) throw refuse(GENEX_CLI_PROMPT.PictureNotImage(given));
   if (!fitsItemCard(size)) throw refuse(GENEX_CLI_PROMPT.PictureShape(given, size.width, size.height));
+}
+
+/** How a small file's refusals read for the option that named it. */
+const smallFileRefusal = (arg: Pick<GamePathArg, "option" | "path">, small: SmallGameFile) => ({
+  notFile: () => refuse(GENEX_CLI_PROMPT.SmallFileNotFile(arg.option, arg.path, small.extension)),
+  wrongKind: () => refuse(GENEX_CLI_PROMPT.SmallFileWrongKind(arg.option, arg.path, small.extension)),
+  tooLarge: () => refuse(GENEX_CLI_PROMPT.SmallFileTooLarge(arg.option, arg.path, small.maxBytes / KIB)),
+});
+
+/**
+ * A small file the CLI reads is one regular file of its kind within its size, by its real path: a
+ * link named `answer.schema.json` to a file of another kind is not one.
+ */
+function checkSmallFile(
+  real: string,
+  stats: Stats,
+  arg: Pick<GamePathArg, "option" | "path">,
+  small: SmallGameFile,
+): void {
+  const refusal = smallFileRefusal(arg, small);
+  if (!stats.isFile()) throw refusal.notFile();
+  if (path.extname(real).toLowerCase() !== small.extension) throw refusal.wrongKind();
+  if (stats.size > small.maxBytes) throw refusal.tooLarge();
+}
+
+/** The first `most` bytes of an open file, or fewer when it ends sooner. */
+async function readAtMost(handle: FileHandle, most: number): Promise<Buffer> {
+  const buffer = Buffer.alloc(most);
+  let filled = 0;
+  while (filled < most) {
+    const { bytesRead } = await handle.read(buffer, filled, most - filled, filled);
+    if (bytesRead === 0) break;
+    filled += bytesRead;
+  }
+  return buffer.subarray(0, filled);
+}
+
+/**
+ * Copy a small file whole, through one handle that follows no link put in its place since it was
+ * checked, and never more than its cap: a file that grew past it meanwhile is refused, not cut.
+ */
+async function copySmallFile(
+  source: string,
+  target: string,
+  arg: Pick<GamePathArg, "option" | "path">,
+  small: SmallGameFile,
+): Promise<void> {
+  const refusal = smallFileRefusal(arg, small);
+  const handle = await open(source, constants.O_RDONLY | NO_FOLLOW);
+  try {
+    const stats = await handle.stat();
+    if (!stats.isFile()) throw refusal.notFile();
+    const bytes = await readAtMost(handle, small.maxBytes + 1);
+    if (bytes.length > small.maxBytes) throw refusal.tooLarge();
+    await writeFile(target, bytes, { flag: "wx", mode: PRIVATE_FILE });
+  } finally {
+    await handle.close();
+  }
 }
 
 /** Copy one regular file, never through a link put in its place since it was checked. */
@@ -140,6 +203,7 @@ export async function stageGamePaths(
     await mkdir(into, { recursive: true, mode: PRIVATE_DIR });
     const copy = path.join(into, path.basename(real));
     if (arg.target === GamePathTarget.Folder) await copyPackage(game, real, copy, arg.option, { files: 0, bytes: 0 });
+    else if (arg.small) await copySmallFile(real, copy, arg, arg.small);
     else await copyRegularFile(real, copy, () => refuse(GENEX_CLI_PROMPT.GamePathNotFile(arg.option, arg.path)));
     staged[arg.index] = copy;
   }

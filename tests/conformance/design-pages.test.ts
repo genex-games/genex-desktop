@@ -15,6 +15,8 @@ import {
   designHeaders,
   designPageUrl,
   designFontFile,
+  DESIGN_SETTLE_MS,
+  type DesignSettled,
   listDesignBoard,
   serveDesignFile,
   subframeMayLoad,
@@ -88,6 +90,25 @@ describe("the design board's pages", () => {
     assert.equal((await listDesignBoard(root)).stamp, before);
     write(path.join(root, DESIGN_FOLDER, "img", "hero.png"), "a new picture, longer than the last");
     assert.notEqual((await listDesignBoard(root)).stamp, before);
+  });
+
+  it("shows a picture being written again as it was until its file stands still", async () => {
+    const root = await game();
+    const picture = path.join(root, DESIGN_FOLDER, "world", "town.png");
+    write(picture, "the first picture");
+    const settled: DesignSettled = new Map();
+    const writtenAt = fs.statSync(picture).mtimeMs;
+    const town = async (now: number) =>
+      (await listDesignBoard(root, new Map(), { settled, now })).items.find((one) => one.name === "town");
+    const first = await town(writtenAt + 10);
+    assert.ok(first, "a new file shows at once: nothing was there to keep up");
+    write(picture, "the second picture, half writ");
+    const rewrittenAt = fs.statSync(picture).mtimeMs;
+    assert.equal((await town(rewrittenAt + 10))?.version, first.version, "the one being written shows as it was");
+    const second = await town(rewrittenAt + DESIGN_SETTLE_MS + 10);
+    assert.notEqual(second?.version, first.version, "and as it is once it stands still");
+    assert.equal(second?.modifiedAt, rewrittenAt);
+    assert.ok(await town(rewrittenAt - 60_000), "a time ahead of the clock counts as still");
   });
 
   it("reads the title each page gives itself, in plain words", async () => {

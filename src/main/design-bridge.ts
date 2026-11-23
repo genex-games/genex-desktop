@@ -5,7 +5,7 @@
  * says when the person pressed a link. It asks the tab for nothing and reads nothing of the game.
  * Both are text served inside the page, so plain strings.
  */
-import { DESIGN_MESSAGE_SOURCE, DesignSignal, DesignTheme } from "../shared/design-board.ts";
+import { DESIGN_MESSAGE_SOURCE, DESIGN_PAGE_BACKGROUND, DesignSignal, DesignTheme } from "../shared/design-board.ts";
 
 /**
  * What made something on a page a button, before buttons left the board: a press put its words in
@@ -29,7 +29,7 @@ export const DESIGN_FONTS = {
 /** Genex's colours as a page reads them (`var(--genex-ink)`), in each look: the app's own card, ink and accent. */
 const PAGE_COLOURS: Readonly<Record<DesignTheme, Readonly<Record<string, string>>>> = {
   [DesignTheme.Dark]: {
-    bg: "#141416",
+    bg: DESIGN_PAGE_BACKGROUND[DesignTheme.Dark],
     inset: "#1b1c1d",
     ink: "#dee0e2",
     "ink-2": "#c4c6c9",
@@ -39,8 +39,8 @@ const PAGE_COLOURS: Readonly<Record<DesignTheme, Readonly<Record<string, string>
     "accent-ink": "#9aa2ff",
   },
   [DesignTheme.Light]: {
-    bg: "#fdfdfd",
-    inset: "#ececee",
+    bg: DESIGN_PAGE_BACKGROUND[DesignTheme.Light],
+    inset: "#f3f3f5",
     ink: "#17181a",
     "ink-2": "#3b3d41",
     "ink-3": "#5f6368",
@@ -60,7 +60,8 @@ const FONT_FACES = Object.entries(DESIGN_FONTS)
 /**
  * A page's defaults, in the app's look: Genex's card and ink, its two typefaces, its colours as
  * variables a page builds with, pictures that fit, and a pointer over what can be pressed.
- * Everything is at zero specificity or on `html`, so the page's own styles win.
+ * Everything is at zero specificity or on `html`, so the page's own styles win, except that no
+ * scrollbar is ever drawn.
  */
 export function designPageStyle(theme: DesignTheme): string {
   const colours = Object.entries(PAGE_COLOURS[theme])
@@ -76,6 +77,9 @@ export function designPageStyle(theme: DesignTheme): string {
     ":where(a){color:var(--genex-accent-ink)}",
     ":where(a[href]){cursor:pointer}",
     `${RETIRED_BUTTONS}{display:none !important}`,
+    // A page is as large as its frame, and the wheel is the canvas's: a scrollbar would only ever
+    // be a seam at its edges (a page a pixel past its frame drew both).
+    "*{scrollbar-width:none !important}",
   ].join("");
 }
 

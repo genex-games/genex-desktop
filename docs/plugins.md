@@ -514,7 +514,7 @@ folder (New game puts it in `unreal/`); a project elsewhere is not.
 Epic's toolsets cannot press the player's buttons, so the plugin also ships the **Genex editor
 helper** (`src/plugins/unreal/GenexEditorHelper`), a Python-only plugin for Unreal itself (a
 `.uplugin` folder), so nothing compiles. Setup copies it into a project's `Plugins/` folder.
-Because it is enabled by default, Unreal loads it without a `.uproject` entry. Its `init_unreal.py` then registers the toolset `genex_play.tools.GenexPlayTools`, which
+Because it is enabled by default, Unreal loads it without a `.uproject` entry. It asks for each plugin it needs in the editor only (`TargetAllowList`): a packaged game still knows the helper, and one whose platform leaves such a plugin out (the web build has no Geometry Script) stopped at its start. Its `init_unreal.py` then registers the toolset `genex_play.tools.GenexPlayTools`, which
 Epic's server lists:
 - `project_file` names the project the editor has open (the bridge's check above).
 - `list_actions` lists the game's controls.
@@ -564,7 +564,10 @@ Epic's server lists:
   visible, enabled button by its text or name through its click event (hit-testing skipped). A game whose
   interface is drawn in C++ Slate or on a HUD canvas lists nothing: screenshots are then the only reading.
 - `light_play {on}` lowers the rendering while an agent plays (screen percentage 50, scalability groups at
-  most 1) and puts each console variable back exactly when the computer tool's play ends.
+  most 1) and puts each console variable back exactly when the computer tool's play ends. Unreal 5.9
+  runs no tool for the frames such a change blocks it, so the computer tool leaves the editor a moment after each switch, gives the throttle back
+  before the rendering, and makes a refused start of play once more (`startPlay`); an open that can't
+  start play gives the rendering and the throttle back.
 - `pilot {file, seconds, decide}` starts a pilot and `pilot_step {answer, stop}` steps it
   (`genex_play/pilot.py`). A pilot is a `.py` of the project (`Pilots/<goal>.py`, given relative to it,
   no link or `..`; on Windows `\` separates folders too and the path is compared to its real path
@@ -1199,8 +1202,14 @@ What differs on 5.9 beyond that table:
   build tool's sandbox may create folders, never files, under `<engine>/Engine/Intermediate/Build`
   (`foldersOnly` in `ubt-sandbox.ts`): a fresh 5.9 lacks the folder its first build writes into.
 - 5.9 builds games for the web (its Wasm platform), which `package-game` makes with
-  `system: "web"` on a computer whose Unreal includes that platform. The Mac launcher build of 5.9
-  holds none, so the call is refused there.
+  `system: "web"` on a computer whose Unreal includes that platform (the Mac launcher build from
+  Preview 2; Preview 1's held none, and the call is refused there). A game with no C++ module is
+  packaged from the engine's own web game where the install holds one (`engineHoldsWebGame`: from
+  Preview 2; Preview 1's Windows install holds that game's receipt and still builds C++ games only,
+  so the receipt's build is read), and refused with what to do where it doesn't. The emsdk folder is named by
+  `WASM_EMSDK_ROOT` or `EMSDK`: on Windows as the registry holds them, elsewhere as Genex's own
+  environment has them and then as the login shell does (`readLoginVariable`), since an app started
+  from the Dock inherits no terminal's variables.
 
 The confirmed `setup` step does four things, each one only if it is needed:
 - switches a project made with an older Unreal (5.7 or before) to the newest supported engine by
@@ -2856,7 +2865,9 @@ packaged Mac app is then let onto the network (`substrate/mac-entitlements.ts`):
 `Sandbox.NoNet.entitlements` (App Sandbox, no network), under which macOS refuses the game every DNS
 lookup, so a sandboxed app without `com.apple.security.network.client` is signed again ad hoc with it
 added and read back; one that can't be fails the package. Like
-`plugin-test` it runs outside ProcessSandbox, with the small environment and its own process group:
+`plugin-test` it runs outside ProcessSandbox, with the small environment and its own process group
+(on Windows attached instead, since a detached AutomationTool has no console and prints nothing, and
+`taskkill /T` ends the tree by process id):
 AutomationTool rewrites its per-user config cache for each new project and the cook needs the
 editor's derived data, Zen store and shader workers, all of which UnrealBuildTool's profile denies.
 On Windows `RunUAT.bat` runs through cmd.exe with every path whole in quotes (`quotedScriptLine`); a
@@ -3082,7 +3093,7 @@ The plugin makes, sets up and opens that project itself (`backend.ts`), with no 
   it opens Unity's page.
   `open-hub` opens Hub for the sign-in, which stays the person's. `install-unity` checks for about
   12 GB free, asks Hub for its releases (`-- --headless editors --releases --json`), picks the
-  newest final release of the line Genex was measured on (`INSTALL_LINE`, else the newest final
+  newest final release of the line Genex was measured on (`INSTALL_LINE`, Unity 6.6; else the newest final
   Unity 6) and starts `-- --headless install` on its own, its output kept in
   `unity-setup/editor-install.log` and read back for the row's percentage or why it stopped.
   `stop` (the card's Stop while Genex works) ends the download, the copy, the sign-in wait, Hub's
@@ -3250,9 +3261,12 @@ yet opens one (the system save panel), and Pipeline does not see it: `/api/statu
 operation timed out". Three things keep an unattended agent out of it, and the lead learns when
 it is stuck:
 
-- **No such save is sent.** The connector lists the open scenes before a `save_all`, or a
-  `save_scene` with no `path` (alone or in a `batch`), and refuses it while a scene has no file.
-  Genex's own save (`saveWork`) never calls `save_all`: it saves each named scene with unsaved work
+- **No such save is sent.** The connector lists the open scenes before an `editor save_all`, or a
+  `scene save` with no `path` (alone or in a `job batch`; `save_all`, `save_scene` and `batch` on
+  0.8), and refuses it while a scene has no file, saying how to give it one on either version
+  (`NAME_THE_SCENE`): 0.8's `save_scene` takes a new path, while 1.0.0's `scene save` saves a scene
+  only under the path it has and fails such a save itself, with no panel.
+  Genex's own save (`saveWork`) never calls `editor save_all`: it saves each named scene with unsaved work
   by its path, then `AssetDatabase.SaveAssets()`, and counts an unsaved untitled scene as work it
   could not save. `new-game` leaves no untitled scene behind.
 - **A stall is read as one.** Before each command the connector looks at the main thread
@@ -3294,8 +3308,8 @@ it is stuck:
 The `editor` lock (`per: project`) has `editor-activity` as its `personFirst` probe: the person is
 using the editor while it plays a game the agent did not start, and `unsaved` is the open scenes
 with unsaved work. The connector marks the agent's own play (`agent-play.ts`: a marker in its
-folder written before its `editor_play`, alone or in a batch, reaches the editor, removed on its
-`editor_stop`), so the agent's play never makes its own calls wait. The probe notes each time it
+folder written before its `editor.playmode start`, alone or in a batch, reaches the editor, removed
+on its `editor.playmode stop`; `editor_play` and `editor_stop` on 0.8), so the agent's play never makes its own calls wait. The probe notes each time it
 sees that play running (`seenAt`), and believes a marker for half an hour after it was written or
 last seen; it forgets one once it sees the editor play nothing, but not while the editor reloads its
 scripts to enter Play mode, nor, while no probe has seen it running, within 30 s of the play being
@@ -3323,9 +3337,26 @@ runs: Genex chooses and keeps no port. Requests go to `127.0.0.1` with the beare
 redirect (`pipeline.ts`). A call waits up to a minute for an editor that is busy (503: importing, a
 dialog of Unity's own), reloading (nothing listens) or restarted (401: the descriptor is read again,
 once), then says which. A command is never sent twice: one that was sent and got no answer is
-recorded as outcome unknown. A captured picture (`capture_game_view`, `capture_scene_view`, in a
+recorded as outcome unknown.
+
+The plugin asks for Pipeline 1.0.0 (`PIPELINE_VERSION`), whose commands are a group and a name
+(`scene save`, `editor.playmode stop`, `job batch`); through 0.8 each was one flat word
+(`save_scene`, `editor_stop`, `batch`), and 0.9 on refuses those. An editor's descriptor says which
+it speaks (the `exec.commandTimeouts` capability, there since 0.9), and `pipeline-commands.ts` holds
+the commands Genex itself runs or reads closely in both spellings (`EditorCommand`): Genex's own
+calls are spelled for the editor they go to, and a name from an agent is read as the command it is
+on either. What the commands answer changed too and is read both ways: open scenes are a bare list
+since 1.0.0 (`listedScenes`), and `script eval` answers the value itself where 0.8 wrapped it
+(`evaluated`). A project whose manifest still asks for a version Genex itself pinned earlier
+(`PAST_PIPELINE_VERSIONS`) is moved to the current one when `open-editor` launches it
+(`moveToCurrentPipeline`; the setup record follows, so `undo-setup` still works); any other version
+is the person's and stays, as does a project an editor already has open, which keeps working over
+the flat names until it is next opened by Genex. The rest of this section names commands as 1.0.0
+does.
+
+A captured picture (`capture game_view`, `capture scene_view`, in a
 batch too) is handed over as an MCP image, at most four an answer, with a note in place of its
-base64 text. A `capture_game_view` that names no `width` or `height` is sent with the size of
+base64 text. A `capture game_view` that names no `width` or `height` is sent with the size of
 Genex's own looks at the game (`ENGINE_PLAY_VIEW`, 1280×720, in whichever of the two the editor's
 catalogue lists): unsized, Unity captures the Game view at its full Retina size, and every picture
 stays in the agent's transcript. Each command the connector sends is noted in its folder
@@ -3347,34 +3378,44 @@ opened with no run under way, is the person's and has no record. The plugin's **
 unless turned off) is read at each run's end.
 
 Before a command is sent the gate (`pipeline-gate.ts`) checks it against the catalogue just read.
-It refuses a name the editor does not list; the commands agents never run (`eval`, `eval_file`,
-`quit`, `set_authoring_root`, `set_runtime_pipeline_settings`, and the pre-0.8 `add_package` and
+It refuses a name that is not exactly one the editor's catalogue lists (since 0.9 the editor also
+runs a command by its last word alone, by a dotted name, or from `argv` and `commandLine`: `eval`,
+`script.eval`, `set_root`, `invoke_menu`; none of those is a listed name, so none passes, and the
+catalogue is keyed by an entry's whole `command`, not the bare `name` 0.9 added); the commands
+agents never run (`script eval`, `script eval_file`, `editor quit`, `runtime quit`,
+`authoring set_root`, `settings.runtime_pipeline set`, and under their older names `eval`,
+`eval_file`, `quit`, `set_authoring_root`, `set_runtime_pipeline_settings`, `add_package` and
 `remove_package`; `list_commands` leaves them out and `describe_command` describes none); and a
 file outside the game's folder once links are resolved. Agents do what a person does in the
-editor: `package_add`, `package_remove`, `package_resolve` and `package_embed` (a `file:` package's
+editor: `package add`, `package remove`, `package resolve` and `package embed` (a `file:` package's
 folder, relative to the project's `Packages/`, must be inside the game, and any other reach to a
-disk path such as `git+file:` is refused), `switch_build_target`, `build` (only with an `outputPath`
-inside the game, since Unity otherwise builds into the person's last build folder; the skill names
-`Builds/`, which Genex leaves out of history) and `menu`, except an item with a `Quit`, `Exit`,
+disk path such as `git+file:` is refused; the package is read from the parameter the catalogue
+lists, `name` on 1.0.0 and `identifier` before), `build.target switch`, `build run` (only with an
+output path inside the game, `output-path` on 1.0.0 and `outputPath` before, since Unity otherwise
+builds into the person's last build folder; the skill names
+`Builds/`, which Genex leaves out of history) and `editor invoke_menu`, except an item with a `Quit`, `Exit`,
 `New Project`, `Open Project` or `Open Recent` segment, which would end the editor or open another
-project in it. `run_script` stays available: it compiles
+project in it. `script run` stays available: it compiles
 and runs a C# file of the game's own folder, which the game's checkpoints keep, and is how a scene
 is built with code. Which parameters name files comes from the catalogue's own types: a text
-parameter (`String`, `String[]`) named `path`, `paths`, `save_path`, `output`, `outputPath`,
-`file`, `filename`, `assemblyDir`, `source`, `destination` or `scene_path` is one, relative to the
+parameter (`String`, `String[]`) on the gate's list (`FILE_PARAMETERS`: `path`, `paths`, `file`,
+`output-path`, `assembly-dir`, `scene-path`, `source`, `destination`… and 0.8's `save_path`,
+`outputPath`, `assemblyDir`, `scene_path`) is one, relative to the
 Unity project, while an `ObjectRef` (an asset path, a GUID, a hierarchy path such as `/Player`) is
 Unity's to resolve inside the project. The bound is the game's folder, not only the Unity project
-in it, so `import_asset` can take a file of the game's own `assets/`. Every operation of a `batch`
+in it, so an asset import can take a file of the game's own `assets/`. Every operation of a `job batch`
 (`{id?, command, params}`) is held to the same rules, a batch inside a batch is refused, and so is
 a file named by an earlier operation's answer (`$0.field`), which no check can read ahead of time.
 Project settings and the build's scene list stay available: a game needs its tags, layers, input
 and scenes. The gate is a guardrail for the person's editor, not a sandbox: C# an agent writes into
-the project compiles and runs in that editor, and Genex's own steps run `eval` there themselves
+the project compiles and runs in that editor, and Genex's own steps run `script eval` there themselves
 (to save assets, to set Run In Background, to exit).
 
 Not there yet: a still of every camera (only the main one), and a dialog of Unity's own
 (`blocked_by_dialog`) answered for the person: it is waited out, then ends in the same restart. All of the above was run against Pipeline 0.8.0-exp.1 on Unity 6000.3.10f1
-(2026-10-14) with the built package.
+(2026-10-14) with the built package, and the commands, the gate's spellings and the move between
+versions against Pipeline 1.0.0 and 0.8.0-exp.1 on Unity 6000.6.0f1 (Unity 6.6) on a Mac
+(2026-11-19, `unity-live.test.ts`).
 
 ## Panels and trusted approval
 
@@ -3876,8 +3917,9 @@ Genex:
   open, taken down, not approved and public again are a toast with **Open** for 8 s
   (`reviewToasts`). A click anywhere opens the game's chat with Publish (`openPluginSetupFor`, which
   waits for that game's strip) and sends nothing. The sidebar's second line under a game on Genex
-(Public in green, In review, Human review, Not approved and Taken down in red, Fixing n things
-with the working dot, Checking fixes; none for a game Genex doesn't know) comes from
+(small grey words after a mark: Public with a globe, In review, Human review and Checking fixes with
+a clock, Not approved and Taken down in orange with the warning triangle, Fixing n things with the
+working dot; none for a game Genex doesn't know) comes from
   `studio:plugins.genex-review-lines` (fixture-safe; `core/genex-review-lines.ts`): the kept
   review, the chat's newest fix press (Fixing while the agent works, Checking fixes once the app went
   again) and the publish record (Public for any listed game), each game's review part kept until
@@ -4057,7 +4099,15 @@ with the working dot, Checking fixes; none for a game Genex doesn't know) comes 
   local draft (`freeOnLocalDraft`) and `items list|search` free, and `llm bench`, `shop set|remove`
   on an item in the store, `shop test` and `items add|remove` paid; everything else, `shop publish|unpublish` (Studio puts a game's items
   on sale after its publish), `shop sync` (Studio's own upload of local drafts after a publish, `syncLocalItems`), `budget --assets` (its allowance would live only in the removed run folder) and
-  every flag Studio sets itself is refused with a typed reason naming the tool to use instead. A
+  every flag Studio sets itself is refused with a typed reason naming the tool to use instead.
+  `llm bench` spends the person's own credits, never Nex: `max-credits` is the most one attempt may
+  spend and comes first on its card, and `max-coins`, the CLI's name for it before 1.35.3, is read
+  as `max-credits` (`renamed`; the two with different values are refused). Its `schema` names the
+  game's answer-shape file: a path checked as a store item's files are (below) and held to one
+  `.json` file, by its real name, of at most 16 KB (`SmallGameFile`, `SCHEMA_MAX_BYTES`), copied
+  whole into the run folder with no object storage opened for it. `llm price` is refused with its
+  own reason: it reprints the `.genex/llm-bench.json` the CLI left in its folder, and no run folder
+  outlives its call, so the bench's own answer is the record. A
   store item's `shop add|set` takes `price` (0 is Free), `type`, `description` (≤ 1000, `""` clears
   it on `set`), `tag` (one or a list, ≤ 10 × 32), `shared` (`--shared`/`--no-shared`) and `image`,
   `model` and `package`: paths inside the bound game (`main/core/genex-game-paths.ts`), refused as
@@ -4138,8 +4188,28 @@ with the working dot, Checking fixes; none for a game Genex doesn't know) comes 
   says that publishing ships the room module and that `genex__room` tests it on this Mac. The
   `genex` plugin keeps Genex's product requirements and API facts: Studio's cuts (`cuts.json`, a
   section, a run of lines, a replaced sentence or a dropped reference, each matching the pinned text
-  exactly once) take Genex's design and process advice out of the vendored text, and the prefaces
-  carry the API facts those passages held. That advice, reworded as optional, is the bundled
+  exactly once) take Genex's design and process advice out of the vendored text, and the steps
+  Studio refuses (the play-time model cards' `init --convert` and `llm price`), runs itself (practice
+  mode: Studio starts `llm practice` beside each preview, so an agent never runs it) or cannot run
+  yet (from CLI 1.44.0: creator-paid budgets, model calls from a server room, with the
+  server-authoritative card's `ctx.models` section, the engine bindings and the bench's `system` and
+  `messages` options, with the four references that describe them and the design guide dropped),
+  and the prefaces carry the API facts those passages held. The play-time model card's preface also
+  wins over its bench-first rule: a game ships with its model calls on, on provisional ceilings
+  (a call starts at `maxCredits` 4, a budget's `perCallMaxCredits` is 16 so a call cut off as `provider_token_limit` can double its `maxCredits` up to 16, and `perCallEstimateCredits` stays 1, marked in the
+  code) until a bench replaces them, a bench card left unapproved is asked once; Studio's previews
+  answer with practice answers (`source: 'practice'`), which the game wires as real answers, and the
+  person can switch Live to real models ([Builds and Live](product/builds-live.md#the-two-views)), so
+  the final message says so and gives the draft's link; the game labels its written lines whenever
+  they play instead; and a game that listens or speaks is built on Genex voice (the card's
+  `references/voice.md`: `getVoiceCatalog`, `voice` on
+  the budget request, `createVoiceRecorder` with `transcribe`, `createSpeaker`), never on the
+  browser's speech recognition, which hears nothing in Studio's preview. Such a game is whole
+  where the catalog answers `enabled: false`: it takes typed input and shows its lines as text.
+  It always declares `microphone` in its `package.json`, the line Live reads to ask the person
+  for it. The embed SDK Studio serves to games is 0.38.0, the first with those calls, and the
+  pinned CLI (1.45.2) answers voice in the preview's practice helper: made-up words for a
+  recording and a placeholder spoken voice, or real ones once the person presses Use real AI. That advice, reworded as optional, is the bundled
   `genex-recommendations` plugin (skills only: multiplayer patterns, cover craft, asset sources, shop
   design, player experience, play-time models), which works under the hood of Genex (see
   [First-party privileges](#first-party-privileges)). Genex's currency is Nex (the cards
@@ -4150,11 +4220,14 @@ with the working dot, Checking fixes; none for a game Genex doesn't know) comes 
   CLI release not yet on npm changed is vendored ahead of the pin (`--ahead-from <apps/cli> --ahead
   <cards> --ahead-source <label>`): its files record that `version` and a `pending` note, plain
   refreshes keep them, and the test fails once the pin reaches that version until a refresh takes
-  them from the published CLI. Today every card comes from the pinned CLI 1.36.15, none ahead of it.
+  them from the published CLI. Today no card is ahead of the pin: every card comes from the pinned CLI.
 - The bundled CLI follows npm: every 6 hours `.github/workflows/genex-cli-follow.yml` compares
   npm's `latest` `@genex-ai/cli-demo` with the pin. When npm is ahead, `scripts/follow-genex-cli.ts`
   opens one bump PR against `dev` with the exact pin, refreshed skills, the plugin's next patch
-  version and the version mentions it lists.
+  version and the version mentions it lists. It does not move Studio's SDK pins
+  (`GENEX_GAME_PACKAGES`, `GENEX_STUDIO_TOOLS` in `shared/genex.ts`): when a new card asks for newer
+  ones, its run fails `genex-skills-vendor.test.ts` and opens nothing until someone raises those
+  pins by hand (as CLI 1.44.0 did with multiplayer 0.17.20 and authority-dev 0.1.11).
 - Its backend and adapter import core substrate modules (session credentials, secrets, delivery,
   outcomes, atomic writes, snapshots), which `scripts/build-plugins.mjs` bundles from this repo.
 

@@ -20,6 +20,7 @@ import {
   SandboxUnavailableError,
   missingLinuxTools,
   sandboxProblem,
+  sandboxSetupProblem,
   sandboxStartFailureCode,
   windowsProxyPortsError,
   windowsSetupProblem,
@@ -107,6 +108,18 @@ describe("sandbox problem mapping", () => {
     assert.equal(windowsSetupProblem(typed("not_provisioned"))?.windowsNeeds, undefined);
     // A loopback mode another program installed is not Genex's to replace: it stays the start's error.
     assert.equal(windowsSetupProblem(typed("wfp_loopback_mismatch")), null);
+  });
+
+  it("finds the setup problem a failed start wraps, and none in any other failure", () => {
+    const held = windowsSetupProblem(Object.assign(new Error("x"), { code: "not_provisioned" }));
+    assert.ok(held);
+    const unavailable = new SandboxUnavailableError(held);
+    assert.equal(sandboxSetupProblem(unavailable), held);
+    const wrapped = new Error("harness would not start", { cause: new Error("spawn", { cause: unavailable }) });
+    assert.equal(sandboxSetupProblem(wrapped), held);
+    assert.equal(sandboxSetupProblem(new SandboxLaunchError(SandboxLaunchCode.SrtWinTimeout)), null);
+    assert.equal(sandboxSetupProblem(new Error("anything else")), null);
+    assert.equal(sandboxSetupProblem("not an error"), null);
   });
 
   it("Windows initialize errors map by their code, never by their words", () => {

@@ -450,8 +450,6 @@ export default {
   Blur: "模糊",
   "Bonsai currently requires an Apple Silicon Mac": "Bonsai 目前需要搭载 Apple 芯片的 Mac",
   "Bonsai installed · starts on demand": "Bonsai 已安装 · 按需启动",
-  "Bonsai is answering a chat or build. Delete the model when it finishes.":
-    "Bonsai 正在回复对话或构建。请等它完成后再删除模型。",
   "Bonsai requires Apple Silicon": "Bonsai 需要 Apple 芯片",
   "Bonsai requires at least 16 GiB of memory.": "Bonsai 需要至少 16 GiB 内存。",
   "Bonsai runtime is unavailable": "Bonsai 运行时不可用",
@@ -658,7 +656,8 @@ export default {
   Checkpoint: "检查点",
   Choose: "选择",
   "Choose Blender…": "选择 Blender…",
-  "Choose PQ2_0 (recommended) or PTQ1_0 in Model setup.": "请在模型设置中选择 PQ2_0（推荐）或 PTQ1_0。",
+  "Download Bonsai 2 27B or Bonsai 2 27B Lite in Settings › Local Models.":
+    "请在“设置 › 本地模型”中下载 Bonsai 2 27B 或 Bonsai 2 27B Lite。",
   "Choose a PNG, JPEG or WebP image, or a valid cover recipe.": "请选择 PNG、JPEG 或 WebP 图片，或有效的封面配方。",
   "Choose a coding model": "选择编程模型",
   "Choose a connector to review and connect. Existing configurations stay unchanged.":
@@ -1332,7 +1331,7 @@ export default {
   "Fit every asset": "显示全部素材",
   "Fit everything": "显示全部",
   "Tidy up": "整理",
-  "Genex is drawing {title}": "Genex 正在画 {title}",
+  "Genex is drawing": "Genex 正在画",
   "{title} · next": "{title} · 接下来",
   "{count, plural, one {# new pick} other {# new picks}}": "{count, plural, other {# 个新选择}}",
   "Use this": "用这个",
@@ -1758,6 +1757,9 @@ export default {
   "Install Ollama": "安装 Ollama",
   "Install OpenCode": "安装 OpenCode",
   "Install OpenCode from Settings › Model Providers.": "请在“设置 › 模型提供方”中安装 OpenCode。",
+  "Install Pi from Settings › Model Providers.": "请在“设置 › 模型提供方”中安装 Pi。",
+  "This version of Pi is too old for Genex. Update Pi, then check again.":
+    "这个版本的 Pi 对 Genex 来说太旧了。请更新 Pi，然后再检查一次。",
   "Install Unity 6": "安装 Unity 6",
   "Install Unreal {version}": "安装 Unreal {version}",
   "Install Xcode": "安装 Xcode",
@@ -2416,6 +2418,7 @@ export default {
   "Open App Store": "打开 App Store",
   "Open Apple's downloads": "打开 Apple 下载页面",
   "Open Model providers to reconnect, then try again.": "打开“模型提供方”重新连接，然后重试。",
+  "Open Pi and type /login to connect a provider.": "打开 Pi 并输入 /login 来连接提供方。",
   "Open Plugins": "打开“插件”",
   "Open Privacy settings": "打开隐私设置",
   "Open Studio": "打开 Studio",
@@ -2496,6 +2499,12 @@ export default {
   "OpenCode keeps each sign-in": "OpenCode 会记住每次登录",
   "OpenCode ready": "OpenCode 已就绪",
   "OpenCode ready · free models": "OpenCode 已就绪 · 免费模型",
+  "Pi didn't answer. Check the installation, then try again.": "Pi 没有响应。请检查安装后重试。",
+  "Pi has no model it can run yet.": "Pi 还没有可运行的模型。",
+  "Pi isn't installed on this computer.": "这台电脑上没有安装 Pi。",
+  "Pi keeps each sign-in": "Pi 会记住每次登录",
+  "Pi sign-in": "Pi 登录",
+  "Pi {version}, {count, plural, other {# model(s)}}": "Pi {version}，{count, plural, other {# 个模型}}",
   "OpenCode sign-in": "OpenCode 登录",
   "OpenCode {version}, {count, plural, other {# model(s)}}": "OpenCode {version}，{count, plural, other {# 个模型}}",
   "OpenCode's model list could not be read.": "无法读取 OpenCode 的模型列表。",
@@ -3243,6 +3252,7 @@ export default {
   "Sign in to a provider in OpenCode to run its models.": "在 OpenCode 中登录提供方即可运行它的模型。",
   "Sign in to a provider with OpenCode from Settings › Model Providers.":
     "请在“设置 › 模型提供方”中通过 OpenCode 登录模型提供方。",
+  "Sign in to a provider with Pi from Settings › Model Providers.": "请在“设置 › 模型提供方”中通过 Pi 登录模型提供方。",
   "Sign in to another provider": "登录其他提供方",
   "Sign in to another provider…": "登录其他提供方…",
   "Sign in to buy things in games": "登录后即可在游戏中购买",
@@ -3364,12 +3374,18 @@ export default {
   "Stop your builds and replies first, then move.": "请先停止你的构建和回复，再进行移动。",
   Stopped: "已停止",
   "Stopped adding the Luau checks. Nothing was kept.": "已停止添加 Luau 检查。未保留任何内容。",
+  "Stopped before it started — nothing was done. Send a message to go on.":
+    "开始前已停止，什么都没做。发送消息即可继续。",
+  "Stopped before the build started — nothing was built.": "构建开始前已停止，没有制作任何内容。",
   "Stopped getting Roblox Studio.": "已停止获取 Roblox Studio。",
   "Stopped getting Roblox Studio. Anything Roblox's installer already put on this computer stays.":
     "已停止获取 Roblox Studio。Roblox 安装程序已经放到这台电脑上的内容会保留。",
   "Stopped play": "已停止试玩",
+  "Stopped waiting. Send a message to go on once it's ready.": "已停止等待。准备好后发送消息即可继续。",
   "Stopped.": "已停止。",
   "Stopped. Everything built so far is kept.": "已停止。目前做好的内容都已保留。",
+  "Stopped. Finished edits are preserved; send a message to continue.":
+    "已停止。已完成的修改都已保留，发送消息即可继续。",
   "Stopped. What it built is in your game now.": "已停止。做好的内容已进入你的游戏。",
   "Stopped. What it built is kept in your project.": "已停止。做好的内容保留在你的项目中。",
   "Stopped. Your game is as you left it.": "已停止。你的游戏保持原样。",
@@ -3859,6 +3875,8 @@ export default {
   "This model is unavailable. Check the connection or choose another model.":
     "此模型不可用。请检查连接或选择其他模型。",
   "This model isn’t available right now": "此模型暂时不可用",
+  "This model needs more memory than this computer has free, so resending won't help. Pick a smaller model, or close other apps and try again.":
+    "这个模型需要的内存比这台电脑剩余的内存多，所以重新发送也没用。请换一个更小的模型，或者关掉其他应用后再试。",
   "This page isn't from the sign-in Genex started.": "此页面不属于 Genex 发起的登录。",
   "This paste has {count, plural, other {# servers}}. Pick one:":
     "粘贴内容中有 {count, plural, other {# 个服务器}}。选一个：",
@@ -3995,6 +4013,7 @@ export default {
     "有两个 Unreal 编辑器开着。请在你要退出的那个编辑器窗口中退出它。",
   "Two open Studios have a place named {name}, so Genex can't tell them apart. Save one under another name in Studio, then choose it again.":
     "两个打开的 Studio 中都有名为 {name} 的地点，所以 Genex 无法区分它们。请在 Studio 中把其中一个另存为其他名字，然后重新选择。",
+  "Type /login below and finish signing in. Pi keeps the sign-in.": "在下方输入 /login 并完成登录。Pi 会保存登录状态。",
   "Type a name.": "请输入名称。",
   "Type your email and password in the Unity Hub window and add a Unity license (Personal is free if Unity's terms allow it for you). Genex goes on by itself once you're in.":
     "在 Unity Hub 窗口中输入邮箱和密码，并添加 Unity 许可证（如果 Unity 的条款允许，Personal 版免费）。登录后 Genex 会自动继续。",
@@ -4094,6 +4113,7 @@ export default {
   "Update Claude Code": "更新 Claude Code",
   "Update Codex": "更新 Codex",
   "Update OpenCode": "更新 OpenCode",
+  "Update Pi": "更新 Pi",
   "Update Xcode": "更新 Xcode",
   "Update Xcode (this Mac has {version})": "更新 Xcode（这台 Mac 上是 {version}）",
   "Update all": "全部更新",
@@ -4265,6 +4285,8 @@ export default {
   "Windows app": "Windows 应用",
   "Windows didn't get permission to install. Press Do it for me again and choose Yes when Windows asks.":
     "Windows 没有获得安装许可。请再按一次“帮我完成”，并在 Windows 询问时选“是”。",
+  "Windows doesn’t let Genex’s agents sign in on this PC. Set up allows it.":
+    "Windows 不允许 Genex 的智能体在这台电脑上登录。“设置”会允许它。",
   "Windows needs a one-time setup of the protected workspace, approved by an administrator.":
     "Windows 需要一次性设置受保护的工作区，并由管理员批准。",
   "Windows will ask you to allow it once.": "Windows 会请你允许一次。",
@@ -4818,6 +4840,8 @@ export default {
   'the lead put a worker on "{task}"': "主智能体安排了一个助手做“{task}”",
   'the lead put a worker on "{task}" for {minutes}': "主智能体安排了一个助手做“{task}”，时长 {minutes}",
   "the model could not be reached": "无法连接到模型",
+  "the model needs more memory than this computer has free — close other apps or pick a smaller model, then press Resume":
+    "模型需要的内存比这台电脑剩余的内存多——请关掉其他应用或换一个更小的模型，然后点“继续”",
   "the model provider hit your plan's session limit": "模型提供方提示你套餐的会话额度已用完",
   "the model provider hit your plan's usage cap": "模型提供方提示你套餐的使用额度已用完",
   "the model provider is down": "模型提供方服务中断",
@@ -5215,6 +5239,7 @@ export default {
   "{name} isn't set up for Genex yet. Set it up first.": "{name} 尚未为 Genex 设置。请先设置。",
   "{name} isn’t on this computer any more.": "{name} 已不在这台电脑上。",
   "{name} needs Studio {version} or newer": "{name} 需要 Studio {version} 或更高版本",
+  "{name} still isn't signed in.": "{name} 仍未登录。",
   "{name} needs a sign-in": "{name} 需要登录",
   "{name} opens in Unreal {to} from now on.": "{name} 今后会在 Unreal {to} 中打开。",
   "{name} settings": "{name} 设置",
@@ -6059,8 +6084,8 @@ export default {
   "Install Antigravity's CLI to build with your Google AI plan.": "安装 Antigravity CLI，用你的 Google AI 套餐来制作。",
   "Installing Antigravity. This can take a minute.": "正在安装 Antigravity，可能需要一分钟。",
   "Not signed in to Antigravity.": "未登录 Antigravity。",
-  "Open the sign-in page, then paste the code it gives you here. Antigravity keeps the sign-in.":
-    "打开登录页面，把它给你的代码粘贴到这里。登录信息由 Antigravity 保存。",
+  "Sign in on Google's page in your browser, then paste the code it gives you here. Antigravity keeps the sign-in.":
+    "在浏览器中打开的 Google 页面上登录，然后把它给你的代码粘贴到这里。登录信息由 Antigravity 保存。",
   "Sign in to Antigravity from Settings › Model Providers.": "请在“设置 › 模型提供方”中登录 Antigravity。",
   "Sign in with your Google account to build with your plan.": "登录你的 Google 账号，用你的套餐来制作。",
   "Switch to another Google account": "切换到另一个 Google 账号",
@@ -6727,4 +6752,36 @@ export default {
   "column\u0004System": "系统",
   "column\u0004Share": "占比",
   "column\u0004Opened": "已打开",
+  "Show all {count}": "显示全部 {count} 个",
+  "{at} of {count}": "第 {at} 个，共 {count} 个",
+  "Add {cap} more": "再加 {cap}",
+  Allow: "允许",
+  "Genex's real models are switched off right now. Practice answers go on.":
+    "Genex 的真实模型现在已关闭。练习回答会继续。",
+  "Most credits this play session may spend": "这次游戏最多可用的积分",
+  "Practice answers (free, made up)": "练习回答（免费、编的）",
+  "Practice answers could not start: {error}": "练习回答没能启动：{error}",
+  "Real AI is billed to this game's draft on Genex, and it has none yet. Ask the chat to publish a draft, then try again. Practice answers go on.":
+    "真实 AI 会计费到这个游戏在 Genex 上的草稿，但它还没有草稿。让聊天发布一个草稿，然后再试一次。练习回答会继续。",
+  "Real AI is not available in this test profile. Practice answers go on.":
+    "这个测试配置里不能用真实 AI。练习回答会继续。",
+  "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
+    "真实 AI 需要你登录 Genex。在设置里登录，然后再试一次。练习回答会继续。",
+  "Real AI stopped. Practice answers go on.": "真实 AI 已停止。练习回答会继续。",
+  "Real AI · {spent} of {cap} credits": "真实 AI · {spent} / {cap} 积分",
+  "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
+    "这个预览里由真实模型回答，用你的 Genex 积分付费：这次游戏最多 {cap} 积分（{dollars}）。",
+  Start: "开始",
+  "Starting real AI…": "正在启动真实 AI…",
+  "The cap is used up": "额度用完了",
+  "This game wants to hear you through your microphone.": "这个游戏想通过麦克风听你说话。",
+  "Use real AI": "使用真实 AI",
+  "A local model is answering a chat or build. Delete the model when it finishes.":
+    "本地模型正在回复对话或构建。请等它完成后再删除模型。",
+  "Download Inkling 2 Mini in Settings › Local Models.": "请在“设置 › 本地模型”中下载 Inkling 2 Mini。",
+  "Download Inkling 2 Mini to build locally": "下载 Inkling 2 Mini 即可在本地构建",
+  "Inkling 2 Mini installed · starts on demand": "Inkling 2 Mini 已安装 · 按需启动",
+  "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
+    "本地模型需要搭载 Apple 芯片的 Mac，或 64 位 Windows / Linux 电脑",
+  "{model} can't run on this computer.": "{model} 无法在这台电脑上运行。",
 } satisfies LocaleCatalog;

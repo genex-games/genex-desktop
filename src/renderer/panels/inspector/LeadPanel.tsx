@@ -5,7 +5,7 @@
  */
 import { type JSX, useContext, useId, useMemo } from "react";
 import { t } from "../../../shared/i18n.ts";
-import { buildChecklist, leadLine } from "../../chat/build-checklist.ts";
+import { type BuildChecklist as Checklist, buildChecklist, leadLine } from "../../chat/build-checklist.ts";
 import { BuildChecklist } from "../../chat/BuildChecklist.tsx";
 import { STATE_TONE, StepState, Tone } from "../../run-steps.ts";
 import { LeadFace, leadAbout, leadFace } from "../../run-tree.ts";
@@ -28,16 +28,18 @@ const FACE_TONE: Record<LeadFace, Tone> = {
 };
 
 /** What the card holds: the plan's steps, else the lead's latest lines, else what its face means. */
-function LeadBody({ props, face }: { props: InspectorProps; face: LeadFace }): JSX.Element {
+function LeadBody({
+  props,
+  face,
+  plan,
+}: {
+  props: InspectorProps;
+  face: LeadFace;
+  plan: Checklist | null;
+}): JSX.Element {
   const listId = useId();
   const { outcome } = props;
-  // The lead's own rows: its plan's steps; the parts its workers build are rows of their own on Builds.
-  const plan = useMemo(() => {
-    const list = buildChecklist(outcome, Date.now());
-    return list?.step ? { ...list, rows: list.rows.slice(0, list.lead) } : null;
-  }, [outcome]);
-  // The plan marks a step at work: shown only while the lead works, never once its run ended.
-  if (plan && face === LeadFace.Working) return <BuildChecklist id={listId} list={plan} />;
+  if (plan) return <BuildChecklist id={listId} list={plan} />;
   const said = outcome?.lead?.said.slice(-LEAD_LINES_SHOWN).reverse() ?? [];
   if (!said.length) return <Para>{leadAbout(face, props.graph.tree)}</Para>;
   return (
@@ -57,6 +59,13 @@ export function LeadPanel(props: InspectorProps): JSX.Element {
   const working = face === LeadFace.Working;
   const line = working ? leadLine(outcome, Date.now()) : null;
   const underRow = useContext(UnderRowHeader);
+  // The lead's own rows: its plan's steps; the parts its workers build are rows of their own on Builds.
+  const steps = useMemo(() => {
+    const list = buildChecklist(outcome, Date.now());
+    return list?.step ? { ...list, rows: list.rows.slice(0, list.lead) } : null;
+  }, [outcome]);
+  // The plan marks a step at work: shown only while the lead works, never once its run ended.
+  const plan = working ? steps : null;
   return (
     <Panel
       id={GraphSelection.Lead}
@@ -75,8 +84,9 @@ export function LeadPanel(props: InspectorProps): JSX.Element {
       onClose={props.onClose}
       reply={{ label: LEAD_WORDS.name, placeholder: t("Anything the lead should do next?") }}
       onReply={props.onReply}
+      wide={plan !== null}
     >
-      <LeadBody props={props} face={face} />
+      <LeadBody props={props} face={face} plan={plan} />
     </Panel>
   );
 }

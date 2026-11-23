@@ -3,7 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { TERMINAL_LIMITS, type TerminalSession } from "../../shared/terminal.ts";
 import { useAppearance } from "../appearance/store.ts";
-import { isPasteChord, isTerminalChord, TOGGLE_TERMINAL_EVENT } from "./terminal-events.ts";
+import { isCopyChord, isPasteChord, isTerminalChord, TOGGLE_TERMINAL_EVENT } from "./terminal-events.ts";
 import { hostPlatform } from "../platform.ts";
 import { t } from "../../shared/i18n.ts";
 
@@ -56,7 +56,7 @@ function createTerminal(style: CSSStyleDeclaration, report: { current: (error: s
   });
 }
 
-/** The keys the dock takes from the terminal: Shift+Escape leaves it, Cmd/Ctrl+` toggles it, Ctrl+Shift+C copies. */
+/** The keys the dock takes from the terminal: Shift+Escape leaves it, Cmd/Ctrl+` toggles it, a copy chord copies (`isCopyChord`). */
 function dockKeys(terminal: Terminal, node: HTMLElement, report: { current: (error: string) => void }) {
   const leave = (event: KeyboardEvent): false => {
     event.preventDefault();
@@ -82,7 +82,7 @@ function dockKeys(terminal: Terminal, node: HTMLElement, report: { current: (err
   return (event: KeyboardEvent): boolean => {
     if (event.shiftKey && event.key === "Escape") return leave(event);
     if (isTerminalChord(event)) return toggle(event);
-    const copying = event.type === "keydown" && event.ctrlKey && event.shiftKey && event.code === "KeyC";
+    const copying = event.type === "keydown" && isCopyChord(event, hostPlatform(), terminal.hasSelection());
     if (copying) return copy(event);
     // xterm skips the key and the browser's own paste reaches it with the clipboard's text.
     if (isPasteChord(event, hostPlatform())) return false;

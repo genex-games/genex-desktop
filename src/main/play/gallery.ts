@@ -4,6 +4,7 @@
  * ticket and an invite code ride the Genex account's token when one is unlocked. Electron-free:
  * the request (the network, or a fixture's answers) and the token come in as deps.
  */
+import { setTimeout as sleep } from "node:timers/promises";
 import { LibraryKind } from "../../shared/asset-library.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { t } from "../../shared/i18n.ts";
@@ -62,6 +63,13 @@ const SHOTS_MAX = 4;
 const ONLINE_MAX_READS = 4;
 /** How long one network call may take. */
 const REQUEST_TIMEOUT_MS = 15 * SECOND_MS;
+/**
+ * How long a read waits before each of its tries again, after a failure that passes: the connection
+ * dropped or not up yet, or the API's edge answering for an API that restarts.
+ */
+const READ_RETRY_WAITS_MS: readonly number[] = [SECOND_MS, 3 * SECOND_MS];
+/** The edge's answers while the API behind it is down or restarting (Cloudflare's own 52x and 530 among them). */
+const PASSING_STATUSES: ReadonlySet<number> = new Set([502, 503, 504, 520, 521, 522, 523, 524, 530]);
 /** The most categories a card keeps, and the longest one: genex.games' own are short words. */
 const CATEGORIES_MAX = 16;
 const CATEGORY_MAX_LENGTH = 40;
@@ -727,16 +735,56 @@ export function playGallery(deps: GalleryDeps) {
 /** Play's gallery as `playGallery` makes it. */
 export type PlayGallery = ReturnType<typeof playGallery>;
 
+/** How the network request waits, tries again and says what failed; the defaults suit the app. */
+export interface NetworkRequestOptions {
+  /** How long one call may take. */
+  timeoutMs?: number;
+  /** The waits before a read's tries again; empty reads once. */
+  retryWaitsMs?: readonly number[];
+  /** Wait `ms` (a test passes one that does not). */
+  wait?: (ms: number) => Promise<unknown>;
+  /** A line for the log about a read that failed: its route, never its token or body. */
+  note?: (line: string) => void;
+  /** Whether the computer is online: offline, a read fails at once instead of trying again. */
+  online?: () => boolean;
+}
+
+/** What one call of a request is asked. */
+type CallInit = Parameters<GalleryRequest>[1];
+
+/** How one try of a read came out: an answer, or what it threw. */
+type ReadOutcome = { answer: GalleryAnswer } | { error: unknown };
+
+/** Whether a try failed: it threw, or the API's edge answered for an API that is not there. */
+const failed = (outcome: ReadOutcome): boolean => "error" in outcome || PASSING_STATUSES.has(outcome.answer.status);
+
+/** Whether a failed try may pass if tried again: anything but a timeout, which already waited its whole time. */
+const passes = (outcome: ReadOutcome): boolean =>
+  "error" in outcome ? !(outcome.error instanceof Error && outcome.error.name === "TimeoutError") : failed(outcome);
+
+/** How a failed try came out, in a few words for the log: the status, or the error's name and its cause's code. */
+function outcomeWords(outcome: ReadOutcome): string {
+  if (!("error" in outcome)) return `HTTP ${outcome.answer.status}`;
+  const { error } = outcome;
+  if (!(error instanceof Error)) return String(error);
+  const cause: unknown = error.cause;
+  const code = cause && typeof cause === "object" && "code" in cause ? ` ${String(cause.code)}` : "";
+  return `${error.name}${code}`;
+}
+
 /**
  * The network request: JSON in and out, the token as a Bearer header, a bounded wait. A refusal's
  * body comes back too (a write says why it was refused there); one that is not JSON reads as none.
+ * A read (GET) whose connection fails or whose API is restarting is tried again after a short wait,
+ * so a blip as Genex starts does not leave Play empty; a timeout is not, and a write never is.
  */
 export function networkRequest(
   fetchImpl: typeof fetch,
   origin: string,
-  timeoutMs = REQUEST_TIMEOUT_MS,
+  options: NetworkRequestOptions = {},
 ): GalleryRequest {
-  return async (route, init) => {
+  const { timeoutMs = REQUEST_TIMEOUT_MS, retryWaitsMs = READ_RETRY_WAITS_MS, wait = sleep, note, online } = options;
+  const once: GalleryRequest = async (route, init) => {
     const res = await fetchImpl(origin + route, {
       method: init.method ?? "GET",
       headers: {
@@ -750,4 +798,24 @@ export function networkRequest(
     const body: unknown = await res.json().catch(() => null);
     return { status: res.status, body };
   };
+  /** One try, as an answer or what it threw. */
+  const settle = (route: string, init: CallInit): Promise<ReadOutcome> =>
+    once(route, init).then(
+      (answer) => ({ answer }),
+      (error: unknown) => ({ error }),
+    );
+  /** A read, tried again after each of `waits` while it fails in a way that passes. */
+  const read = async (route: string, init: CallInit, waits: readonly number[]): Promise<GalleryAnswer> => {
+    const outcome = await settle(route, init);
+    const [waitMs, ...rest] = waits;
+    const again = waitMs !== undefined && passes(outcome) && online?.() !== false;
+    if (failed(outcome)) note?.(`${route.split("?")[0]}: ${outcomeWords(outcome)}${again ? ", trying again" : ""}`);
+    if (again) {
+      await wait(waitMs);
+      return read(route, init, rest);
+    }
+    if ("error" in outcome) throw outcome.error;
+    return outcome.answer;
+  };
+  return (route, init) => ((init.method ?? "GET") === "GET" ? read(route, init, retryWaitsMs) : once(route, init));
 }

@@ -29,7 +29,7 @@ licenses and terms of included third-party software.
   self-edit type gate runs keep their license and notice files under `dist/resources/tsc`.
 - The Genex asset CLI (`@genex-ai/cli-demo`, MIT) and its dependencies keep their license files
   in the Genex plugin payload under `dist/resources/plugins/genex/node_modules`.
-- Genex's room-module toolchain (`@genex-ai/authority-dev` 0.1.10, MIT), which a publish copy and a
+- Genex's room-module toolchain (`@genex-ai/authority-dev` 0.1.11, MIT), which a publish copy and a
   local room use, ships in the same payload with its dependencies and the peers they import
   (Colyseus, express, esbuild-wasm, QuickJS and `@genex-ai/physics`: MIT, ISC, BSD-3-Clause and
   0BSD), each keeping its license files there. The two that ship none have sections below.
@@ -60,6 +60,17 @@ licenses and terms of included third-party software.
   Linux version. Tux was drawn by Larry Ewing with The GIMP. Linux is a registered trademark of
   Linus Torvalds.
 
+## README banner
+
+`.github/banner.png` names the engines Genex builds in and the tools it routes by their own
+logos, each only to identify that product: the Unreal Engine, Unity, Roblox and Three.js marks
+(paths from Simple Icons 16.33.0, CC0-1.0, in white), the Godot icon (by Andrea Calabró, CC BY
+4.0, unaltered), and the Blender, Tripo, Meshy, Uthana, ElevenLabs and fal marks as
+genex.games/tools shows them. Every mark is a trademark of its owner (Epic Games, Inc.; Unity
+Technologies; the Godot Foundation; Roblox Corporation; the three.js authors; the Blender
+Foundation; and the tool vendors). Genex is not affiliated with, sponsored by or endorsed by
+any of them.
+
 ## Routed tool marks
 
 `src/renderer/media/tools` holds the marks of the tools Genex routes, as genex.games/tools shows
@@ -76,9 +87,9 @@ text behind a Studio-written preface; `vendor.json` records each source, version
 `npm run genex:skills` refreshes them.
 
 - Fourteen platform cards and their references, copied with Studio's cuts (`cuts.json`) taken out
-  from `@genex-ai/cli-demo` 1.43.6 `templates/skills` (MIT, Copyright (c) 2026 me-ai-org). The
+  from `@genex-ai/cli-demo` 1.45.2 `templates/skills` (MIT, Copyright (c) 2026 me-ai-org). The
   license text ships beside them as `skills/LICENSE-cards`, copied from the CLI's `LICENSE`.
-- `genex/SKILL.md` wraps https://genex.games/SKILL.md (v1.43.6), which is not part of the npm
+- `genex/SKILL.md` wraps https://genex.games/SKILL.md (v1.45.2), which is not part of the npm
   package. It is attributed to Genex here; its license is not yet confirmed (see "Status not yet
   recorded" below).
 
@@ -167,7 +178,7 @@ bundled program imports ships the same way, and the packaged smoke fails when on
 ## Vendored Genex embed SDK (@genex-ai/embed-sdk)
 
 Template games and published games that bring no SDK of their own use Genex's player-identity SDK,
-`@genex-ai/embed-sdk` 0.35.0 (MIT, as its package.json declares; the package ships no license
+`@genex-ai/embed-sdk` 0.38.0 (MIT, as its package.json declares; the package ships no license
 file). Its browser modules are copied unchanged to `dist/resources/vendor/genex/embed-sdk` and to
 `dist/resources/plugins/genex/embed-sdk`, and from there into a published game's
 `vendor/genex/embed-sdk`.
@@ -368,7 +379,7 @@ SOFTWARE.
 
 These npm packages ship in the app without a license file of their own; their notices follow.
 
-### @genex-ai/embed-sdk 0.36.0
+### @genex-ai/embed-sdk 0.38.0
 
 Bundled into `vendor/genex/`, the player-identity SDK a game made from Studio's template maps in its import
 map. Its package and repository (https://github.com/genex-games/genex) declare the MIT license
@@ -394,7 +405,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-### @genex-ai/authority-dev 0.1.10
+### @genex-ai/authority-dev 0.1.11
 
 Shipped in the Genex plugin payload (`plugins/genex/node_modules`), the toolchain that bundles,
 validates and runs a server-authoritative game's room module on this machine. Its package and
@@ -447,7 +458,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-### @genex-ai/multiplayer 0.17.19
+### @genex-ai/multiplayer 0.17.21
 
 Bundled into `vendor/genex/`, the multiplayer SDK a game made from Studio's template maps in its import
 map, and shipped as `genex-multiplayer-bridge.js` (its `dist/bridge.global.js`) beside a multiplayer

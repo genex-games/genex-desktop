@@ -5,6 +5,7 @@
  * keeps its own role tables, held to it here.
  */
 import assert from "node:assert/strict";
+import { OPEN_SETTINGS_EVENT, SettingsSection } from "../../src/renderer/settings-navigation.ts";
 import { describe, it } from "node:test";
 import * as seedRoles from "../../src/harness-seed/loop/model-roles.ts";
 import { SUBSCRIPTION_ENGINES as mainSubscriptions } from "../../src/main/core/subscription-engines.ts";
@@ -12,6 +13,7 @@ import {
   SUBSCRIPTION_ENGINES as rendererSubscriptions,
   SUBSCRIPTION_LABELS,
   signInPolling,
+  startSignIn,
   signInVendor,
 } from "../../src/renderer/subscription-auth.ts";
 import type { ClaudeLoginState } from "../../src/shared/claude-login.ts";
@@ -67,6 +69,7 @@ describe("provider table", () => {
       signInLine: "Connect your ChatGPT subscription to build games. Codex handles sign-in in your browser.",
     });
     assert.equal(signInVendor("claude-code").name, "Claude Code");
+    assert.equal(signInVendor("antigravity").name, "Antigravity", "a CLI's card names it as the provider table does");
     const unknown = signInVendor("gemini-cli");
     assert.equal(unknown.name, "gemini-cli");
     assert.equal(unknown.url, "", "no install page is guessed");
@@ -78,6 +81,7 @@ describe("provider table", () => {
     assert.equal(loginKind("codex"), "console");
     assert.equal(loginKind("ollama"), "none");
     assert.equal(loginKind("opencode"), "cli", "OpenCode runs its own sign-in in the terminal");
+    assert.equal(loginKind("pi"), "cli", "Pi's TUI /login runs in the terminal");
     assert.equal(loginKind("grok"), "cli", "Grok Build runs its own `grok login` in the terminal");
     assert.equal(loginKind("openrouter"), "none", "OpenRouter's key is pasted in Settings");
     assert.equal(loginKind("local-server"), "none", "a local server's address and key are typed in Settings");
@@ -106,6 +110,7 @@ describe("provider table", () => {
       // like OpenCode, it is never picked on the person's behalf.
       grok: "metered",
       openrouter: "metered",
+      pi: "metered",
       // Flipped (a local server): a server the person runs is local, never metered.
       "local-server": "local",
       // Flipped (Cursor): third-party models in Cursor, and Cursor's own past the plan's pool, are paid
@@ -117,7 +122,7 @@ describe("provider table", () => {
       // Genex bills the person's Genex credits per call: only their own pick runs on it.
       genex: "metered",
     });
-    for (const id of ["openrouter", "opencode", "grok", "cursor", "antigravity", "genex"])
+    for (const id of ["openrouter", "opencode", "pi", "grok", "cursor", "antigravity", "genex"])
       assert.equal(isMetered(id), true, id);
     for (const id of ["bonsai", "ollama", "local-server"]) assert.equal(isLocalEngine(id), true, id);
     for (const id of ["claude-code", "codex", "gemini-cli", "constructor", null, undefined]) {
@@ -226,5 +231,42 @@ describe("sign-in polling", () => {
       ],
     ];
     for (const [name, input, expected] of rows) assert.deepEqual(signInPolling(input), expected, name);
+  });
+});
+
+describe("the chat's sign-in card", () => {
+  it("starts a CLI's own sign-in and opens Model Providers, where its terminal runs; a subscription signs in through main", async () => {
+    const scope = globalThis as { window?: unknown };
+    const hadWindow = "window" in scope;
+    const calls: string[] = [];
+    const opened: unknown[] = [];
+    const target = new EventTarget();
+    target.addEventListener(OPEN_SETTINGS_EVENT, (event) => opened.push((event as CustomEvent).detail.section));
+    scope.window = Object.assign(target, {
+      studio: {
+        antigravitySignIn: async () => {
+          calls.push("antigravity");
+          return { started: true };
+        },
+        grokSignIn: async () => {
+          calls.push("grok");
+          return { started: false, missingCli: true };
+        },
+        subscriptionSignIn: async (payload: { engine: string }) => {
+          calls.push(`subscription:${payload.engine}`);
+          return { started: true };
+        },
+      },
+    });
+    try {
+      assert.deepEqual(await startSignIn("antigravity"), { started: true });
+      assert.deepEqual(opened, [SettingsSection.Providers], "Settings opens where the sign-in runs");
+      assert.deepEqual(await startSignIn("grok"), { started: false, missingCli: true });
+      assert.equal(opened.length, 1, "nothing opens for a sign-in that did not start");
+      assert.deepEqual(await startSignIn("codex"), { started: true });
+      assert.deepEqual(calls, ["antigravity", "grok", "subscription:codex"], "never `unknown subscription engine`");
+    } finally {
+      if (!hadWindow) delete scope.window;
+    }
   });
 });

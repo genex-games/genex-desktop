@@ -3,7 +3,7 @@ import { modelProgress } from "../model-progress.ts";
 import { SUBSCRIPTION_ENGINES, type StudioCore } from "../studio-core.ts";
 import { type ModelPullProgress, UiEvent } from "../../shared/ui-events.ts";
 import type { ProviderUsageService } from "../core/provider-usage.ts";
-import { isBonsaiModelId } from "../../substrate/bonsai/manifest.ts";
+import { isManagedModelId } from "../../substrate/bonsai/manifest.ts";
 import { BonsaiEngine } from "../../substrate/engines/bonsai.ts";
 import { LocalServerEngine } from "../../substrate/engines/local-server.ts";
 import { sanitizeModelOverride } from "../../substrate/local-server/settings.ts";
@@ -139,7 +139,7 @@ export function registerModelsIpc(
     const progressUpdates = modelProgress((progress) =>
       pushUiEvent({ type: UiEvent.ModelPull, payload: { model: payload.model, progress } }),
     );
-    if (isBonsaiModelId(payload.model)) {
+    if (isManagedModelId(payload.model)) {
       const engine = core.engines.get(EngineId.Bonsai);
       if (!(engine instanceof BonsaiEngine)) throw new Error(MESSAGE.bonsaiUnavailable());
       const unsubscribe = engine.runtime.onInstall((job) => pushUiEvent({ type: UiEvent.ModelInstall, payload: job }));
@@ -182,11 +182,11 @@ function registerLocalModelIpc(
   handle: IpcHandle,
   { core, pushUiEvent }: Pick<ModelsIpcDeps, "core" | "pushUiEvent">,
 ): void {
-  // Delete: Bonsai ids go to the managed runtime, every other name to Ollama, which lists what it has.
+  // Delete: managed ids (Bonsai, Inkling on a PC) go to the managed runtime, every other name to Ollama, which lists what it has.
   handle("studio:models.remove", async (payload) => {
     const model = payload?.model;
     if (typeof model !== "string" || !model) throw new Error(MESSAGE.noModel);
-    const id = isBonsaiModelId(model) ? EngineId.Bonsai : EngineId.Ollama;
+    const id = isManagedModelId(model) ? EngineId.Bonsai : EngineId.Ollama;
     const engine = core.engines.has(id) ? core.engines.get(id) : null;
     if (!engine?.removeModel) throw new Error(MESSAGE.cannotRemove());
     await engine.removeModel(model);

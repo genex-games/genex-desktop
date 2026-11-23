@@ -40,28 +40,36 @@ import { UserMessage } from "./UserMessage.tsx";
 import { MentionResults } from "./MentionResults.tsx";
 import type { MentionOutcome } from "../../shared/prompt-mention.ts";
 import { WorkLog } from "./WorkLog.tsx";
+import { type RowFact, useRowFact } from "./row-facts.ts";
 
 /** The design board's block: loaded with the first one a chat shows, so a chat with none never carries it. */
 const DesignPageCard = lazy(() => import("./DesignPageCard.tsx").then((card) => ({ default: card.DesignPageCard })));
 
+/** The chat's runs now: the one it is building, and the one paused (Resume belongs to it), if any. */
+export interface RunsNow {
+  activeRunId: string | null;
+  pausedRunId: string | null;
+}
+const NO_RUNS: RunsNow = { activeRunId: null, pausedRunId: null };
+
 /** A paused run while nothing else runs: its own card offers Resume. */
-const resumable = (runId: string | null | undefined, context: TranscriptContext): runId is string =>
-  Boolean(runId) && runId === context.pausedRunId && !context.activeRunId;
+const resumable = (runId: string | null | undefined, runs: RunsNow): runId is string =>
+  Boolean(runId) && runId === runs.pausedRunId && !runs.activeRunId;
 
 /**
  * Keep building on what a run left, in this chat: only from its newest result card, and only while
  * nothing of the chat runs or waits paused (a Resume belongs to that run).
  */
-function keepFor(entry: MorningEntry, context: TranscriptContext): KeepBuildingTap | null {
-  const { threadId } = context;
-  return threadId && keepsBuildingIn(entry, context) ? (notDone) => keepBuilding({ threadId, notDone }) : null;
+function keepFor(entry: MorningEntry, threadId: string | null, runs: RunsNow): KeepBuildingTap | null {
+  return threadId && keepsBuildingIn(entry, runs) ? (notDone) => keepBuilding({ threadId, notDone }) : null;
 }
 
 export interface TranscriptContext {
-  /** The run this chat is building right now, if any. */
-  activeRunId: string | null;
-  /** The chat's run that is paused (Resume belongs to it), if any. */
-  pausedRunId: string | null;
+  /**
+   * The chat's runs now. Only the rows that offer Resume or Keep building read it, each for
+   * itself, so a build starting or ending draws no other row again.
+   */
+  runs: RowFact<RunsNow>;
   /** The chat's game, for a morning card that did not record its own. */
   project: string | null;
   /** The chat itself, whose saved attachments a message's pictures are read from. */
@@ -78,8 +86,8 @@ export interface TranscriptContext {
   onApprovePlan: () => Promise<void>;
   /** "Make changes": start the reply in the composer. */
   onRevisePlan: () => void;
-  /** Whether a user bubble (by entry id) offers Rewind now. */
-  canRewind?: (entryId: string) => boolean;
+  /** Whether a user bubble (by entry id) carries Rewind; each bubble reads its own answer. */
+  canRewind?: RowFact<boolean>;
   /** Rewind the chat to before this bubble (stable, so memoized bubbles keep still). */
   onRewind?: (entryId: string) => void;
   /** Where a command a reply offers runs: this chat's game. Absent in Studio, whose replies offer none. */
@@ -140,39 +148,7 @@ export const TranscriptEntry = memo(function TranscriptEntry({
         </ChatDisclosure>
       );
     case EntryKind.Morning:
-      return (
-        <MorningCard
-          key={entry.id}
-          runId={entry.runId}
-          rounds={entry.rounds}
-          summary={entry.summary}
-          landingLine={entry.landingLine}
-          learned={entry.learned}
-          stoppedBecause={entry.stoppedBecause}
-          pausedOn={entry.pausedOn}
-          kept={entry.kept}
-          undone={entry.undone}
-          landed={entry.landed}
-          profile={entry.profile}
-          refusal={entry.refusal}
-          // A run the plan limit cut off is paused, not finished: the card says so and
-          // offers Resume itself, instead of leaving it to a grey line underneath.
-          paused={!entry.superseded && resumable(entry.runId, context)}
-          handedOff={entry.handedOff}
-          stillToFix={entry.stillToFix ?? null}
-          onKeepBuilding={keepFor(entry, context)}
-          project={entry.project ?? context.project}
-          commit={entry.commit}
-          before={entry.before}
-          after={entry.after}
-          {...(entry.assets ? { assets: entry.assets } : {})}
-          onShowLive={context.onShowLive}
-          onOpenAssets={context.onShowAssets}
-          onOpenStudio={context.onOpenStudio}
-          onNotice={onNotice}
-          {...(entry.runId ? { onResume: resume(entry.runId) } : {})}
-        />
-      );
+      return <MorningEntryCard key={entry.id} entry={entry} context={context} resume={resume} />;
     case EntryKind.Action:
       return <ActionEntry entry={entry} context={context} resume={resume} />;
     case EntryKind.Compaction:
@@ -181,6 +157,51 @@ export const TranscriptEntry = memo(function TranscriptEntry({
       return <CardEntry entry={entry} context={context} />;
   }
 });
+
+/** A build's result card: Resume and Keep building follow the chat's runs. */
+function MorningEntryCard({
+  entry,
+  context,
+  resume,
+}: {
+  entry: MorningEntry;
+  context: TranscriptContext;
+  resume: (runId: string) => () => void;
+}): JSX.Element {
+  const runs = useRowFact(context.runs, entry.id, NO_RUNS);
+  return (
+    <MorningCard
+      runId={entry.runId}
+      rounds={entry.rounds}
+      summary={entry.summary}
+      landingLine={entry.landingLine}
+      learned={entry.learned}
+      stoppedBecause={entry.stoppedBecause}
+      pausedOn={entry.pausedOn}
+      kept={entry.kept}
+      undone={entry.undone}
+      landed={entry.landed}
+      profile={entry.profile}
+      refusal={entry.refusal}
+      // A run the plan limit cut off is paused, not finished: the card says so and
+      // offers Resume itself, instead of leaving it to a grey line underneath.
+      paused={!entry.superseded && resumable(entry.runId, runs)}
+      handedOff={entry.handedOff}
+      stillToFix={entry.stillToFix ?? null}
+      onKeepBuilding={keepFor(entry, context.threadId, runs)}
+      project={entry.project ?? context.project}
+      commit={entry.commit}
+      before={entry.before}
+      after={entry.after}
+      {...(entry.assets ? { assets: entry.assets } : {})}
+      onShowLive={context.onShowLive}
+      onOpenAssets={context.onShowAssets}
+      onOpenStudio={context.onOpenStudio}
+      onNotice={context.onNotice}
+      {...(entry.runId ? { onResume: resume(entry.runId) } : {})}
+    />
+  );
+}
 
 /** A card the host put in the conversation: the Genex cover, a plugin to turn on, a store item's Listing draft, a design page. */
 function CardEntry({ entry, context }: { entry: ConversationEntry; context: TranscriptContext }): JSX.Element | null {
@@ -278,7 +299,8 @@ function UserEntry({
       ? { threadId: context.threadId, imagesOf: images.messageId, imageCount: images.count }
       : {};
   const { onRewind } = context;
-  const rewind = onRewind && context.canRewind?.(entry.id) ? { rewindId: entry.id, onRewind } : {};
+  const offered = useRowFact(context.canRewind, entry.id, false);
+  const rewind = onRewind && offered ? { rewindId: entry.id, onRewind } : {};
   return (
     <UserMessage
       text={entry.text}
@@ -371,7 +393,8 @@ function ActionEntry({
   context: TranscriptContext;
   resume: (runId: string) => () => void;
 }): JSX.Element {
-  const { activeRunId } = context;
+  const runs = useRowFact(context.runs, entry.id, NO_RUNS);
+  const { activeRunId } = runs;
   if (entry.action === EntryAction.Permission && entry.permission)
     return <PermissionOutcome event={entry.permission} />;
   if (entry.action === EntryAction.Consent) return <ConsentOutcome entry={entry} />;
@@ -416,7 +439,7 @@ function ActionEntry({
         <span>
           <FileText text={entry.text} />
         </span>
-        {resumable(entry.runId, context) ? (
+        {resumable(entry.runId, runs) ? (
           <ResultButton type="button" data-run-resume={entry.runId} onClick={resumedFromCard(resume, entry.runId)}>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
               <path d="M8 5v14l11-7z" />

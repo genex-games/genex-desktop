@@ -1,8 +1,8 @@
 /**
  * A native game's way out of its sandbox to Genex (`main/play/genex-gateway.ts`), against fake Genex
  * hosts on this machine: requests reach only the port's own Genex host, relay addresses in JSON
- * answers come back pointed at the gateway (so the next connection does too), a WebSocket is joined
- * end to end, and anything else (another host, a port with no host yet, a full pool, an oversized
+ * answers come back pointed at the gateway (so the next connection does too), on the port the address
+ * named, a WebSocket is joined end to end, and anything else (another host, a port with no host yet, a full pool, an oversized
  * request) is refused or left unreachable, with nothing sent on.
  */
 import assert from "node:assert/strict";
@@ -10,6 +10,7 @@ import http, { type IncomingMessage } from "node:http";
 import net, { type AddressInfo } from "node:net";
 import { after, describe, it } from "node:test";
 import {
+  authorityHostsOf,
   type GenexGateway,
   relayHostsOf,
   rewriteRelays,
@@ -19,7 +20,10 @@ import {
 /** One fake Genex host: what it was asked, and its JSON answer for a path. */
 type Seen = { method: string; url: string; host: string; origin: string | undefined; body: string };
 
-/** Fake Genex hosts on 127.0.0.1, each answering JSON by path and echoing on a WebSocket. */
+/**
+ * Fake Genex servers on 127.0.0.1, each answering JSON by path and echoing on a WebSocket; one is
+ * named by its host (port 443) or `host:port`.
+ */
 async function fakeGenex(answers: Record<string, Record<string, unknown>>) {
   const seen = new Map<string, Seen[]>();
   const ports = new Map<string, number>();
@@ -54,7 +58,11 @@ async function fakeGenex(answers: Record<string, Record<string, unknown>>) {
     ports.set(host, (server.address() as AddressInfo).port);
     servers.push(server);
   }
-  const upstream = (host: string) => ({ host: "127.0.0.1", port: ports.get(host) ?? 1, secure: false });
+  const upstream = (host: string, port: number) => ({
+    host: "127.0.0.1",
+    port: ports.get(port === 443 ? host : `${host}:${port}`) ?? 1,
+    secure: false,
+  });
   const close = async () => {
     for (const socket of sockets) socket.destroy();
     for (const server of servers) server.closeAllConnections();
@@ -75,7 +83,9 @@ async function gatewayOver(answers: Record<string, Record<string, unknown>>, rel
   const gateway = await startGenexGateway({
     api: "https://api.genex.games",
     relay: RELAYS,
+    authority: authorityHostsOf("api.genex.games"),
     relayPorts,
+    authorityPorts: 3,
     upstream: genex.upstream,
   });
   opened.push(gateway.close, genex.close);
@@ -198,6 +208,45 @@ describe("a native game's gateway to Genex", () => {
   });
 });
 
+describe("a gateway to a server its address names on a port", () => {
+  it("points an address that names a port at a local port of its own, and reaches it on that port", async () => {
+    const { genex, gateway } = await gatewayOver({
+      "api.genex.games": {
+        "/api/embed/session": {
+          colyseus: {
+            authorityUrls: ["wss://authority-eu.genex.games", "wss://authority-us.genex.games:22"],
+            authorityRegions: [
+              { region: "eu", urls: ["wss://authority-eu.genex.games:2053", "wss://authority-eu.genex.games"] },
+            ],
+          },
+        },
+      },
+      "authority-eu.genex.games:2053": { "/": { on: 2053 } },
+      "authority-eu.genex.games": { "/": { on: 443 } },
+    });
+    const { body } = await call(`${gateway.apiUrl}/api/embed/session`, { method: "POST" });
+    const [named, plain] = body.colyseus.authorityRegions[0].urls;
+    assert.match(named, /^ws:\/\/127\.0\.0\.1:\d+$/, "the named port replaced, not kept after the local one");
+    assert.equal(body.colyseus.authorityUrls[0], plain, "one server and port, one local port");
+    assert.notEqual(named, plain, "another port of the same host is another server");
+    assert.equal(
+      body.colyseus.authorityUrls[1],
+      "wss://authority-us.genex.games:22",
+      "a port Genex isn't on: not mapped",
+    );
+    assert.deepEqual((await call(`http://127.0.0.1:${portOf(gateway, named)}/`)).body, { on: 2053 });
+    assert.deepEqual((await call(`http://127.0.0.1:${portOf(gateway, plain)}/`)).body, { on: 443 });
+    const echoed = await wsRoundTrip(portOf(gateway, named), "/P1/R1", "ping-7");
+    assert.match(echoed, /authority-eu\.genex\.games:2053:ping-7/, "the server on the named port answered");
+    const seen = genex.seen.get("authority-eu.genex.games:2053") ?? [];
+    assert.deepEqual(
+      seen.map((one) => one.host),
+      ["authority-eu.genex.games:2053", "authority-eu.genex.games:2053"],
+      "the Host a browser sends there",
+    );
+  });
+});
+
 describe("which hosts a gateway maps", () => {
   it("maps only Genex's relays, by exact host", () => {
     const rows: Array<[string, boolean]> = [
@@ -214,8 +263,18 @@ describe("which hosts a gateway maps", () => {
   });
 
   it("rewrites relay lists and seat addresses, and nothing it can't map", () => {
-    const port = (host: string) => (host === "relay-eu.genex.games" ? 4100 : undefined);
+    const local: Record<string, number> = { "relay-eu.genex.games:443": 4100, "relay-eu.genex.games:2053": 4101 };
+    const port = (host: string, named: number) => local[`${host}:${named}`];
     const rows: Array<[string, string]> = [
+      ['{"urls":["wss://relay-eu.genex.games:2053"]}', '{"urls":["ws://127.0.0.1:4101"]}'],
+      ['{"urls":["wss://relay-eu.genex.games:2053/x?y=1"]}', '{"urls":["ws://127.0.0.1:4101/x?y=1"]}'],
+      ['{"urls":["wss://relay-eu.genex.games:443"]}', '{"urls":["ws://127.0.0.1:4100"]}'],
+      ['{"urls":["wss://relay-eu.genex.games:2083"]}', '{"urls":["wss://relay-eu.genex.games:2083"]}'],
+      ['{"urls":["wss://relay-eu.genex.games:2053x"]}', '{"urls":["wss://relay-eu.genex.games:2053x"]}'],
+      ['{"urls":["wss://relay-eu.genex.games:"]}', '{"urls":["wss://relay-eu.genex.games:"]}'],
+      ['{"publicAddress":"relay-eu.genex.games:2053/2567"}', '{"publicAddress":"127.0.0.1:4101/2567"}'],
+      ['{"publicAddress":"relay-eu.genex.games:2053"}', '{"publicAddress":"127.0.0.1:4101"}'],
+      ['{"publicAddress":"relay-eu.genex.games:x/2567"}', '{"publicAddress":"relay-eu.genex.games:x/2567"}'],
       ['{"urls":["wss://relay-eu.genex.games"]}', '{"urls":["ws://127.0.0.1:4100"]}'],
       ['{"publicAddress":"relay-eu.genex.games/2567"}', '{"publicAddress":"127.0.0.1:4100/2567"}'],
       ['{"publicAddress" : "relay-eu.genex.games"}', '{"publicAddress" : "127.0.0.1:4100"}'],

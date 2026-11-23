@@ -150,6 +150,13 @@ describe("the bridge on a design page", () => {
     assert.match(designPageStyle(DesignTheme.Dark), /\[data-say\]\{display:none !important\}/, "and it is not shown");
   });
 
+  it("never draws a scrollbar on a page, whatever the page says: a page is as large as its frame", () => {
+    // A page a pixel taller than its frame drew both scrollbars at its edges, light seams on a
+    // canvas zoomed out.
+    for (const theme of [DesignTheme.Dark, DesignTheme.Light])
+      assert.match(designPageStyle(theme), /\*\{scrollbar-width:none !important\}/, theme);
+  });
+
   it("never follows a link itself: another page of the board and the web are the tab's to open", () => {
     const { body, fire, signals } = page();
     const link = (href: string) => fire("click", { target: new PageElement("a", { href }, body) });

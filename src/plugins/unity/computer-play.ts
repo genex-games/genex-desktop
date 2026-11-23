@@ -25,6 +25,7 @@ import {
   PLAY_STOPPED,
   runCommand,
 } from "./pipeline.ts";
+import { EditorCommand } from "./pipeline-commands.ts";
 import { findUnityProject } from "./project-folder.ts";
 
 const PLAY_START_MS = MINUTE_MS;
@@ -33,11 +34,11 @@ const CLEANUP_MS = 5 * SECOND_MS;
 const POLL_MS = SECOND_MS / 20;
 const PlayMode = { Playing: "playing", Paused: "paused" } as const;
 const Command = {
-  Play: "editor_play",
-  Stop: "editor_stop",
-  Pause: "editor_pause",
-  Capture: "capture_game_view",
-  Eval: "eval",
+  Play: EditorCommand.Play,
+  Stop: EditorCommand.Stop,
+  Pause: EditorCommand.Pause,
+  Capture: EditorCommand.Capture,
+  Eval: EditorCommand.Eval,
 } as const;
 
 const MESSAGE = {
@@ -269,8 +270,8 @@ async function shot(play: Play, at: Place) {
   if ("refused" in look) return look;
   const value = await command(play, at, Command.Capture, {
     ...ENGINE_PLAY_VIEW,
+    // With no file named the picture comes back in the answer, on every version of the package.
     source: "screen",
-    include_inline_image: true,
   });
   const picture =
     isJsonObject(value) && value.encoding === "png" && typeof value.base64 === "string" && value.base64.length > 0;

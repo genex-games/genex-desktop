@@ -61,6 +61,7 @@ import {
 } from "../analytics/welcome-vocabulary.ts";
 import { preloadHomeBackdrop } from "../home-backdrop/preload.ts";
 import { defaultModelKey } from "../model-choices.ts";
+import { needsOllama, useHardwareOnOllamaStart } from "../model-download.ts";
 import { Button } from "../ui/Button.tsx";
 import { GenexLogo } from "../ui/GenexLogo.tsx";
 import { Icon } from "../ui/icons.tsx";
@@ -116,6 +117,7 @@ import {
   ConnectViewKind,
   installsCli,
   markState,
+  onboardingPick,
   startTrouble,
   type ConnectView,
   type Subscription,
@@ -629,11 +631,15 @@ function useCodexLogin(): CodexLoginState | null {
 
 type ModelPick = NonNullable<Hardware["recommendation"]>["picks"][number];
 
-/** The model the recommendation calls Best fit, or its first pick when it names none. */
-function bestFit(hardware: Hardware | null): ModelPick | null {
+/** The Best fit this screen can install: an Ollama one only while Ollama answers (`onboardingPick`). */
+function bestFit(
+  hardware: Hardware | null,
+  ollamaMissing: boolean,
+  held: Parameters<typeof onboardingPick>[2],
+): ModelPick | null {
   const recommendation = hardware?.recommendation;
   if (!recommendation) return null;
-  return recommendation.picks.find((p) => p.model === recommendation.defaultModel) ?? recommendation.picks[0] ?? null;
+  return onboardingPick(recommendation, ollamaMissing, held);
 }
 
 /** A pick's name as the row shows it, with its variant when it has one. */
@@ -706,8 +712,13 @@ function useLocalModel(engines: EngineDescriptor[], onEnginesRefresh: () => void
   const [pulling, setPulling] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // The model last downloaded: it stays the pick between its download ending and the engines listing it.
+  const [lastPulled, setLastPulled] = useState<string | null>(null);
   const asked = useRef(false);
   useDownloadEvents(onEnginesRefresh, { setPulling, setProgress, setError });
+  useEffect(() => {
+    if (pulling) setLastPulled(pulling);
+  }, [pulling]);
 
   const load = useCallback(() => {
     if (asked.current) return;
@@ -724,12 +735,13 @@ function useLocalModel(engines: EngineDescriptor[], onEnginesRefresh: () => void
         setHardwareError(problemWords(err));
       });
   }, []);
-  const pick = bestFit(hardware);
-  const installed = Boolean(
-    pick &&
-      engines.some((engine) => engine.models.some((model) => canonicalModel(model.id) === canonicalModel(pick.model))),
-  );
   const ollama = () => engines.find((engine) => engine.id === EngineId.Ollama);
+  useHardwareOnOllamaStart(!needsOllama(ollama()), setHardware);
+  const isInstalled = (id: string) =>
+    engines.some((engine) => engine.models.some((model) => canonicalModel(model.id) === canonicalModel(id)));
+  const held = pulling ?? (error ? null : lastPulled);
+  const pick = bestFit(hardware, needsOllama(ollama()), { pulling: held, installed: isInstalled });
+  const installed = Boolean(pick && isInstalled(pick.model));
   const download = async () => {
     if (!pick) return;
     setPulling(pick.model);
@@ -739,7 +751,7 @@ function useLocalModel(engines: EngineDescriptor[], onEnginesRefresh: () => void
       model: pick.model,
       surface: ProviderSurface.Onboarding,
       engine: pick.engine,
-      source: DownloadSource.BestFit,
+      source: pick.model === hardware?.recommendation?.defaultModel ? DownloadSource.BestFit : DownloadSource.Pick,
       resumed: false,
       sizeGb: pick.sizeGb,
       ollama: ollama(),

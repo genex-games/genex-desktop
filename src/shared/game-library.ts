@@ -20,6 +20,8 @@ export type GameCover =
 export type DisplayCover = CoverRecipe | LegacyShaderCover;
 export interface GameLibraryEntry {
   title?: string;
+  /** The game's name in the library, kept while it is removed so no new game takes it back. */
+  name?: string;
   pinned?: boolean;
   removed?: boolean;
   /** Folder trust is host metadata; project files cannot grant it. */

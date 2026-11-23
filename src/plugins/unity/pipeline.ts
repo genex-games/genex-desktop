@@ -5,30 +5,45 @@
  * request carries, so a call finds its editor by the project's folder: no port is chosen or kept by
  * Genex, and a project that is closed has no editor to mistake for it.
  *
- * The wire is what Pipeline 0.6.0-exp.1 answered on Unity 6000.6 (measured 2026-09-11) and what
- * 0.8.0-exp.1 documents: every endpoint wants the bearer; 503 means the editor is importing or
- * showing a dialog; a domain reload drops the server for a few seconds; a restarted editor writes a
- * new token; a failed command answers `success: false` (`ok: false` before 0.8) with its reason.
- * A command is never sent twice: only a request that provably never left (nothing listened) or
- * that the server refused to run (503, 401) is tried again.
+ * The wire is what Pipeline 1.0.0 answered on Unity 6000.6.0f1 (measured 2026-11-19, beside
+ * 0.8.0-exp.1 and 0.9.0-exp.1): every endpoint wants the bearer; 503 means the editor is importing
+ * or showing a dialog; a domain reload drops the server for a few seconds; a restarted editor
+ * writes a new token; a failed command answers `success: false` (`ok: false` before 0.8) with its
+ * reason. A command is never sent twice: only a request that provably never left (nothing
+ * listened) or that the server refused to run (503, 401) is tried again.
+ *
+ * Since 0.9 a command is a group and a name (`scene save`); through 0.8 it was one flat word
+ * (`save_scene`). An editor's descriptor says which it speaks, and a call names a command the way
+ * its own editor lists it (`pipeline-commands.ts` holds both spellings of the ones Genex runs).
  */
 import { setTimeout as sleep } from "node:timers/promises";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { isJsonObject, readRegularFile } from "../../substrate/fsx.ts";
 import { containedReal } from "../../substrate/paths.ts";
+import { spelledFor } from "./pipeline-commands.ts";
 
 /** Unity's package that serves the editor to tools. */
 export const PIPELINE_PACKAGE = "com.unity.pipeline";
 /** The version Genex asks for in a project it makes or sets up: the one this plugin was run against. */
-export const PIPELINE_VERSION = "0.8.0-exp.1";
+export const PIPELINE_VERSION = "1.0.0";
+/** The versions Genex asked for before, which a project it opens is moved on from (`setup.ts`). */
+export const PAST_PIPELINE_VERSIONS: readonly string[] = ["0.8.0-exp.1"];
 /** Where an open editor keeps its descriptor, relative to the project. */
 const DESCRIPTOR_FILE = "Library/Pipeline/.unity-pipeline-port";
 /** The most of a descriptor Genex reads: Unity writes a few short fields. */
 const DESCRIPTOR_MAX_BYTES = 16 * 1024;
 /** A token as it may ride in a header: printable, no spaces. */
 const TOKEN = /^[\x21-\x7e]{1,512}$/;
-/** A Pipeline command name: lowercase words joined by underscores. A listed entry of any other shape is dropped. */
-export const COMMAND_NAME = /^[a-z][a-z0-9_]{0,63}$/;
+/**
+ * A Pipeline command name: a group (dotted for a group inside one), a space and a name, as
+ * `editor.playmode stop`, or through 0.8 one flat word. A listed entry of any other shape is dropped.
+ */
+export const COMMAND_NAME = /^(?=.{1,96}$)(?:[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)* )?[a-z][a-z0-9_]*$/;
+/**
+ * What an editor's descriptor lists once it takes a timeout per command, which the package has
+ * done since 0.9, the version that grouped its commands: the descriptor's only sign of the two.
+ */
+const GROUPED_COMMANDS_CAPABILITY = "exec.commandTimeouts";
 /** The most commands, and of each the most tags, parameters and description, kept from a catalogue. */
 const MAX_COMMANDS = 500;
 const MAX_TAGS = 8;
@@ -87,11 +102,15 @@ export type PipelineAnswer<T = unknown> =
   | { ok: true; result: T }
   | { ok: false; problem: PipelineProblem; detail?: string };
 
-/** An open editor's server: its process, port and token, and the editor's version when it says. */
+/**
+ * An open editor's server: its process, port and token, whether its commands are grouped (0.9 and
+ * later), and the editor's version when it says.
+ */
 export interface PipelineDescriptor {
   pid: number;
   port: number;
   token: string;
+  grouped: boolean;
   unityVersion?: string;
 }
 
@@ -103,7 +122,10 @@ export interface PipelineParameter {
   description: string;
 }
 
-/** One command of the editor's catalogue: what it does, the tags it is listed under and what it takes. */
+/**
+ * One command of the editor's catalogue: its name as that editor runs it, what it does, the tags
+ * it is listed under and what it takes.
+ */
 export interface PipelineCommand {
   name: string;
   description: string;
@@ -175,13 +197,23 @@ export async function readDescriptor(root: string): Promise<PipelineDescriptor |
   if (!isJsonObject(raw) || !isPid(raw.pid) || !isPort(raw.port)) return undefined;
   if (typeof raw.evalToken !== "string" || !TOKEN.test(raw.evalToken)) return undefined;
   const version = typeof raw.unityVersion === "string" ? raw.unityVersion : undefined;
-  return { pid: raw.pid, port: raw.port, token: raw.evalToken, ...(version ? { unityVersion: version } : {}) };
+  const grouped = Array.isArray(raw.capabilities) && raw.capabilities.includes(GROUPED_COMMANDS_CAPABILITY);
+  return {
+    pid: raw.pid,
+    port: raw.port,
+    token: raw.evalToken,
+    grouped,
+    ...(version ? { unityVersion: version } : {}),
+  };
 }
 
-/** One request to the editor's server; a `repeatable` one changes nothing, so it may be sent again. */
+/**
+ * One request to the editor's server; a `repeatable` one changes nothing, so it may be sent again.
+ * A `call` is posted, its command spelled the way the editor that gets it spells its commands.
+ */
 interface PipelineRequest {
   path: (typeof ApiPath)[keyof typeof ApiPath];
-  body?: unknown;
+  call?: PipelineCall;
   repeatable: boolean;
   /** A look at the main thread: no answer within this is a stall, never waited out or asked again. */
   stalledAfterMs?: number;
@@ -211,7 +243,9 @@ function send(
   deps: PipelineDeps,
   limits: { limit: AbortSignal; signal?: AbortSignal },
 ): Promise<Response> {
-  const posts = request.body !== undefined;
+  const { call } = request;
+  const posts = call !== undefined;
+  const body = call ? { ...call, command: spelledFor(call.command, descriptor.grouped) } : undefined;
   const { limit, signal } = limits;
   return deps.fetch(`http://127.0.0.1:${descriptor.port}${request.path}`, {
     method: posts ? "POST" : "GET",
@@ -219,7 +253,7 @@ function send(
       authorization: `Bearer ${descriptor.token}`,
       ...(posts ? { "content-type": "application/json" } : {}),
     },
-    ...(posts ? { body: JSON.stringify(request.body) } : {}),
+    ...(posts ? { body: JSON.stringify(body) } : {}),
     redirect: "error",
     signal: signal ? AbortSignal.any([signal, limit]) : limit,
   });
@@ -327,14 +361,19 @@ function parameterOf(entry: unknown): PipelineParameter | undefined {
   };
 }
 
-/** One catalogue entry as the editor lists it: a name with words, tags and parameters, or a bare name. */
+/**
+ * One catalogue entry as the editor lists it: a name with words, tags and parameters, or a bare
+ * name. Since 0.9 an entry's `command` is what runs it (`scene save`) and its `name` only the last
+ * word, which several groups share.
+ */
 function commandOf(entry: unknown): PipelineCommand | undefined {
   const row = isJsonObject(entry) ? entry : { name: entry };
-  if (typeof row.name !== "string" || !COMMAND_NAME.test(row.name)) return undefined;
+  const name = row.command ?? row.name;
+  if (typeof name !== "string" || !COMMAND_NAME.test(name)) return undefined;
   const tags = listOf(row.tags, MAX_TAGS).filter((tag) => typeof tag === "string");
   const parameters = listOf(row.parameters, MAX_PARAMETERS).map(parameterOf);
   return {
-    name: row.name,
+    name,
     description: wordsOf(row.description ?? row.summary),
     tags: tags.map((tag) => clip(tag, MAX_NAME_CHARS)),
     parameters: parameters.filter((parameter) => parameter !== undefined),
@@ -411,12 +450,15 @@ export async function editorStatus(
   };
 }
 
-/** Runs one command in the editor that has `root` open. */
+/**
+ * Runs one command in the editor that has `root` open. One of Genex's own (`EditorCommand`) is
+ * sent under the name that editor knows it by; any other name goes as it is.
+ */
 export function runCommand(
   root: string,
   call: PipelineCall,
   deps: PipelineDeps = systemPipelineDeps,
   options: PipelineOptions = {},
 ): Promise<PipelineAnswer> {
-  return ask(root, { path: ApiPath.Exec, body: call, repeatable: false }, deps, options);
+  return ask(root, { path: ApiPath.Exec, call, repeatable: false }, deps, options);
 }

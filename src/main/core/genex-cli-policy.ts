@@ -78,11 +78,17 @@ const MAX_BENCH_SAMPLES = 25;
 const MAX_ATTEMPT_SECONDS = 60;
 /** How much of one value the consent card's summary keeps, so no value pushes another off the card. */
 const CONSENT_VALUE_MAX_CHARS = 60;
+/** How much of a value a refusal quotes back. */
+const QUOTED_VALUE_MAX_CHARS = 20;
 const UNBOUNDED = Number.MAX_SAFE_INTEGER;
 /** Line breaks, tabs and every other control character. */
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
 /** The longest path inside the game a file option may name. */
 const GAME_PATH_MAX_CHARS = 500;
+/** The most bytes of an answer-shape file a bench reads: Genex takes a schema of at most 16 KB. */
+export const SCHEMA_MAX_BYTES = 16 * 1024;
+/** The one kind of file an answer shape is kept in. */
+const SCHEMA_EXTENSION = ".json";
 /** A path that does not start inside the game: from the root, a drive, a share or a home. */
 const NOT_RELATIVE = /^(?:[/\\~]|[A-Za-z]:)/;
 
@@ -125,6 +131,16 @@ const OptionKind = {
 export const GamePathTarget = { File: "file", Folder: "folder" } as const;
 export type GamePathTarget = (typeof GamePathTarget)[keyof typeof GamePathTarget];
 
+/**
+ * A small text file of the game that the CLI reads into its own request and never uploads (a
+ * bench's answer shape): the one extension it carries and the most bytes it holds.
+ */
+export interface SmallGameFile {
+  /** Lower case, with its dot: `.json`. */
+  extension: string;
+  maxBytes: number;
+}
+
 type OptionSpec =
   | { kind: typeof OptionKind.Flag }
   | { kind: typeof OptionKind.Toggle }
@@ -132,13 +148,19 @@ type OptionSpec =
   | { kind: typeof OptionKind.Choice; values: readonly string[] }
   | { kind: typeof OptionKind.Text; max: number; empty: boolean }
   | { kind: typeof OptionKind.TextList; max: number; count: number }
-  | { kind: typeof OptionKind.GamePath; target: GamePathTarget };
+  | { kind: typeof OptionKind.GamePath; target: GamePathTarget; small?: SmallGameFile };
 
 const flag = { kind: OptionKind.Flag } as const;
 const toggle = { kind: OptionKind.Toggle } as const;
 const text = { kind: OptionKind.Text, max: VALUE_MAX_CHARS, empty: false } as const;
 const wholeNumber = (min: number, max = UNBOUNDED) => ({ kind: OptionKind.WholeNumber, min, max }) as const;
 const gamePath = (target: GamePathTarget) => ({ kind: OptionKind.GamePath, target }) as const;
+/** The game's JSON schema file a bench asks its answers in (`--schema`). */
+const answerSchema = {
+  kind: OptionKind.GamePath,
+  target: GamePathTarget.File,
+  small: { extension: SCHEMA_EXTENSION, maxBytes: SCHEMA_MAX_BYTES },
+} as const;
 /** An item's search words, one per `--tag` (contract limits). */
 const tags = { kind: OptionKind.TextList, max: ITEM_TAG_LENGTH_MAX, count: ITEM_TAGS_MAX } as const;
 /** An item's description; `shop set` clears it with an empty one. */
@@ -162,6 +184,11 @@ interface CommandRow {
   positional: Positional;
   options: Readonly<Record<string, OptionSpec>>;
   required?: readonly string[];
+  /**
+   * Older names of its options, each read as the option it became: an agent that learned one still
+   * gets its call, and the CLI is handed the current flag.
+   */
+  renamed?: Readonly<Record<string, string>>;
   /** The CLI refuses it without `--user-approved`: the spending commands, not the shop's. */
   approval?: boolean;
   /** It writes the item its positional names into the game (`items add`). */
@@ -211,6 +238,8 @@ const sharedItem = (delivers: boolean): CommandRow => ({
 
 /** The option naming a store item's picture: `shop add` needs it, since no item is listed without one. */
 export const PICTURE_OPTION = "image";
+/** The option setting the most credits one bench attempt may spend, as the pinned CLI names it. */
+const BENCH_CEILING_OPTION = "max-credits";
 
 /**
  * Every command Studio runs. `budget` only reads: its `--assets` allowance lives in the run folder,
@@ -226,15 +255,19 @@ const GENEX_CLI_COMMANDS: Readonly<Record<GenexCliCommand, CommandRow>> = {
     paid: true,
     project: true,
     positional: Positional.Text,
+    // A bench spends the person's own credits (1 credit is 1 cent), never Nex: the ceiling of one
+    // attempt comes first on the card. The CLI called it --max-coins before 1.35.3.
     options: {
-      "max-coins": wholeNumber(1),
+      [BENCH_CEILING_OPTION]: wholeNumber(1),
       samples: wholeNumber(1, MAX_BENCH_SAMPLES),
       model: text,
       "json-output": flag,
       text: flag,
       timeout: wholeNumber(1, MAX_ATTEMPT_SECONDS),
+      schema: answerSchema,
     },
-    required: ["max-coins"],
+    required: [BENCH_CEILING_OPTION],
+    renamed: { "max-coins": BENCH_CEILING_OPTION },
     approval: true,
   },
   [GenexCliCommand.ShopList]: { ...free(true), localItems: LocalItemsUse.Read },
@@ -311,6 +344,8 @@ export interface GamePathArg {
   target: GamePathTarget;
   /** Its place in `argv`, which Studio points at its copy in the run folder. */
   index: number;
+  /** Set for a small file the CLI only reads: the host holds the real file to this extension and size. */
+  small?: SmallGameFile;
 }
 
 /** One call, ready to run: the command, its argv before Studio's own flags, and what it needs. */
@@ -328,6 +363,15 @@ export interface GenexCliRequest {
   localItems?: LocalItemsUse;
 }
 
+/**
+ * Commands that could never answer in a Studio run, each with its own reason. `llm price` reprints
+ * the bench the CLI saved in the folder it ran in (`.genex/llm-bench.json`), and every Studio run
+ * gets a fresh folder that is removed afterwards, so it would always say nothing was benchmarked.
+ */
+const NEVER_ANSWERS: Readonly<Record<string, string>> = {
+  "llm price": GENEX_CLI_PROMPT.NoSavedBench,
+};
+
 const refuse = (code: GenexCliRefusalCode, message: string) => new GenexCliRefusal(code, message);
 const isCommand = (words: string): words is GenexCliCommand => Object.hasOwn(GENEX_CLI_COMMANDS, words);
 
@@ -338,7 +382,38 @@ function commandOf(raw: unknown): GenexCliCommand {
   if (isCommand(spelled) && words.length <= COMMAND_MAX_WORDS) return spelled;
   const replacement = REPLACED_BY[words[0] ?? ""];
   if (replacement) throw refuse(GenexCliRefusalCode.UseTool, GENEX_CLI_PROMPT.UseTool(spelled, replacement));
-  throw refuse(GenexCliRefusalCode.Unavailable, GENEX_CLI_PROMPT.Unavailable(spelled));
+  const why = Object.hasOwn(NEVER_ANSWERS, spelled) ? NEVER_ANSWERS[spelled] : undefined;
+  throw refuse(GenexCliRefusalCode.Unavailable, why ?? GENEX_CLI_PROMPT.Unavailable(spelled));
+}
+
+/** A value as a refusal quotes it back: one short piece of text. */
+const quoted = (value: unknown): string => String(value).slice(0, QUOTED_VALUE_MAX_CHARS);
+
+/**
+ * The options under their current names, in the order given: an older name (`renamed`) is read as
+ * the option it became, and the two names given with different values are refused.
+ */
+function currentOptions(
+  command: GenexCliCommand,
+  row: CommandRow,
+  options: Record<string, unknown>,
+): Record<string, unknown> {
+  const renamed = new Map(Object.entries(row.renamed ?? {}));
+  // Kept in a Map and answered as own properties, so no name the agent chose is read as anything
+  // but an option's name.
+  const current = new Map<string, unknown>();
+  for (const [given, value] of Object.entries(options)) {
+    const name = renamed.get(given) ?? given;
+    if (current.has(name) && String(current.get(name)) !== String(value)) {
+      const older = [...renamed].find(([, now]) => now === name)?.[0] ?? given;
+      throw refuse(
+        GenexCliRefusalCode.InvalidValue,
+        GENEX_CLI_PROMPT.OptionsDisagree(command, name, older, quoted(options[name]), quoted(options[older])),
+      );
+    }
+    current.set(name, value);
+  }
+  return Object.fromEntries(current);
 }
 
 /** The options as an object: an object parameter may arrive as its JSON text. */
@@ -379,12 +454,15 @@ function textListValues(name: string, value: unknown, spec: { max: number; count
  * A path inside the game, as text: relative to the game's folder, never through `..`, never the
  * folder itself. Where it really leads is the host's to check (`genex-game-paths.ts`).
  */
-function gamePathValue(name: string, value: unknown, target: GamePathTarget): string {
-  const rule = GENEX_VALUE_RULE.GamePath(target);
+function gamePathValue(name: string, value: unknown, spec: { target: GamePathTarget; small?: SmallGameFile }): string {
+  const rule = spec.small
+    ? GENEX_VALUE_RULE.SmallGameFile(spec.small.extension)
+    : GENEX_VALUE_RULE.GamePath(spec.target);
   const path = textValue(name, value, GAME_PATH_MAX_CHARS);
   const segments = path.split(/[/\\]+/).filter((segment) => segment !== "" && segment !== ".");
   const inside = !NOT_RELATIVE.test(path) && segments.length > 0 && !segments.includes("..");
-  if (inside) return path;
+  const kind = !spec.small || path.toLowerCase().endsWith(spec.small.extension);
+  if (inside && kind) return path;
   throw refuse(GenexCliRefusalCode.InvalidValue, GENEX_CLI_PROMPT.InvalidValue(name, rule));
 }
 
@@ -419,7 +497,7 @@ function optionArgv(name: string, value: unknown, spec: OptionSpec): string[] {
     case OptionKind.TextList:
       return textListValues(name, value, spec).flatMap((one) => [`--${name}`, one]);
     case OptionKind.GamePath:
-      return [`--${name}`, gamePathValue(name, value, spec.target)];
+      return [`--${name}`, gamePathValue(name, value, spec)];
   }
 }
 
@@ -427,6 +505,18 @@ function optionArgv(name: string, value: unknown, spec: OptionSpec): string[] {
 interface OptionsArgv {
   argv: string[];
   gamePaths: GamePathArg[];
+}
+
+/** A game path option's value and its place in the argv, with its size and kind rule when it has one. */
+function gamePathArg(
+  option: string,
+  spec: { target: GamePathTarget; small?: SmallGameFile },
+  path: string,
+  index: number,
+): GamePathArg {
+  const arg: GamePathArg = { option, path, target: spec.target, index };
+  if (spec.small) arg.small = spec.small;
+  return arg;
 }
 
 /** Every option as argv, in the order given, after `before` words; reserved and unlisted names are refused. */
@@ -445,7 +535,7 @@ function optionsArgv(
     if (!spec) throw refuse(GenexCliRefusalCode.UnknownOption, GENEX_CLI_PROMPT.UnknownOption(command, name, allowed));
     const words = optionArgv(name, value, spec);
     if (spec.kind === OptionKind.GamePath)
-      gamePaths.push({ option: name, path: words[1] ?? "", target: spec.target, index: before + argv.length + 1 });
+      gamePaths.push(gamePathArg(name, spec, words[1] ?? "", before + argv.length + 1));
     argv.push(...words);
   }
   for (const name of row.required ?? [])
@@ -482,8 +572,8 @@ export function genexCliRequest(
   tool: { paid: boolean },
 ): GenexCliRequest & { command: GenexCliCommand } {
   const command = commandOf(args.command);
-  const options = optionsOf(args.options);
   const row = GENEX_CLI_COMMANDS[command];
+  const options = currentOptions(command, row, optionsOf(args.options));
   const setsAllowance = command === GenexCliCommand.Budget && Object.hasOwn(options, BUDGET_ALLOWANCE_OPTION);
   if (setsAllowance) throw refuse(GenexCliRefusalCode.UnknownOption, GENEX_CLI_PROMPT.BudgetAllowance);
   const paid = row.paid && !(row.freeOnLocalDraft && isLocalItemId(args.args));
@@ -552,7 +642,7 @@ function consentOrder(row: CommandRow): string[] {
 export function genexCliConsentArgs(args: Record<string, unknown>, tool: { paid: boolean }): Record<string, string> {
   const request = genexCliRequest(args, tool);
   const row = GENEX_CLI_COMMANDS[request.command];
-  const options = optionsOf(args.options);
+  const options = currentOptions(request.command, row, optionsOf(args.options));
   const shown: Record<string, string> = { command: request.command };
   for (const name of consentOrder(row)) {
     const value = options[name];

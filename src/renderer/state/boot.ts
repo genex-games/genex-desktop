@@ -165,12 +165,18 @@ export function canSetUp(state: Pick<BootStoreState, "platform" | "problem">): b
   return state.platform === StudioPlatform.Windows && state.problem?.code === SandboxProblemCode.NotProvisioned;
 }
 
+/** The needs whose Set up waits for its button. */
+const ASKS_FIRST: readonly WindowsSetupNeed[] = [WindowsSetupNeed.Reinstall, WindowsSetupNeed.LogonRight];
+
 /**
  * Whether the window starts Set up by itself: a first install, whose prompt the person expects
- * right after installing Genex. An update of an earlier install waits for its button.
+ * right after installing Genex. An update of an earlier install waits for its button, and so does
+ * a sandbox user Windows will not sign in: that screen comes up over a studio already open, where
+ * an administrator prompt out of nowhere would not be expected.
  */
 export function setsUpUnasked(state: Pick<BootStoreState, "platform" | "problem">): boolean {
-  return canSetUp(state) && state.problem?.windowsNeeds?.includes(WindowsSetupNeed.Reinstall) !== true;
+  const needs = state.problem?.windowsNeeds ?? [];
+  return canSetUp(state) && !ASKS_FIRST.some((need) => needs.includes(need));
 }
 
 /** The screen the state calls for. */

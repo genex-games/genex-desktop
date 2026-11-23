@@ -16,11 +16,18 @@ import { createInterface } from "node:readline";
 import { setTimeout as sleep } from "node:timers/promises";
 import { picturesNote } from "./grok-prompts.ts";
 import { CatalogError } from "./model-catalog.ts";
+import {
+  RENEWAL_CAP_MS,
+  RENEWAL_WAIT_MS,
+  renewalLeadSeconds,
+  SESSION_SIGN_IN_HOLD_MS,
+  within,
+} from "./sign-in-renewal.ts";
 import { ModelContextSource, type EngineModel } from "./types.ts";
 import { spawnCommand } from "../command-launch.ts";
 import { stopChild } from "../process-tree.ts";
-import type { SandboxOptions } from "../spawn.ts";
-import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { gameSettingsDenyWrites, type SandboxOptions } from "../spawn.ts";
+import { SECOND_MS } from "../../shared/duration.ts";
 import { ModelCatalogProblemCode } from "../../shared/model-catalog.ts";
 import { ReasoningEffort } from "../../shared/model-preferences.ts";
 import { t } from "../../shared/i18n.ts";
@@ -52,18 +59,6 @@ const CREATE_TIME = "create_time";
 const EARLY_RENEWAL_VARIABLE = "GROK_AUTH_EARLY_INVALIDATION_SECS";
 /** Grok's own lead: it renews a sign-in five minutes before it expires. */
 const GROK_EARLY_RENEWAL_SECONDS = 300;
-/** How far past the token's expiry the lead reaches, so Grok counts it due however late it starts. */
-const RENEWAL_LEAD_MARGIN_SECONDS = 60;
-/**
- * How long a session's copy of the sign-in should still work, as it renews nothing: a token is
- * renewed with this long left, or half its life when that is less, so the lead that makes it due
- * always stays short of a new token's life and Grok never counts the new one due too.
- */
-export const SESSION_SIGN_IN_HOLD_MS = 2 * HOUR_MS;
-/** How long a run waits on the renewal before it gets what is there; the renewal goes on without it. */
-const RENEWAL_WAIT_MS = 20 * SECOND_MS;
-/** How long the person's own Grok gets to renew before its input closes: a run's wait never cuts it. */
-const RENEWAL_CAP_MS = 2 * MINUTE_MS;
 /** How often the sign-in is looked at while Grok renews it. */
 const RENEWAL_POLL_MS = 250;
 /** How long Grok gets to exit on its own once its input closes, before it is stopped. */
@@ -479,11 +474,7 @@ export function signInRenewal(text: string, now: number): SignInRenewal | null {
     })
     .sort((a, b) => a.left - b.left)[0];
   if (!due) return null;
-  const leadSeconds = Math.max(
-    GROK_EARLY_RENEWAL_SECONDS,
-    Math.ceil(due.left / SECOND_MS) + RENEWAL_LEAD_MARGIN_SECONDS,
-  );
-  return { scope: due.scope, leadSeconds };
+  return { scope: due.scope, leadSeconds: renewalLeadSeconds(due.left, GROK_EARLY_RENEWAL_SECONDS) };
 }
 
 /** How long a renewable account's token has left when it is due for renewal; null when it holds or can't be renewed. */
@@ -560,13 +551,6 @@ export async function renewGrokSignIn(
   await within(done, options.waitMs ?? RENEWAL_WAIT_MS);
 }
 
-/** Waits for `work`, or `ms` if that comes first; the timer goes either way. */
-async function within(work: Promise<void>, ms: number): Promise<void> {
-  const timer = new AbortController();
-  await Promise.race([work, sleep(ms, undefined, { signal: timer.signal }).catch(() => {})]);
-  timer.abort();
-}
-
 /** The sandbox a session runs in: the folder it works in, Grok's own home, and nothing it must not read. */
 export function grokSandbox(input: {
   runDir: string;
@@ -576,6 +560,9 @@ export function grokSandbox(input: {
   secretPaths: string[];
   home: string;
   toolPath?: () => Promise<string>;
+  platform?: NodeJS.Platform;
+  /** Whether a path is there now; the disk's answer when not given. */
+  exists?: (file: string) => boolean;
 }): SandboxOptions {
   return {
     writableRoots: [input.runDir, ...input.gitDirs],
@@ -583,7 +570,7 @@ export function grokSandbox(input: {
     secretPaths: input.secretPaths,
     ownHome: [input.home],
     // A game's own Grok settings (its MCP servers, permissions and hooks) are never the session's to plant.
-    denyWrite: [path.join(input.gameDir, ".grok")],
+    denyWrite: gameSettingsDenyWrites([path.join(input.gameDir, ".grok")], input.platform, input.exists),
     ...(input.toolPath ? { toolPath: input.toolPath } : {}),
   };
 }

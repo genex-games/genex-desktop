@@ -29,7 +29,15 @@ import {
 import { atomicWriteJson, readJsonIfExists } from "../../substrate/fsx.ts";
 import { type EditorsEnv, compareVersions, findHub } from "./editors.ts";
 import { getUnityLaunch, type Launch } from "./editor-launch.ts";
-import { hasLicense, type InstallJob, JobKind, JobState, readFacts, UNITY_SIZE_GB } from "./setup-steps.ts";
+import {
+  hasLicense,
+  INSTALL_LINE,
+  type InstallJob,
+  JobKind,
+  JobState,
+  readFacts,
+  UNITY_SIZE_GB,
+} from "./setup-steps.ts";
 
 /** Unity's own download of Hub for each Mac processor. */
 const HUB_DMG: Record<string, string> = {
@@ -43,8 +51,6 @@ const HUB_APP = "Unity Hub.app";
 const HUB_PROGRAM = path.posix.join("Contents", "MacOS", "Unity Hub");
 /** The end of Hub's program path as the computer lists its process, wherever Hub is. */
 const HUB_PROCESS = path.posix.join(HUB_APP, HUB_PROGRAM);
-/** The Unity release line Genex's Unity work was measured on; its newest final release is installed. */
-export const INSTALL_LINE = "6000.3";
 /** The plugin storage folder holding the install's record, its output and Hub's download. */
 const SETUP_FOLDER = "unity-setup";
 const EDITOR_RECORD = "editor.json";

@@ -5,21 +5,27 @@ Players open a web version in a browser with nothing to install. `unreal__packag
 skill is what the game itself needs changed first, so the build compiles and the browser shows the
 game instead of a pink frame.
 
-Everything below comes from one real port of a 5.8 game, with Unreal 5.9.0 Preview on a Windows PC;
-where that port did not check a point, the line says so. A later Unreal may differ: trust a build's
-own error over this page, and say what you saw.
+Everything below comes from one real port of a 5.8 game, with Unreal 5.9.0 Preview 1 on a Windows
+PC, read again against Preview 2's own files; where that port did not check a point, the line says
+so. A later Unreal may differ: trust a build's own error over this page, and say what you saw.
+Epic's own guide for the web is in the engine, at `Engine/Platforms/Wasm/Docs/` (start with
+`GettingStarted.md` and `Troubleshooting.md`): read there what this page doesn't cover.
 
 ## 1. Before the first build
 
-- **Unreal builds for the web from 5.9**, and today the 5.9 that Epic's launcher installs on a Mac
-  comes without the web platform (`unreal__package-game` says so), so for now a web version is made
-  on a Windows PC. The call builds with the Unreal the game's project names: a game still on 5.8 is
+- **Unreal builds for the web from 5.9**, on a Windows PC and, from Preview 2, on a Mac too: an
+  install without the web platform is refused by `unreal__package-game`, and updating Unreal 5.9 in
+  the Epic Games Launcher brings it. From Preview 2 a game made of Blueprints alone builds as it is,
+  with no C++ module added. The call builds with the Unreal the game's project names: a game still on 5.8 is
   refused until the user moves it (Move to 5.9, on the Unreal panel's Engine row). Unreal 5.8 can't
   open an asset 5.9 saved, so when the user wants the game itself to stay on 5.8, say so before
   they move it and offer a copy of the game that they move instead. Never open or save a 5.8
   project with 5.9 yourself.
-- **Emscripten** must be exactly the version that Unreal names (6.0.10 for 5.9.0 Preview), in an
-  emsdk folder the user installs: the refusal of `unreal__package-game` gives the steps to pass on.
+- **Emscripten** must be exactly the version that Unreal names (6.0.10 for 5.9.0 Preview 1 and 2),
+  in an emsdk folder the user installs, a game made of Blueprints alone included: the refusal of
+  `unreal__package-game` gives the steps to pass on. On a Mac the folder is named by an `export
+  WASM_EMSDK_ROOT=...` line in the file the user's shell reads at login (`~/.zprofile` for zsh), which
+  Genex reads however it was started.
   On a PC with no Python of its own, `emsdk.bat` runs the Microsoft Store's stand-in for Python and
   fails. Then give the user these two lines to run in the emsdk folder instead, with the version the
   refusal names:
