@@ -10,6 +10,7 @@
  * through `%TEMP%` and held other test files' folders open while they removed them.
  */
 import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it, type TestContext } from "node:test";
 import { ProcessSandbox, type SandboxRuntime } from "../../src/substrate/spawn.ts";
@@ -196,5 +197,68 @@ describe("PH-3: a per-run domain reaches the proxy for the run, and only the run
     }) as typeof update;
     await sandbox.run({ command: "true", cwd: root });
     assert.equal(pushes, 0);
+  });
+});
+
+/**
+ * sandbox-runtime's proxy is one per process and every sandbox pushes to it: Antigravity's
+ * sign-in (its own sandbox, `*.googleapis.com` open while it waits for the code) lost Google's
+ * token server to a status check that opened and closed the same host in a sandbox of its own,
+ * and the pasted code met "host is not on the allow list". Windows' grant session already unions
+ * its members' domains (`windows-sandbox.test.ts`); macOS and Linux keep them together the same way.
+ */
+describe("sandboxes sharing one proxy keep each other's domains", () => {
+  const skip =
+    process.platform === "win32" ? "Windows' grant session unions its members (windows-sandbox.test.ts)" : false;
+  const GOOGLE = "*.googleapis.com";
+
+  it("a sandbox's open domain survives another sandbox starting, opening and closing the same one", {
+    skip,
+  }, async (t) => {
+    const fake = fakeRuntime();
+    const signIn = await sandboxWith(t, fake);
+    // The sign-in waits for the code, here a file the test writes once it has looked.
+    const waiting = signIn.sandbox.run({
+      command: "while [ ! -f code ]; do sleep 0.05; done",
+      cwd: signIn.root,
+      timeoutMs: 30_000,
+      policy: { allowedDomains: [GOOGLE] },
+    });
+    const code = () => writeFile(path.join(signIn.root, "code"), "");
+    t.after(code);
+    await fake.firstWrap;
+    const check = await sandboxWith(t, fake);
+    assert.deepEqual(fake.domains(), [GOOGLE], "a new sandbox's start keeps the open sign-in's domain");
+    await check.sandbox.run({ command: "true", cwd: check.root, policy: { allowedDomains: [GOOGLE] } });
+    assert.deepEqual(fake.domains(), [GOOGLE], "the check's close leaves the sign-in's domain open");
+    await check.sandbox.dispose();
+    assert.deepEqual(fake.domains(), [GOOGLE], "and so does the check's sandbox going away");
+    await code();
+    assert.equal((await waiting).code, 0);
+    assert.deepEqual(fake.domains(), [], "closed once the sign-in ends");
+  });
+
+  it("another sandbox's new folder or install keeps a running sign-in's domain open", { skip }, async (t) => {
+    const fake = fakeRuntime();
+    const signIn = await sandboxWith(t, fake);
+    // The sign-in waits for the code, here a file the test writes once it has looked.
+    const waiting = signIn.sandbox.run({
+      command: "while [ ! -f code ]; do sleep 0.05; done",
+      cwd: signIn.root,
+      timeoutMs: 30_000,
+      policy: { allowedDomains: [GOOGLE] },
+    });
+    const code = () => writeFile(path.join(signIn.root, "code"), "");
+    t.after(code);
+    await fake.firstWrap;
+    const other = await sandboxWith(t, fake);
+    other.sandbox.allowWrite(path.join(other.root, "later"));
+    assert.deepEqual(fake.domains(), [GOOGLE], "another sandbox's new folder keeps it");
+    await other.sandbox.run({ command: "true", cwd: other.root, policy: { allowedDomains: [REGISTRY] } });
+    assert.deepEqual(fake.domains(), [GOOGLE], "another sandbox's install keeps it, and closes its own");
+    await code();
+    await waiting;
+    other.sandbox.allowWrite(path.join(other.root, "later-still"));
+    assert.deepEqual(fake.domains(), [], "closed once the sign-in ends");
   });
 });

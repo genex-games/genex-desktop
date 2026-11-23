@@ -87,11 +87,13 @@ export const GENEX_ACCOUNT_ACTIONS: readonly GenexAction[] = [
  * The Genex SDK packages a game may add, each at the exact version Studio installs. The agent names
  * a package; the version always comes from here. Multiplayer's card asks for `^0.17.0`; the
  * server-authoritative card for an embed SDK with `getAuthorityRegions` and `getAuthorityHome` (0.36.0);
- * the play-time model card for one with `system`, `messages` and `features` (0.37.0).
+ * the play-time model card for one with `system`, `messages` and `features` (0.37.0), and its
+ * voice reference for one with `getVoiceCatalog`, `transcribe`, `speak`, `createVoiceRecorder` and
+ * `createSpeaker` (0.38.0).
  */
 export const GENEX_GAME_PACKAGES = {
-  "@genex-ai/multiplayer": "0.17.20",
-  "@genex-ai/embed-sdk": "0.37.0",
+  "@genex-ai/multiplayer": "0.17.21",
+  "@genex-ai/embed-sdk": "0.38.0",
 } as const;
 /** A Genex SDK package a game may add. */
 export type GenexGamePackage = keyof typeof GENEX_GAME_PACKAGES;

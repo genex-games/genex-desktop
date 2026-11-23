@@ -1,11 +1,11 @@
 {
-  "cliVersion": "1.44.0",
-  "skillMdVersion": "1.44.0",
+  "cliVersion": "1.45.2",
+  "skillMdVersion": "1.45.2",
   "url": "https://genex.games/SKILL.md",
   "files": {
     "genex/SKILL.md": {
       "source": "https://genex.games/SKILL.md",
-      "sha256": "da34b26b4282babaf6a5ee24f4550e589e25ba23be6ddd5881c06ebd3b9f9bdc",
+      "sha256": "f0888836a207f8500463568a66d3877be0c5eae921cbedc05587507b259e6793",
       "bytes": 5698
     },
     "genex-threejs-multiplayer/SKILL.md": {
@@ -20,7 +20,7 @@
     },
     "genex-authoritative-multiplayer/SKILL.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/SKILL.md",
-      "sha256": "ca53f3436ec174484e27577218825df23e10814945a8ea965586f6c8b2d5e8da",
+      "sha256": "4df517a65e24c3011cc106a7993ebaaccdb8a9376a0b86f713c3c7f7187f67bb",
       "bytes": 21807
     },
     "genex-authoritative-multiplayer/references/levels.md": {
@@ -74,25 +74,19 @@
       "bytes": 25911
     },
     "genex-llm-in-games/SKILL.md": {
-      "source": "genex-demo@7b1af3a36/templates/skills/genex-llm-in-games/SKILL.md",
+      "source": "@genex-ai/cli-demo/templates/skills/genex-llm-in-games/SKILL.md",
       "sha256": "a82075f1266ce9225eaa99c7aa558f1d72e8cd3571efc8327bcafc9ca4060546",
-      "bytes": 30565,
-      "version": "1.45.0",
-      "pending": "CLI 1.45.0 is not on npm yet: vendored from genex-demo@7b1af3a36. Re-vendor from the published CLI (npm run genex:skills) once the package.json pin moves to 1.45.0."
+      "bytes": 30565
     },
     "genex-llm-in-games/references/pricing.md": {
-      "source": "genex-demo@7b1af3a36/templates/skills/genex-llm-in-games/references/pricing.md",
+      "source": "@genex-ai/cli-demo/templates/skills/genex-llm-in-games/references/pricing.md",
       "sha256": "77b2fe6da82f69b372e943041b7c421f67a85c5fc02084ca2de446fefbe0c941",
-      "bytes": 11022,
-      "version": "1.45.0",
-      "pending": "CLI 1.45.0 is not on npm yet: vendored from genex-demo@7b1af3a36. Re-vendor from the published CLI (npm run genex:skills) once the package.json pin moves to 1.45.0."
+      "bytes": 11022
     },
     "genex-llm-in-games/references/voice.md": {
-      "source": "genex-demo@7b1af3a36/templates/skills/genex-llm-in-games/references/voice.md",
+      "source": "@genex-ai/cli-demo/templates/skills/genex-llm-in-games/references/voice.md",
       "sha256": "64eb5da9e0decb20b605d59441a87170385e8b0dbb1dde347b04089d570e3511",
-      "bytes": 13331,
-      "version": "1.45.0",
-      "pending": "CLI 1.45.0 is not on npm yet: vendored from genex-demo@7b1af3a36. Re-vendor from the published CLI (npm run genex:skills) once the package.json pin moves to 1.45.0."
+      "bytes": 13331
     },
     "genex-tool-llm/SKILL.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-tool-llm/SKILL.md",
