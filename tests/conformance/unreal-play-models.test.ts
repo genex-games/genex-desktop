@@ -1,7 +1,8 @@
 /**
  * Whether an Unreal game calls play-time models when it is played in the editor
- * (`unrealGameCallsPlayTimeModels`): its `unreal/` project holds Genex's kit and its own code or
- * Blueprints name the kit's `GenexModelsSubsystem`. The game folder is the person's and its agents
+ * (`unrealGameCallsPlayTimeModels`): its Unreal project (`unreal/`, or the game folder itself) holds
+ * Genex's kit and its own code or Blueprints name the kit's `GenexModelsSubsystem`. The game folder
+ * is the person's and its agents
  * write in it, so nothing a folder holds makes the check follow a link, read a huge file, hang or
  * throw.
  */
@@ -53,6 +54,21 @@ describe("an Unreal game that calls play-time models", () => {
       calls: true,
     },
     {
+      name: "the game folder is itself the Unreal project, and its C++ names the class",
+      files: { "Plugins/GenexMultiplayer/GenexMultiplayer.uplugin": "{}", "Source/Inn/Private/Npc.cpp": CALL },
+      calls: true,
+    },
+    {
+      name: "the game folder is itself the Unreal project, and a Blueprint carries the class path",
+      files: { "Plugins/GenexMultiplayer/GenexMultiplayer.uplugin": "{}", "Content/Npc/BP_Npc.uasset": BLUEPRINT },
+      calls: true,
+    },
+    {
+      name: "a folder with code that names the class and no kit of its own",
+      files: { "Source/Inn/Private/Npc.cpp": CALL, "Content/Npc/BP_Npc.uasset": BLUEPRINT },
+      calls: false,
+    },
+    {
       name: "the kit is there and nothing of the game's names the class",
       files: { [KIT]: "{}", "unreal/Source/Inn/Private/Npc.cpp": "void UNpc::Ask() {}" },
       calls: false,
@@ -95,11 +111,6 @@ describe("an Unreal game that calls play-time models", () => {
     {
       name: "only a hidden folder names the class",
       files: { [KIT]: "{}", "unreal/Source/.git/Npc.cpp": CALL },
-      calls: false,
-    },
-    {
-      name: "the game's Unreal project is at its root, not in unreal/",
-      files: { "Plugins/GenexMultiplayer/GenexMultiplayer.uplugin": "{}", "Source/Inn/Npc.cpp": CALL },
       calls: false,
     },
     { name: "the folder is empty", files: {}, calls: false },

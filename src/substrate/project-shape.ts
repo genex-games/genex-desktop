@@ -371,22 +371,30 @@ async function unrealFilesNameModels(
   return false;
 }
 
-/**
- * Whether an Unreal game calls play-time models when it is played in the editor: its `unreal/`
- * project holds Genex's kit (`Plugins/GenexMultiplayer/`) and its own work names the kit's
- * `GenexModelsSubsystem`, in a `.h` or `.cpp` under `Source/` or in the bytes of a `.uasset` or
- * `.umap` under `Content/`. Such a game gets a practice helper named to the editor
- * (`main/core/practice-handoff.ts`). No link is followed, and a file over
- * {@link UNREAL_SCAN_MAX_BYTES} is not read.
- */
-export async function unrealGameCallsPlayTimeModels(dir: string): Promise<boolean> {
-  const project = path.join(dir, UNREAL_PROJECT_FOLDER);
+/** Whether the Unreal project at `project` holds Genex's kit and its own work names the models class. */
+async function unrealProjectNamesModels(project: string, left: UnrealScanLeft): Promise<boolean> {
   const kit = UNREAL_KIT_FOLDERS.map((_, at) => path.join(project, ...UNREAL_KIT_FOLDERS.slice(0, at + 1)));
   for (const folder of [project, ...kit]) if (!(await isPlainFolder(folder))) return false;
-  const left: UnrealScanLeft = { files: UNREAL_SCAN_MAX_FILES, bytes: UNREAL_SCAN_MAX_TOTAL_BYTES };
   for (const { folder, extensions } of UNREAL_OWN_FILES) {
     const root = path.join(project, folder);
     if ((await isPlainFolder(root)) && (await unrealFilesNameModels(root, extensions, left))) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether an Unreal game calls play-time models when it is played in the editor: its Unreal project
+ * holds Genex's kit (`Plugins/GenexMultiplayer/`) and its own work names the kit's
+ * `GenexModelsSubsystem`, in a `.h` or `.cpp` under `Source/` or in the bytes of a `.uasset` or
+ * `.umap` under `Content/`. The project is the game's `unreal/` folder (New game) or the game folder
+ * itself (an Unreal project opened as a game). Such a game gets a practice helper named to the
+ * editor (`main/core/practice-handoff.ts`). No link is followed, and a file over
+ * {@link UNREAL_SCAN_MAX_BYTES} is not read.
+ */
+export async function unrealGameCallsPlayTimeModels(dir: string): Promise<boolean> {
+  const left: UnrealScanLeft = { files: UNREAL_SCAN_MAX_FILES, bytes: UNREAL_SCAN_MAX_TOTAL_BYTES };
+  for (const project of [path.join(dir, UNREAL_PROJECT_FOLDER), dir]) {
+    if (await unrealProjectNamesModels(project, left)) return true;
   }
   return false;
 }

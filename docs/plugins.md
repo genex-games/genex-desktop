@@ -2846,8 +2846,8 @@ placed. A core that isn't the pinned one, or a link in its way, is a note in `co
 and `genex.json`'s `authority` block, the `Genex Authority Subsystem` client, `genex__room` with bots
 (Play joins it through `.studio/authority.json`) and publish, which stages the room as for any game.
 A game whose own work names the plugin's `GenexModelsSubsystem` (`unrealGameCallsPlayTimeModels`: a
-`.h` or `.cpp` under `unreal/Source/`, or the bytes of a `.uasset` or `.umap` under `unreal/Content/`,
-no link followed) has its plays in the editor answered as a web game's page is in Live. While Live's
+`.h` or `.cpp` under the project's `Source/`, or the bytes of a `.uasset` or `.umap` under its
+`Content/`, the project being `unreal/` or the game folder itself, no link followed) has its plays in the editor answered as a web game's page is in Live. While Live's
 view of the game is its Unreal card, Genex names Live's practice helper in the game's
 `.studio/llm-practice.json` (`{"key":"<port>.<token>"}`, `main/core/practice-handoff.ts`), written and
 removed as `authority.json` is and only in a folder that holds `studio.json`. The plugin's editor
