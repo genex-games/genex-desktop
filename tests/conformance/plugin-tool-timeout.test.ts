@@ -58,7 +58,7 @@ describe("a plugin tool's own call deadline", () => {
     const manifest = validateManifest(
       JSON.parse(await readFile(new URL("../../src/plugins/godot/plugin.json", import.meta.url), "utf8")),
     );
-    for (const name of ["new-game", "check", "run-scene", "screenshot", "web-export", "export-templates"])
+    for (const name of ["new-game", "check", "run-scene", "screenshot", "web-export", "app-export", "export-templates"])
       assert.equal(manifest.tools.find((tool) => tool.name === name)?.timeoutMs, PLUGIN_TOOL_MAX_TIMEOUT_MS, name);
   });
 });

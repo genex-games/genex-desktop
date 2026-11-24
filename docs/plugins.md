@@ -4469,8 +4469,28 @@ runs, naming Godot's Template Manager. Only a 206 answer naming the range asked 
 that sends the whole archive is refused, its body cancelled); each request has a deadline by its
 size and the call's stop, and is tried up to three times. `web-export` fits the fetch, the copy and
 Godot's export in its one call, and starts no export with less than a minute left. Windows's Do it for me fetches the Web template with Godot, and its Stop stops that fetch too.
-`export-templates {platforms}` (web, windows, mac, linux: Godot's 64-bit x86 `linux_release.x86_64`) does the same for an app export the agent runs
-with Godot's command line, puts them where the sandbox user's Godot reads them on Windows, and for
+`app-export {platform}` (mac, windows or linux, one a call; `app-export.ts`) exports the game as an
+app the same way, as a Godot job of Genex's rather than a command in the session's shell: a session
+Studio starts itself (Fix with agent, Build again, the cover step, a Loop's workers) runs in a
+sandbox that reaches neither Godot's settings folder nor macOS's own temporary folder, where
+Godot's export writes whatever `TMPDIR` says, so an export from that shell fails. The job has the
+web export's reach and, for a Mac app, one folder more: a private home with the person's templates
+linked in, writes to the project, the one settings file in the user's temporary folder, and `_lipo`
+there, where Godot's signing splits a universal program. It fetches the platform's
+templates when missing, sets ETC2/ASTC for a Mac app, adds Genex's own preset once (`Genex Mac`,
+`Genex Windows`, `Genex Linux`; its options are then the game's and are kept), and writes
+`Builds/Mac/<Game>.app`, `Builds/Windows/<Game>.exe` or `Builds/Linux/<Game>.x86_64` in the
+project, named from `config/name`, with `Builds/.gdignore` so Godot imports none of it. A Mac app is
+universal and signed ad hoc by Godot itself (`codesign/codesign=1`) with the entitlements file
+`Builds/genex-mac-entitlements.plist` (Godot's own for such an app, none; written when missing and
+named by the preset, because Godot otherwise writes that file in the temporary folder under the
+game's name, which the sandbox's plain-name rule cannot allow for a name with a space). It is
+exported on a Mac only: on Windows Godot makes a zip of one, which Publish does not send. An export
+is a failure naming Godot's errors when it wrote no program newer than its start, when Godot said
+the export failed, or when a Mac app came out unsigned; an app written and then given up on is
+removed, so Publish never sends it. Nothing is written through a link.
+`export-templates {platforms}` (web, windows, mac, linux: Godot's 64-bit x86 `linux_release.x86_64`) fetches templates for an export the agent runs
+with Godot's command line and a preset of its own, puts them where the sandbox user's Godot reads them on Windows, and for
 mac sets `textures/vram_compression/import_etc2_astc` (new games from either template have it).
 The tools that run Godot declare `timeoutMs` of nine minutes. `keep-web-build` at `turn.end` and `restore.after` makes it again
 whenever the project changed since the last build (its `.pck` older than the project's newest file,

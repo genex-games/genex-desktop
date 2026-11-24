@@ -23,21 +23,21 @@ export const WEB_PAGE = "index.html";
 export const WEB_PACK = "index.pck";
 /** Genex's own preset in the project's `export_presets.cfg`. */
 export const WEB_PRESET = "Genex Web";
-const PRESETS_FILE = "export_presets.cfg";
+export const PRESETS_FILE = "export_presets.cfg";
 /** Godot's Web template without threads: a page that needs no cross-origin isolation. */
 export const WEB_TEMPLATE = "web_nothreads_release.zip";
 /** Where Godot's Export Template Manager keeps templates, in Godot's data folder (a Mac's job links it into its private home). */
 const TEMPLATES_IN_DATA = path.join("Godot", "export_templates");
-const TEMPLATES_HOME = path.join("Library", "Application Support", TEMPLATES_IN_DATA);
+export const TEMPLATES_HOME = path.join("Library", "Application Support", TEMPLATES_IN_DATA);
 /** Tells Godot to leave a folder out of the project, should the export sit inside it. */
-const GDIGNORE = ".gdignore";
+export const GDIGNORE = ".gdignore";
 /**
  * The file Godot writes the exported project's settings to before packing them, in macOS's own
  * temporary folder for the user whatever TMPDIR says: the one file there an export may write.
  */
 export const EXPORT_SETTINGS_TEMP = "tmpproject.binary";
 /** An export imports the whole project first, the first time with every asset; within the tool's own nine minutes. */
-const EXPORT_TIMEOUT_MS = 8 * MINUTE_MS;
+export const EXPORT_TIMEOUT_MS = 8 * MINUTE_MS;
 
 /** The template folder Godot looks in for a version: `4.6.1.stable`, `4.3.stable.mono`. */
 export function templateVersion(version: GodotVersion): string {
@@ -81,14 +81,20 @@ function presetText(index: number): string {
   ].join("\n");
 }
 
-/** The project's presets with Genex's Web preset added after them; unchanged when it is there. */
-export function withWebPreset(presets: string): string {
-  if (presets.split(/\r?\n/).some((line) => line.trim() === `name="${WEB_PRESET}"`)) return presets;
+/**
+ * The project's presets with a preset of Genex's own (`name`, written by `textOf` for its number)
+ * added after them; unchanged when a preset of that name is there, whatever its options say.
+ */
+export function withPreset(presets: string, name: string, textOf: (index: number) => string): string {
+  if (presets.split(/\r?\n/).some((line) => line.trim() === `name="${name}"`)) return presets;
   const numbers = [...presets.matchAll(/^\[preset\.(\d+)\]\s*$/gm)].map((found) => Number(found[1]));
   const next = numbers.length ? Math.max(...numbers) + 1 : 0;
   const before = presets.trim() ? `${presets.replace(/\s*$/, "")}\n\n` : "";
-  return `${before}${presetText(next)}`;
+  return `${before}${textOf(next)}`;
 }
+
+/** The project's presets with Genex's Web preset added after them; unchanged when it is there. */
+export const withWebPreset = (presets: string): string => withPreset(presets, WEB_PRESET, presetText);
 
 /** What a multiplayer game's Web preset loads before the engine: Genex's SDK bridge, beside the page. */
 export const BRIDGE_HEAD_INCLUDE = `<script src="${BRIDGE_PAGE_FILE}"></script>`;
@@ -126,7 +132,7 @@ export function withMultiplayerWebPreset(presets: string): string {
 }
 
 /** Refuses a path that is a link; a missing one is fine. */
-async function assertNoLink(file: string, message: string): Promise<void> {
+export async function assertNoLink(file: string, message: string): Promise<void> {
   if ((await lstat(file).catch(() => null))?.isSymbolicLink()) throw new Error(message);
 }
 
