@@ -18,7 +18,7 @@
  */
 import { execFile } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { mkdir, mkdtemp, open, readdir, realpath, rm, stat } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, readdir, realpath, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import { type NeverTouchList, neverTouchVerdict, SHELL_TOOL } from "./never-touch.ts";
 import path from "node:path";
@@ -98,7 +98,7 @@ import {
   antigravityHomes,
   credentialHomes,
 } from "../credential-homes.ts";
-import { createFileInDir, ensureDirBelow, readRegularFile } from "../fsx.ts";
+import { createFileInDir, ensureDirBelow, readFileInDir } from "../fsx.ts";
 import { killProcessTree } from "../process-tree.ts";
 import { spawnCommand } from "../command-launch.ts";
 import { withEnvPath } from "../toolchain.ts";
@@ -190,6 +190,7 @@ const MESSAGE = {
   Refused: "Antigravity's model refused the request",
   JudgeTimedOut: (minutes: number) => `the judge did not answer within ${minutes} min`,
   NoSuchRequest: (method: string) => `Genex does not answer ${method}`,
+  SessionNotFound: (words: string) => `Antigravity session not found: ${words}`,
   VerifyOpened:
     "Google asks you to verify your Google account before Antigravity can run. Genex opened Google's page in your browser: verify there, then send your message again.",
   Verify:
@@ -199,6 +200,10 @@ const MESSAGE = {
 /** How many of the CLI's newest logs are read for the page Google named, and how much of each. */
 const NOTICE_LOGS = 4;
 const NOTICE_LOG_BYTES = 2 * 1024 * 1024;
+/** A sign-in file is a few kilobytes: anything bigger in its place is not one. */
+const SIGN_IN_FILE_MAX_BYTES = 64 * 1024;
+/** Only the person may read Genex's copy of the sign-in, as the CLI's own file. */
+const SIGN_IN_FILE_MODE = 0o600;
 /** A log written this long before the turn started may still be the turn's: the clocks are the same, the writes are not. */
 const NOTICE_LOG_SLACK_MS = 2 * SECOND_MS;
 /** The CLI's own logs of its sessions, as it names them in the `log` folder of its app data (`~/.gemini/antigravity-genex`). */
@@ -920,7 +925,10 @@ export async function runTurn(
       clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
       clientInfo: ANTIGRAVITY_CLIENT,
     });
-    const session = parseAntigravitySession(await connection.request(...sessionRequest(plan)), plan.resume);
+    const opened = await connection.request(...sessionRequest(plan)).catch((err: unknown) => {
+      throw plan.resume ? unloaded(err) : err;
+    });
+    const session = parseAntigravitySession(opened, plan.resume);
     sessionId = session.sessionId;
     hooks.onSession(session);
     if (!plan.prompt.length) return null;
@@ -944,6 +952,16 @@ export async function runTurn(
     await reading.catch(() => {});
     unstopped();
   }
+}
+
+/**
+ * A session the CLI would not load, as the chat knows a session that is gone: its words say
+ * "session not found", so the chat starts a fresh one. A session from before Genex kept a folder of
+ * its own is saved in the CLI's default one. A sign-in or one of Google's outages stays what it is.
+ */
+function unloaded(err: unknown): unknown {
+  if (!(err instanceof AcpError) || failure(err).kind !== EngineFailureKind.Other) return err;
+  return new AcpError(err.code, MESSAGE.SessionNotFound(err.message), err.data);
 }
 
 /** The question that opens the turn's session: a new one in its folder, or an earlier one loaded. */
@@ -1074,7 +1092,7 @@ export function antigravitySandbox(input: {
 }
 
 /**
- * What makes Antigravity CLI keep its sign-in in its own file (`~/.gemini/antigravity-cli`) rather
+ * What makes Antigravity CLI keep its sign-in in its own file (in Genex's app data folder) rather
  * than in the operating system's credential store: it uses the file whenever it believes it runs
  * over SSH (1.5.9 logs "Using file-based token storage because SSH session detected"). Nothing
  * connects over SSH; the values only satisfy that check.
@@ -1111,32 +1129,28 @@ export function antigravityPersonEnv(): Record<string, string> {
   return { ...ANTIGRAVITY_FILE_STORE };
 }
 
-/** A sign-in file is a few kilobytes: anything bigger in its place is not one. */
-const SIGN_IN_FILE_MAX_BYTES = 64 * 1024;
-/** Only the person may read Genex's copy of the sign-in, as the CLI's own file. */
-const SIGN_IN_FILE_MODE = 0o600;
-
 /**
  * Genex's sign-in as it was before Genex kept an app data folder of its own: the file in the CLI's
- * default folder is copied into Genex's, once, so a person signed in to Antigravity in Genex stays
- * signed in. Only when Genex's folder has no sign-in yet: a sign-in made in it is never replaced.
- * The bytes are copied, never parsed; one an `agy` outside Genex already deleted leaves the person
- * to sign in once more. A boxed session may write in `~/.gemini`, so nothing is copied through a
- * link: neither a linked file or folder in the CLI's (it could name any file of the person's) nor
- * a linked Genex folder. Answers whether it copied.
+ * default folder is copied into Genex's, so a person signed in to Antigravity in Genex stays signed
+ * in. Only while Genex's folder does not exist yet: once it does (this copy made it, or Genex's
+ * `agy` ran in it), nothing is copied again, so a later sign-in of an `agy` outside Genex in the
+ * default folder never becomes Genex's. The bytes are copied, never parsed; one an `agy` outside
+ * Genex already deleted leaves the person to sign in once more. A boxed session may write in
+ * `~/.gemini`, so nothing is read or written through a link, checked after each open: neither a
+ * linked file or folder in the CLI's (it could name any file of the person's) nor a linked Genex
+ * folder. Answers whether it copied.
  */
 export async function carryOverAntigravitySignIn(home: string = os.homedir()): Promise<boolean> {
   const gemini = await realpath(antigravityHome(home)).catch(() => null);
   if (!gemini) return false;
+  const own = path.join(gemini, AntigravityAppData.Genex);
+  if (await lstat(own).catch(() => null)) return false;
   const cliDir = path.join(gemini, AntigravityAppData.Cli);
-  if ((await realpath(cliDir).catch(() => null)) !== cliDir) return false;
-  const bytes = await readRegularFile(path.join(cliDir, ANTIGRAVITY_SIGN_IN_FILE), SIGN_IN_FILE_MAX_BYTES).catch(
-    () => null,
-  );
+  const bytes = await readFileInDir(cliDir, ANTIGRAVITY_SIGN_IN_FILE, SIGN_IN_FILE_MAX_BYTES).catch(() => null);
   if (!bytes) return false;
-  const own = await ensureDirBelow(gemini, [AntigravityAppData.Genex]);
+  const made = await ensureDirBelow(gemini, [AntigravityAppData.Genex]);
   try {
-    await createFileInDir(own, ANTIGRAVITY_SIGN_IN_FILE, bytes, { mode: SIGN_IN_FILE_MODE });
+    await createFileInDir(made, ANTIGRAVITY_SIGN_IN_FILE, bytes, { mode: SIGN_IN_FILE_MODE });
     return true;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;

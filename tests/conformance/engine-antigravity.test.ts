@@ -555,6 +555,27 @@ describe("an Antigravity build", () => {
     assert.equal(result.sessionId, "s-1");
   });
 
+  it("a session the CLI will not load is a lost one, which the chat starts afresh; a sign-in stays a sign-in", async () => {
+    // A chat from before Genex's own folder (#870): its session is saved in the CLI's default one.
+    const { engine } = await engineWith({
+      session: () => ({ error: { code: AcpErrorCode.Internal, message: "conversation s-1 does not exist" } }),
+    });
+    const result = await engine.delegate({ cwd: await game(), prompt: "And then?", resume: "s-1" });
+    assert.equal(result.ok, false);
+    assert.match(result.errorText ?? "", /session not found/i, "the words the chat knows a lost session by");
+    assert.match(result.errorText ?? "", /conversation s-1 does not exist/, "with the CLI's own");
+    const signedOut = await engineWith({ session: () => refusal() });
+    await assert.rejects(
+      signedOut.engine.delegate({ cwd: await game(), prompt: "And then?", resume: "s-1" }),
+      (err: unknown) => err instanceof EngineError && err.kind === EngineFailureKind.Auth,
+    );
+    const fresh = await engineWith({
+      session: () => ({ error: { code: AcpErrorCode.Internal, message: "no backend" } }),
+    });
+    const failed = await fresh.engine.delegate({ cwd: await game(), prompt: "go" });
+    assert.doesNotMatch(failed.errorText ?? "", /session not found/i, "a new session's failure is not a lost one");
+  });
+
   it("a loaded session whose answer repeats no id keeps the id it was loaded by", async () => {
     // ACP's `session/load` answer carries no session id: only `session/new` gives one.
     const { engine, agents } = await engineWith({ session: () => ({ result: {} }) });
@@ -1132,6 +1153,10 @@ describe("Antigravity's own app data folder (#870)", () => {
     await writeFile(path.join(antigravityAppData(home, AntigravityAppData.Cli), ANTIGRAVITY_SIGN_IN_FILE), "outside");
     assert.equal(await carryOverAntigravitySignIn(home), false, "a sign-in in Genex's folder is never replaced");
     assert.equal(await readFile(genexFile(home), "utf8"), "old-sign-in");
+    const ran = await homeWith("outside agy's sign-in");
+    await mkdir(antigravityAppData(ran));
+    assert.equal(await carryOverAntigravitySignIn(ran), false, "Genex's agy already ran: its folder is its own");
+    assert.equal(await stat(genexFile(ran)).catch(() => null), null, "a signed-out Genex stays signed out");
     const none = await homeWith(null);
     assert.equal(await carryOverAntigravitySignIn(none), false, "nothing to carry: the person signs in once");
     assert.equal(await stat(antigravityAppData(none)).catch(() => null), null, "and nothing is made");
@@ -1157,7 +1182,7 @@ describe("Antigravity's own app data folder (#870)", () => {
     const target = path.join(outside, "genex-elsewhere");
     await mkdir(target);
     await symlink(target, antigravityAppData(linked));
-    await assert.rejects(carryOverAntigravitySignIn(linked), { code: "ELOOP" }, "Genex's folder is a link");
+    assert.equal(await carryOverAntigravitySignIn(linked), false, "Genex's folder is a link: it is there, so no copy");
     assert.deepEqual(await readdir(target), [], "nothing written through it");
   });
 

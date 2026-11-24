@@ -476,8 +476,11 @@ starts names an app data folder of Genex's own, `~/.gemini/antigravity-genex`
 conversations and logs: an `agy` outside Genex keeps the default `~/.gemini/antigravity-cli`, and
 when it renews its Keychain sign-in it deletes that folder's sign-in file as stale, which once
 signed Genex out an hour after each sign-in (#870). Before its first session the engine copies a
-sign-in file from the default folder into Genex's, once and never over one there, never through a
-link (`carryOverAntigravitySignIn`), so a person signed in before the change stays signed in.
+sign-in file from the default folder into Genex's, only while Genex's folder does not exist yet and
+never through a link, checked after each open (`carryOverAntigravitySignIn`), so a person signed in
+before the change stays signed in. A chat from before the change continues in a fresh session: the
+CLI cannot load a session saved in the default folder, and a session it will not load is reported
+as not found, which the chat answers with a new one.
 Genex never parses either store. Its sign-in runs in the session's box, so the sign-in lands in the
 file every session reads: every box sets `SSH_CONNECTION` and `SSH_CLIENT` (`antigravityBoxEnv`;
 a Mac's box denies the Keychain anyway), because on Windows the boxed CLI otherwise saved the

@@ -10,6 +10,7 @@ import { it } from "node:test";
 import {
   atomicWriteText,
   openNoFollow,
+  readFileInDir,
   readRegularFile,
   renameFolder,
   replaceFile,
@@ -224,6 +225,24 @@ it("writeFileInDir never writes through a folder swapped for a link after its ch
   await writeFile(path.join(plain, "a.png"), "older and longer");
   await writeFileInDir(plain, "a.png", "new");
   assert.equal(await readFile(path.join(plain, "a.png"), "utf8"), "new", "a plain folder takes it, emptied first");
+});
+
+it("readFileInDir reads a file in its folder, never through a linked file or folder", {
+  skip: process.platform === "win32" ? "folder links need privileges on Windows" : false,
+}, async () => {
+  const root = await realpath(await tmpDir("fsx-read-in-"));
+  const outside = await realpath(await tmpDir("fsx-read-in-outside-"));
+  await writeFile(path.join(outside, "secret.txt"), "secret");
+  const dir = path.join(root, "own");
+  await mkdir(dir);
+  await writeFile(path.join(dir, "a.txt"), "mine");
+  assert.equal(String(await readFileInDir(dir, "a.txt", 64)), "mine");
+  await symlink(path.join(outside, "secret.txt"), path.join(dir, "link.txt"));
+  await assert.rejects(readFileInDir(dir, "link.txt", 64), { code: "ELOOP" });
+  const linked = path.join(root, "linked");
+  await symlink(outside, linked);
+  await assert.rejects(readFileInDir(linked, "secret.txt", 64), { code: "ELOOP" }, "a folder that is a link");
+  await assert.rejects(readFileInDir(dir, "a.txt", 2), { code: "EFBIG" });
 });
 
 it("createFileInDir makes a new file only: never over one there, never through a folder swapped for a link", {

@@ -172,7 +172,7 @@ export interface CreateFileOptions {
 /**
  * Create `name` in `dir` (a folder {@link ensureDirBelow} made) and write `data`, refusing a name
  * already there (a file or a link: EEXIST) and a `dir` swapped for a link after its check (ELOOP,
- * the file it made through the link removed again).
+ * the file it made through the link removed again where it can be).
  */
 export async function createFileInDir(
   dir: string,
@@ -185,7 +185,14 @@ export async function createFileInDir(
   const handle = await openNoFollow(file, FS.O_WRONLY | FS.O_CREAT | FS.O_EXCL, options.mode ?? 0o666);
   let placed = false;
   try {
-    placed = (await realpath(dir).catch(() => null)) === dir;
+    // After the open: the folder is still itself, and the name in it is the file the handle made
+    // (a folder swapped for a link and back meanwhile left that file elsewhere).
+    const [real, opened, named] = await Promise.all([
+      realpath(dir).catch(() => null),
+      handle.stat(),
+      lstat(file).catch(() => null),
+    ]);
+    placed = real === dir && named !== null && !named.isSymbolicLink() && sameFile(opened, named);
     if (placed) await handle.writeFile(data);
   } finally {
     await handle.close();
@@ -214,23 +221,50 @@ export class NotARegularFileError extends Error {
 export async function readRegularFile(file: string, maxBytes: number): Promise<Buffer> {
   const handle = await openNoFollow(file, FS.O_RDONLY | FS.O_NONBLOCK);
   try {
-    const info = await handle.stat();
-    if (!info.isFile()) throw new NotARegularFileError(file, "ENOTREG", maxBytes);
-    if (info.size > maxBytes) throw new NotARegularFileError(file, "EFBIG", maxBytes);
-    const chunks: Buffer[] = [];
-    let total = 0;
-    for (;;) {
-      const chunk = Buffer.alloc(Math.min(READ_CHUNK_BYTES, maxBytes + 1 - total));
-      const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
-      if (bytesRead === 0) break;
-      chunks.push(chunk.subarray(0, bytesRead));
-      total += bytesRead;
-      if (total > maxBytes) throw new NotARegularFileError(file, "EFBIG", maxBytes);
-    }
-    return Buffer.concat(chunks, total);
+    return await readOpened(handle, file, maxBytes);
   } finally {
     await handle.close();
   }
+}
+
+/**
+ * {@link readRegularFile} of `name` in `dir`, a folder someone else can write in: after the open
+ * the folder must still be itself (its real path) and the name in it the file the handle holds, so
+ * a folder swapped for a link (a Windows junction too) around the open reads nothing (ELOOP).
+ */
+export async function readFileInDir(dir: string, name: string, maxBytes: number): Promise<Buffer> {
+  const file = path.join(dir, name);
+  const handle = await openNoFollow(file, FS.O_RDONLY | FS.O_NONBLOCK);
+  try {
+    const [real, opened, named] = await Promise.all([
+      realpath(dir).catch(() => null),
+      handle.stat(),
+      lstat(file).catch(() => null),
+    ]);
+    const placed = real === dir && named !== null && !named.isSymbolicLink() && sameFile(opened, named);
+    if (!placed) throw linkRefused(file);
+    return await readOpened(handle, file, maxBytes);
+  } finally {
+    await handle.close();
+  }
+}
+
+/** The bytes of an opened file, which must be a regular one of at most `maxBytes`. */
+async function readOpened(handle: FileHandle, file: string, maxBytes: number): Promise<Buffer> {
+  const info = await handle.stat();
+  if (!info.isFile()) throw new NotARegularFileError(file, "ENOTREG", maxBytes);
+  if (info.size > maxBytes) throw new NotARegularFileError(file, "EFBIG", maxBytes);
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for (;;) {
+    const chunk = Buffer.alloc(Math.min(READ_CHUNK_BYTES, maxBytes + 1 - total));
+    const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
+    if (bytesRead === 0) break;
+    chunks.push(chunk.subarray(0, bytesRead));
+    total += bytesRead;
+    if (total > maxBytes) throw new NotARegularFileError(file, "EFBIG", maxBytes);
+  }
+  return Buffer.concat(chunks, total);
 }
 
 /**
