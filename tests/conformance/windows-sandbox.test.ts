@@ -90,6 +90,7 @@ import {
   folderAceProgress,
   folderOwnEditor,
   FOLDER_ACE_SCRIPT,
+  FOLDER_ACE_TIMEOUT_MS,
   icaclsArgs,
   OwnWalk,
   windowsPowerShell,
@@ -545,6 +546,26 @@ describe("an entry on one folder alone", () => {
     const [outcome] = await editor(edits);
     assert.equal(outcome?.ok, false);
     assert.match(outcome && !outcome.ok ? outcome.error : "", /^Command failed: icacls: stopped after 15 s/);
+  });
+
+  it("waits on a slow PowerShell instead of letting icacls walk everything under the folder (#862)", async () => {
+    // A very slow PC took longer than 15 s to start PowerShell for a ~\.bun grant; icacls then
+    // walked all of ~\.bun past its own deadline, and the agents never started.
+    const deadlines: Array<number | undefined> = [];
+    const editor = folderAceEditor({
+      env: { SystemRoot: "C:\\Windows" },
+      powershell: async (_file, _args, _env, run) => {
+        deadlines.push(run?.timeoutMs);
+        throw Object.assign(new Error("Command failed"), { killed: true, stdout: '{"ok":true}\n' });
+      },
+      icacls: async () => assert.fail("a slow PowerShell is no locked-down one: icacls would walk the folder"),
+    });
+    const [finished, slow] = await editor(edits);
+    assert.deepEqual(finished, { ok: true }, "an edit the batch finished before its deadline stays done");
+    assert.equal(slow?.ok, false);
+    assert.equal(slow && !slow.ok && slow.timedOut, true, "the edit it never reached is tried again");
+    assert.match(slow && !slow.ok ? slow.error : "", /PowerShell had not finished after 120 s/);
+    assert.deepEqual(deadlines, [FOLDER_ACE_TIMEOUT_MS]);
   });
 
   it("answers a batch PowerShell ran past its deadline on as timed out, and one it could not run as nothing", async () => {

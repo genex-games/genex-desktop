@@ -133,9 +133,11 @@ the setup screen opens on `git-missing`. What differs from macOS:
   sandbox among them, stamps and cleans up the user's entries, and its cleanup took Genex's on
   `AppData`. The entry is set on that folder alone
   ([`windows-folder-ace.ts`](../src/substrate/windows-folder-ace.ts): `SetFileSecurityW` from one
-  Windows PowerShell run per batch); `icacls`, the fallback where PowerShell is locked down,
-  rewrites everything under the folder as well, and its failure says when its 15 s deadline stopped
-  it. Each Genex records its folders in
+  Windows PowerShell run per batch, given two minutes, since on a very slow PC PowerShell alone
+  took longer than 15 s to start, #862); `icacls`, the fallback only where PowerShell is locked
+  down, rewrites everything under the folder as well, and its failure says when its 15 s deadline
+  stopped it. A batch that runs out of time is slow, not locked down: it keeps what it finished and
+  the rest is tried again in PowerShell, never through `icacls`. Each Genex records its folders in
   `%LOCALAPPDATA%\genex-sandbox-grants\<pid>.json` and revokes only those no other running Genex
   records. The SID is asked of srt-win up to three times; without it the apply fails. The harness gets the entries set again just before it starts, and one that exits during
   boot logs `icacls` for each folder from the profile down to its files.

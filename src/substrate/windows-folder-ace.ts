@@ -139,13 +139,21 @@ const MESSAGE = {
   /** A refusal the script gave no words for. */
   Refused: "refused",
   TimedOut: (ms: number) => `Windows was still passing the entries down after ${Math.round(ms / SECOND_MS)} s`,
+  /** A folder-only batch stopped for time: its edits walk nothing, so PowerShell itself was slow. */
+  PowerShellSlow: (ms: number) => `PowerShell had not finished after ${Math.round(ms / SECOND_MS)} s`,
   NotReached: (ms: number) => `not reached: the batch ran out of time after ${Math.round(ms / SECOND_MS)} s`,
   /** What a failed icacls call adds when its deadline stopped it. */
   IcaclsStopped: (ms: number) => `stopped after ${Math.round(ms / SECOND_MS)} s (it walks everything under the folder)`,
 } as const;
 
-/** How long one PowerShell batch or one `icacls` call may take. */
+/** How long one `icacls` call, or one PowerShell batch on the way out, may take. */
 const TOOL_TIMEOUT_MS = 15 * SECOND_MS;
+/**
+ * How long one PowerShell batch of folder-only edits may take. Its edits touch one folder each,
+ * so what takes the time is PowerShell itself starting, which on a very slow PC (an antivirus
+ * scanning the script) passed 15 s (#862).
+ */
+export const FOLDER_ACE_TIMEOUT_MS = 2 * MINUTE_MS;
 /**
  * How long one batch of own edits may take. A grant or deny passes its entry down through
  * everything under its path, a file at a time, so the first one on a large folder (a conda
@@ -624,14 +632,27 @@ async function viaIcacls(icacls: (args: string[]) => Promise<void>, edits: reado
   return outcomes;
 }
 
-/** An editor that runs one PowerShell batch, and `icacls` for the batch when PowerShell cannot. */
+/**
+ * An editor that runs one PowerShell batch, and `icacls` for the batch when PowerShell cannot. A
+ * batch that runs past {@link FOLDER_ACE_TIMEOUT_MS} keeps the edits it finished and answers the
+ * rest as `timedOut`: PowerShell there is slow, not locked down, and icacls, which walks
+ * everything under each folder, would be slower still.
+ */
 export function folderAceEditor(tools: FolderAceTools = {}): FolderAceEditor {
   const powershellRun = tools.powershell ?? runPowerShell;
   const icacls = tools.icacls ?? runIcacls;
   return async (edits) => {
     if (edits.length === 0) return [];
     const command = folderAceCommand(edits, tools.env);
-    const stdout = await powershellRun(command.file, command.args, command.env).catch(() => "");
+    let stdout = "";
+    try {
+      stdout = await powershellRun(command.file, command.args, command.env, { timeoutMs: FOLDER_ACE_TIMEOUT_MS });
+    } catch (error) {
+      if (ranOutOfTime(error)) {
+        const finished = folderAceProgress(writtenBefore(error)) ?? [];
+        return stoppedOutcomes(edits, finished, FOLDER_ACE_TIMEOUT_MS, MESSAGE.PowerShellSlow);
+      }
+    }
     return folderAceOutcomes(stdout, edits.length) ?? viaIcacls(icacls, edits);
   };
 }
@@ -686,14 +707,19 @@ function writtenBefore(error: unknown): string {
 }
 
 /**
- * Every edit of a batch stopped after `ms`: the outcomes it finished, then the edit Windows was
- * still on and those it never reached, refused as `timedOut`.
+ * Every edit of a batch stopped after `ms`: the outcomes it finished, then the edit it was still
+ * on (`current` says why) and those it never reached, refused as `timedOut`.
  */
-function stoppedOutcomes(edits: readonly FolderOwnEdit[], finished: readonly FolderAceOutcome[], ms: number) {
+function stoppedOutcomes(
+  edits: readonly unknown[],
+  finished: readonly FolderAceOutcome[],
+  ms: number,
+  current: (ms: number) => string = MESSAGE.TimedOut,
+) {
   return edits.map((_, i): FolderAceOutcome => {
     const outcome = finished[i];
     if (outcome) return outcome;
-    const error = i === finished.length ? MESSAGE.TimedOut(ms) : MESSAGE.NotReached(ms);
+    const error = i === finished.length ? current(ms) : MESSAGE.NotReached(ms);
     return { ok: false, error, timedOut: true };
   });
 }
