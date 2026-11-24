@@ -2853,8 +2853,8 @@ view of the game is its Unreal card, Genex names Live's practice helper in the g
 removed as `authority.json` is and only in a folder that holds `studio.json`. The plugin's editor
 module (`GenexLocalPractice`) reads the file each time Play in the editor begins, takes only a key in
 a small plain file whose port answers, and hands it to the play, whose model calls then go to the
-helper on this computer, so Live's bar speaks for that play: practice answers, or real AI for the cap
-the person approved. A choice in the bar rewrites the file and reaches the next Play, not one already
+helper on this computer, so Live's bar speaks for that play: practice answers, the person's own Claude
+Code or Codex plan (**Use my plan**, at no credits), or real AI for the cap the person approved. A choice in the bar rewrites the file and reaches the next Play, not one already
 running, which the bar's own line says. Genex removes the file when Live leaves the game, on Live's
 Stop, when no helper runs and when the app quits; a file left behind names a port that no longer
 answers and is ignored, and with no file a play asks Genex as a published game does. Live has one

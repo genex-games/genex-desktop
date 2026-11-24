@@ -9,7 +9,7 @@
  * the next Play. Only an editor build of the plugin takes a key: a packaged game never does.
  *
  * The helper is Live's own (`LIVE_HANDLE`), so what the person chose in Live's bar for the game
- * (practice answers, real models for a cap) answers the editor's play as it does a web preview. The
+ * (practice answers, the person's own plan, real models for a cap) answers the editor's play as it does a web preview. The
  * file exists only while Live shows the game's Unreal card and a helper runs: it is rewritten when
  * the helper changes and removed when Live leaves the game, Live stops, no helper runs, or the app
  * quits. It is written and removed as every handoff is (`editor-handoff.ts`).
