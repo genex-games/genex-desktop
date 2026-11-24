@@ -605,7 +605,7 @@ async function runPowerShell(
   file: string,
   args: string[],
   env: NodeJS.ProcessEnv,
-  { timeoutMs = TOOL_TIMEOUT_MS, signal }: FolderOwnRun = {},
+  { timeoutMs = FOLDER_ACE_TIMEOUT_MS, signal }: FolderOwnRun = {},
 ): Promise<string> {
   const stop = signal ? { signal } : {};
   const running = run(file, args, { env, timeout: timeoutMs, windowsHide: true, encoding: "utf8", ...stop });
