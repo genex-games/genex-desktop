@@ -318,6 +318,7 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:preview.live": "previewLive",
   "studio:preview-ai.state": "previewAi",
   "studio:preview-ai.real": "previewAiReal",
+  "studio:preview-ai.plan": "previewAiPlan",
   "studio:preview-ai.practice": "previewAiPractice",
   "studio:preview-ai.mic": "previewMicAnswer",
   "studio:preview.cover-still": "previewCoverStill",
@@ -667,6 +668,7 @@ export interface StudioInvokePayloads {
   "studio:preview.live": undefined;
   "studio:preview-ai.state": { project: string };
   "studio:preview-ai.real": { project: string; capCredits: number };
+  "studio:preview-ai.plan": { project: string; engine: string };
   "studio:preview-ai.practice": { project: string };
   "studio:preview-ai.mic": { project: string; allow: boolean };
   "studio:preview.cover-still": undefined;

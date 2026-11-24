@@ -63,12 +63,16 @@ disagrees with this preface, this preface wins.
   it; your windows always get practice answers. A game that is not on Genex yet is added to their
   account by that press, as a private draft with none of its files sent: never publish a draft so
   that real models can answer.
+- In Live, the person can press Use my plan instead: an AI plan of their own that Genex is signed
+  in to on this computer (Claude Code, Codex) then answers the game's calls there, with no Genex
+  credits spent. Only they can switch it. Its answers are slower, the models are that plan's own,
+  and voices and the judge stay practice.
 - On genex.games the published draft calls the real model for its owner, signed in (anyone else gets
   `player_wallet_required` on a test build).
 - The final message for a game that calls a model says in one line that Live answers with practice
-  answers until the person presses Use real AI there (which spends their credits up to the cap they
-  choose), and that a draft on genex.games uses the real model; give the draft's link when there is
-  one.
+  answers until the person presses Use my plan (their own AI plan, no credits) or Use real AI there
+  (which spends their credits up to the cap they choose), and that a draft on genex.games uses the
+  real model; give the draft's link when there is one.
 
 ## When the written lines play, the game says so
 

@@ -181,6 +181,7 @@ import {
 } from "./core/genex-cli.ts";
 import { GenexRoomService } from "./core/genex-room.ts";
 import { PreviewAiService } from "./core/preview-ai.ts";
+import { answerOnPlan, planModels, readyPlans } from "./core/preview-ai-plans.ts";
 import { PreviewMicService } from "./core/preview-mic.ts";
 import type { PreviewAiState } from "../shared/preview-ai.ts";
 import { isLocalDraft, type ListingRecord } from "../shared/item-draft.ts";
@@ -1436,11 +1437,19 @@ export class StudioCore {
     };
     return new PreviewAiService(
       {
-        launch: (project, live) => cli().practiceLaunch(project, live),
+        launch: (project, live, host) => cli().practiceLaunch(project, live, host),
         spawn: (request) => this.sandbox.spawnLongLived(request),
         signedIn: () => cli().signedIn(),
         hasDraft: (project) => cli().hasHostedProject(project),
         host: (project) => hostOnGenex(this, project),
+        // A plan answers only in the app's real launches (never a fixture or a test), and only
+        // where the pinned CLI's helper can ask for the words (`--host`).
+        plans: async () => {
+          const offered = this.options.previewAiLive === true && (await cli().practiceAsksHost());
+          return offered ? readyPlans(this.engines) : [];
+        },
+        planModels: (engine) => planModels(this.engines.get(engine)),
+        answer: (engine, ask, signal) => answerOnPlan(this.engines.get(engine), ask, signal),
         liveAllowed: () => this.options.previewAiLive === true,
         emit: (state) => this.emit(UiEvent.PreviewAi, state),
         reloadLive: (project) => this.#previews.reloadLiveFor(project),
