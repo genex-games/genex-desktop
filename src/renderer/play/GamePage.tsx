@@ -4,7 +4,8 @@
  * that carries the whole life of the game on this computer (install, installing, play, playing,
  * update, elsewhere, failed), and Like, Comments and Share over them; under it four facts (the
  * systems it runs on, its size, its players, which its owner sets for an app-only game, its engine), its shots once it has two pictures or
- * more, About, and the game's Store (`GameStore.tsx`), once it sells something. A native game opens
+ * more, About, and the game's Store (`GameStore.tsx`), once it sells something. Under the primary
+ * block a native game that uses AI has one more line, its AI budget (`AiBudget.tsx`). A native game opens
  * here from its card; any game opens here from a link or the profile's item shelf, and one with a
  * web build that is not installed here plays in the viewer, as its card does. Installing goes on
  * when the page is left (its card shows it); a game installed while the page stays open starts by
@@ -53,6 +54,7 @@ import { PlayPageFrame } from "./PlayPageFrame.tsx";
 import { PlayersValue } from "./PlayersFact.tsx";
 import { PlatformMarks, platformNames } from "./NativeBadge.tsx";
 import { GameStore } from "./GameStore.tsx";
+import { AiBudget } from "./AiBudget.tsx";
 import { GameHero, HeroPause, useHeroMoves, useReducedMotion, useSlideshow } from "./GameHero.tsx";
 import { HeroArt, type HeroFrame, heroArt, heroFrames, runsSlideshow } from "./game-hero.ts";
 import { setClipsCovered, useClipsPaused } from "./clip-playback.ts";
@@ -594,6 +596,7 @@ function Head({ game, standing }: { game: PlayGameDetail; standing: GameStanding
       <div className="game-actions">
         <div className="game-primary-block">
           <PrimaryBlock game={game} standing={standing} onPlayWhenReady={() => setPlayWhenReady(true)} />
+          <AiBudget game={game} standing={standing} />
         </div>
         <Pills game={game} />
       </div>

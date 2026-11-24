@@ -46,6 +46,7 @@ void UGenexIdentitySubsystem::MakeIdentity(genex::IHttp* InHttp)
 	Options.apiBase = TCHAR_TO_UTF8(*Settings->ApiUrl);
 	Options.slug = TCHAR_TO_UTF8(*Settings->Slug);
 	Options.http = InHttp;
+	ActiveHttp = InHttp;
 	if (Clock) Options.clock = [Fn = Clock]() { return Fn(); };
 	Identity = MakeShared<genex::EmbedIdentity>(Options);
 	UE_LOG(LogGenex, Verbose, TEXT("Genex identity: slug '%s', API %s"), *Settings->Slug, UTF8_TO_TCHAR(Identity->ApiBase().c_str()));
@@ -113,6 +114,7 @@ void UGenexIdentitySubsystem::Deinitialize()
 	bSigningInAutomatically = false;
 	ForgetToken();
 	Identity.Reset();
+	ActiveHttp = nullptr;
 	Http.Reset();
 	Super::Deinitialize();
 }

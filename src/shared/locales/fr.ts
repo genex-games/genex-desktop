@@ -6637,4 +6637,44 @@ export default {
   "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
     "Les modèles locaux demandent un Mac avec Apple Silicon ou un PC 64 bits sous Windows ou Linux",
   "{model} can't run on this computer.": "{model} ne peut pas tourner sur cet ordinateur.",
+  "AI budget for {game}": "Budget IA pour {game}",
+  "AI budget: {remaining} of {limit, plural, one {{shown} credit} other {{shown} credits}} left":
+    "Budget IA : il reste {remaining} sur {limit, plural, one {{shown} crédit} other {{shown} crédits}}",
+  "AI in games is paused right now. Try again later.":
+    "L’IA dans les jeux est en pause pour le moment. Réessaie plus tard.",
+  "Approving replaces the AI budget already running for this game.":
+    "Approuver remplace le budget IA déjà en cours pour ce jeu.",
+  "At most {n, plural, one {{shown} credit} other {{shown} credits}} for one call.":
+    "Au plus {n, plural, one {{shown} crédit} other {{shown} crédits}} par appel.",
+  "Couldn’t set the budget. Try again.": "Impossible de définir le budget. Réessaie.",
+  "Couldn’t stop the AI budget. Try again.": "Impossible d’arrêter le budget IA. Réessaie.",
+  "It ends when you stop it, when you sign out of Genex, or after 24 hours.":
+    "Il prend fin quand tu l’arrêtes, quand tu te déconnectes de Genex ou après 24 heures.",
+  "It uses {models}.": "Il utilise {models}.",
+  "Keep it": "Le garder",
+  Limit: "Limite",
+  "Reading the AI budget…": "Lecture du budget IA…",
+  "Set AI budget": "Définir le budget IA",
+  "Sign in to Genex to set an AI budget.": "Connecte-toi à Genex pour définir un budget IA.",
+  "Stop this AI budget?": "Arrêter ce budget IA ?",
+  "Stopping the AI budget…": "Arrêt du budget IA…",
+  "That took too long, so the budget has to be read again.": "C’était trop long, il faut relire le budget.",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per hour.":
+    "Le jeu estime environ {n, plural, one {{shown} crédit} other {{shown} crédits}} par heure.",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per minute.":
+    "Le jeu estime environ {n, plural, one {{shown} crédit} other {{shown} crédits}} par minute.",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per session.":
+    "Le jeu estime environ {n, plural, one {{shown} crédit} other {{shown} crédits}} par session.",
+  "This game asks AI models for things while you play. You pay for what it uses from your Genex credits, up to the limit you set.":
+    "Ce jeu fait appel à des modèles d’IA pendant que tu joues. Tu paies ce qu’il utilise avec tes crédits Genex, jusqu’à la limite que tu fixes.",
+  "This game’s AI isn’t available right now.": "L’IA de ce jeu n’est pas disponible pour le moment.",
+  "This game’s voice AI isn’t available in the app yet.":
+    "L’IA vocale de ce jeu n’est pas encore disponible dans l’app.",
+  "Uses AI, paid from your Genex credits.": "Utilise l’IA, payée avec tes crédits Genex.",
+  "Verify your Genex account’s email to pay with credits, then try again.":
+    "Vérifie l’e-mail de ton compte Genex pour payer avec des crédits, puis réessaie.",
+  "You don’t have enough Genex credits for this budget.": "Tu n’as pas assez de crédits Genex pour ce budget.",
+  "{n, plural, one {{shown} credit} other {{shown} credits}}":
+    "{n, plural, one {{shown} crédit} other {{shown} crédits}}",
+  "an AI judge": "un juge IA",
 } satisfies LocaleCatalog;

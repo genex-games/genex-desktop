@@ -469,6 +469,33 @@
 .game-text-button:hover {
   color: var(--hero-ink);
 }
+/* The AI budget's line under the primary block's own: its words, then what can be pressed. */
+.game-budget {
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  min-height: 32px;
+}
+/* Set AI budget over the art: the glass the other second buttons wear. */
+.game-budget .game-budget-set {
+  background: var(--hero-glass);
+  box-shadow: inset 0 0 0 1px var(--hero-glass-edge);
+  color: var(--hero-ink);
+  backdrop-filter: blur(12px);
+}
+.game-budget .game-budget-set:enabled:hover {
+  background: var(--hero-glass-hover);
+}
+.game-budget-link {
+  color: var(--hero-ink-soft);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--hero-ink-soft) 33%, transparent);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.game-budget-link:hover {
+  color: var(--hero-ink);
+}
 .game-elsewhere {
   display: flex;
   flex-direction: column;
@@ -788,6 +815,7 @@
 .game-pill:focus-visible,
 .game-by-link:focus-visible,
 .game-text-button:focus-visible,
+.game-budget-link:focus-visible,
 .game-installing-cancel:focus-visible,
 .game-hero-thumb:focus-visible,
 .game-hero-pause:focus-visible,

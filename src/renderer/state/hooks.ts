@@ -19,6 +19,7 @@ import type { PeopleState } from "./people.ts";
 import type { ItemsState } from "./items.ts";
 import type { GenexReviewState } from "./genex-review.ts";
 import type { PreviewAiStoreState } from "./preview-ai.ts";
+import type { AiBudgetState } from "./ai-budget.ts";
 import type { PlayState } from "./play.ts";
 import type { PluginsState } from "./plugins.ts";
 import type { ProviderUsageState } from "./provider-usage.ts";
@@ -48,6 +49,8 @@ export const useGenexReviewLines = <T>(select: Selector<GenexReviewState, T>): T
   useStore(studio().genexReview, select);
 /** Live's play-time models and microphone ask per game (`preview-ai.ts`). */
 export const usePreviewAi = <T>(select: Selector<PreviewAiStoreState, T>): T => useStore(studio().previewAi, select);
+/** Native games' AI budgets, by the game's address (`ai-budget.ts`). */
+export const useAiBudget = <T>(select: Selector<AiBudgetState, T>): T => useStore(studio().aiBudget, select);
 export const useSharing = <T>(select: Selector<SharingState, T>): T => useStore(studio().sharing, select);
 export const useAgentScreens = <T>(select: Selector<AgentScreensState, T>): T =>
   useStore(studio().agentScreens, select);

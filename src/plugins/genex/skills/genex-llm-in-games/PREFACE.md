@@ -129,7 +129,17 @@ These parts of Genex CLI 1.45.2 are left out of the card below because Studio ca
 - Model calls from a multiplayer server room (`shareWithRooms`, `lendSpendGrantToRoom`,
   `ctx.models`) are not built here. `features.roomCalls` may read true on a stand; a game made here
   calls the model from the player's page.
-- Unity, Godot, Rust and Unreal games have no model-call binding in Studio.
+- Unity, Godot and Rust games have no model-call binding in Studio.
+- An Unreal game published as a native build calls models under a budget the player sets on the
+  game's page in the Genex app before Play. The game reads that budget through
+  `UGenexModelsSubsystem`, which comes with Genex's multiplayer plugin (`unreal__multiplayer` adds
+  it to the project): `GetActiveSpendGrant`, then `Generate` with that `grantId`. A native
+  build cannot open an approval window, so a one-time call (`native_unsupported`) and
+  `RequestSpendGrant` without a live budget (`budget_not_approved`) resolve by their code, and the
+  game plays its written lines. The creator declares the budget for the published game with the
+  Genex CLI in a terminal (`genex llm budget set`, in a CLI release that has it). The CLI Studio
+  ships may not have that command yet, so do not run it through Studio's tools or promise that it
+  works there.
 
 `system`, `messages`, the controls and `features` work: Studio ships the SDK that has them.
 
