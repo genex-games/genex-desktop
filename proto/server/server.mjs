@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = join(HERE, "..", "out");
-const RESULTS_FILE = join(OUT_DIR, "page-results.jsonl");
+// Windows runs go to their own file so the Mac results stay as they were.
+const RESULTS_FILE = join(OUT_DIR, process.platform === "win32" ? "page-results-windows.jsonl" : "page-results.jsonl");
 const PORT = Number(process.env.PROTO_PORT ?? 18431);
 const PAGE = readFileSync(join(HERE, "page.html"), "utf8");
 const PUSH_DELAY_MS = 300;

@@ -54,10 +54,10 @@ def flow():
     button_ref, button_line = find_ref(snapshot, r'Genex')
     g.note('slate.button', {'ref': button_ref, 'line': button_line})
     window = yield from slate('Screenshot', {'ref': ''})
-    save_image(f'editor-{g.ENGINE_SHORT}-window.png', window)
+    save_image(f'{g.PLATFORM_PREFIX}editor-{g.ENGINE_SHORT}-window.png', window)
     if button_ref:
         image = yield from slate('Screenshot', {'ref': button_ref})
-        save_image(f'editor-{g.ENGINE_SHORT}-button.png', image)
+        save_image(f'{g.PLATFORM_PREFIX}editor-{g.ENGINE_SHORT}-button.png', image)
         yield from slate('Click', {'ref': button_ref})
     yield from g.wait(6)
     g.note('slate.tab_open_after_click', g.tab_is_open())
@@ -76,10 +76,10 @@ def flow():
         yield from slate('PressKey', {'key': 'Enter'})
         yield from g.wait(2)
         image = yield from slate('Screenshot', {'ref': browser_ref})
-        save_image(f'editor-{g.ENGINE_SHORT}-page.png', image)
+        save_image(f'{g.PLATFORM_PREFIX}editor-{g.ENGINE_SHORT}-page.png', image)
     if tab_ref:
         image = yield from slate('Screenshot', {'ref': tab_ref})
-        save_image(f'editor-{g.ENGINE_SHORT}-tab-full.png', image)
+        save_image(f'{g.PLATFORM_PREFIX}editor-{g.ENGINE_SHORT}-tab-full.png', image)
     yield from g.wait(3)
     unreal.SystemLibrary.quit_editor()
 

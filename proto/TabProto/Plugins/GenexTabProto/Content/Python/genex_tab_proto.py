@@ -6,6 +6,7 @@ version and the run), so the results can be read without looking at the screen."
 import base64
 import json
 import os
+import sys
 import time
 
 import unreal
@@ -29,6 +30,8 @@ UMG_TOOLSETS = ['UMGEditor.WidgetBlueprintEditorSubsystem', 'UMGToolSet.UMGToolS
 
 ENGINE = unreal.SystemLibrary.get_engine_version()
 ENGINE_SHORT = '.'.join(ENGINE.split('.')[:2])
+# Windows runs get their own run tags and picture names, so they never mix with the Mac ones.
+PLATFORM_PREFIX = 'windows-' if sys.platform == 'win32' else ''
 OUT_DIR = os.path.normpath(os.path.join(unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir()), '..', 'out'))
 
 
@@ -280,7 +283,7 @@ def open_tab(source='script', run_tag=None):
     if widget is not None and run_tag:
         browser = _browser_in_instance(widget)
         if browser is not None:
-            _attempt('tab.load_url_runtime', lambda: browser.load_url(f'{URL}?run={run_tag}'))
+            _attempt('tab.load_url_runtime', lambda: browser.load_url(f'{URL}?run={PLATFORM_PREFIX}{run_tag}'))
     return widget
 
 
@@ -301,7 +304,7 @@ def capture_editor(label):
     if not data:
         note(f'capture.{label}', {'ok': False, 'error': error, 'value': repr(value)[:300]})
         return
-    path = os.path.join(OUT_DIR, f'editor-{ENGINE_SHORT}-{label}.png')
+    path = os.path.join(OUT_DIR, f'{PLATFORM_PREFIX}editor-{ENGINE_SHORT}-{label}.png')
     with open(path, 'wb') as handle:
         handle.write(base64.b64decode(data))
     note(f'capture.{label}', {'ok': True, 'path': path, 'mime': image.get('mimeType')})

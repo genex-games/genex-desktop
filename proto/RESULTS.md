@@ -133,7 +133,8 @@ asset should be made with the oldest supported engine.
 - Sharpness of the 13 px text: `devicePixelRatio` is 2. The editor's own pictures here are
   scaled down, so they cannot judge sharpness.
 - Docking the floating tab by hand, and whether the docked tab returns after a normal close.
-- Windows and Linux (CEF instead of WebKit): this whole check needs repeating there.
+- Windows and Linux (CEF instead of WebKit): this whole check needs repeating there. Windows
+  5.9 is done: see `RESULTS-windows.md`. Linux is still open.
 
 ## How it was run
 
