@@ -6145,6 +6145,14 @@ export default {
   "The cap is used up": "额度用完了",
   "This game wants to hear you through your microphone.": "这个游戏想通过麦克风听你说话。",
   "Use real AI": "使用真实 AI",
+  "Use my plan": "用我的订阅",
+  "Your own {plan} plan answers in this preview, on this computer. No Genex credits are spent; your plan's limits apply, answers come slower, and voices stay practice.":
+    "这个预览里由你自己的 {plan} 订阅在这台电脑上回答。不花 Genex 积分；受你订阅的限额约束，回答会慢一些，语音仍是练习用的。",
+  "The plan that answers": "负责回答的订阅",
+  "Starting {plan}…": "正在启动 {plan}…",
+  "{plan} answers · your own plan, no credits": "{plan} 在回答 · 你自己的订阅，不花积分",
+  "That plan is not signed in or ready on this computer. Check it in Settings, then try again. Practice answers go on.":
+    "那个订阅在这台电脑上没有登录或还没准备好。在设置里检查后再试一次。练习回答会继续。",
   "A local model is answering a chat or build. Delete the model when it finishes.":
     "本地模型正在回复对话或构建。请等它完成后再删除模型。",
   "Download Inkling 2 Mini in Settings › Local Models.": "请在“设置 › 本地模型”中下载 Inkling 2 Mini。",

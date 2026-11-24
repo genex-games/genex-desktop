@@ -906,6 +906,12 @@ export interface StudioApi {
    * its reason, where real models cannot start.
    */
   previewAiReal(project: string, capCredits: number): Promise<PreviewAiState>;
+  /**
+   * The person pressed Start in Live's bar for a plan of their own (`engine`, one of the state's
+   * `plans`): that plan answers this game in Live, on this computer, and no Genex credits are spent.
+   * Answers the unavailable state, with its reason, where the plan is not ready.
+   */
+  previewAiPlan(project: string, engine: string): Promise<PreviewAiState>;
   /** The person went back to practice answers (free, made up) for this game in Live. */
   previewAiPractice(project: string): Promise<PreviewAiState>;
   /** The person's answer to the game's microphone ask in Live: allowed for this game until the app quits, or not now. */

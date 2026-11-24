@@ -516,6 +516,7 @@ function previewCalls(bridge: BridgeCalls) {
     previewLive: () => invoke("studio:preview.live"),
     previewAi: (project) => invoke("studio:preview-ai.state", { project }),
     previewAiReal: (project, capCredits) => invoke("studio:preview-ai.real", { project, capCredits }),
+    previewAiPlan: (project, engine) => invoke("studio:preview-ai.plan", { project, engine }),
     previewAiPractice: (project) => invoke("studio:preview-ai.practice", { project }),
     previewMicAnswer: (project, allow) => invoke("studio:preview-ai.mic", { project, allow }),
     previewCoverStill: () => invoke("studio:preview.cover-still"),

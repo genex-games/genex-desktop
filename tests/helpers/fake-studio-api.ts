@@ -289,6 +289,7 @@ const METHODS = [
   "previewLive",
   "previewAi",
   "previewAiReal",
+  "previewAiPlan",
   "previewAiPractice",
   "previewMicAnswer",
   "previewCoverStill",

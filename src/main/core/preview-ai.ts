@@ -11,7 +11,12 @@
  * Start for a cap in Live's bar (`startRealModels`): the helper is then started with `--live --max-credits
  * <cap> --user-approved`, billed to the game's hosted project from the person's own credits, and the
  * CLI holds the whole run to the cap. A game that has no hosted project yet gets one on that Start
- * (`host`): a draft nobody sees, with none of its files sent. An agent's window never gets that key. The choice is kept per
+ * (`host`): a draft nobody sees, with none of its files sent. An agent's window never gets that key.
+ *
+ * A plan of the person's own (Claude Code, Codex) can answer Live instead, at no credits
+ * (`startPlan`): the helper is started with `--host --user-approved`, keeps the lane the game talks
+ * to, and asks this service for the words of each call over its pipes; the service answers with one
+ * prompt to the engine the person chose (`preview-ai-plans.ts`). Voice and the judge stay practice. The choice is kept per
  * game for this app session, and so is the cap: a run started after a Stop or a visit to another
  * game may spend only what the runs before it left, and once nothing is left real models wait for a
  * new Start. A new app start begins in practice.
@@ -30,6 +35,7 @@ import {
   isPreviewAiCap,
   noPreviewAi,
   PreviewAiMode,
+  type PreviewAiPlan,
   type PreviewAiState,
   PreviewAiUnavailable,
   type PreviewMicAsk,
@@ -38,6 +44,7 @@ import { LoopbackProtocol } from "../../substrate/linux-loopback-bridge.ts";
 import { treeKiller } from "../../substrate/plugins/native-process.ts";
 import type { LoopbackExpose } from "../../substrate/spawn.ts";
 import type { PracticeLaunch } from "./genex-cli.ts";
+import { type HostAnswer, type HostAsk, HostError, type HostModel, parseHostAsk } from "./preview-ai-plans.ts";
 
 /** The URL parameter the SDK reads the helper's key from (embed-sdk 0.37). */
 export const PRACTICE_PARAM = "genex_llm_practice";
@@ -47,11 +54,13 @@ const PRACTICE_LISTEN_TIMEOUT_MS = 20 * SECOND_MS;
 const PRACTICE_STOP_GRACE_MS = 3 * SECOND_MS;
 /** The most of a helper's error kept for the bar. */
 const ERROR_MAX_CHARS = 300;
+/** How many of a game's calls the person's plan answers at once: each is a session of its engine. */
+const PLAN_ANSWERS_AT_ONCE = 2;
 /** A key as the CLI prints it: a port and the 32-hex token. */
 const PRACTICE_KEY = /^genex_llm_practice=(\d{4,5})\.([0-9a-f]{32})$/;
 
-/** The kinds of helper: made-up answers, or real models on the person's credits. */
-export const PracticeKind = { Mock: "mock", Live: "live" } as const;
+/** The kinds of helper: made-up answers, real models on the person's credits, or the person's own plan. */
+export const PracticeKind = { Mock: "mock", Live: "live", Host: "host" } as const;
 export type PracticeKind = (typeof PracticeKind)[keyof typeof PracticeKind];
 
 /** The CLI's first line's `status` (`genex llm practice --json`). */
@@ -65,8 +74,11 @@ const VIA_LIVE = "live";
 
 /** What the service needs: the CLI's launch, the sandbox, the person's account, Live and the bar. */
 export interface PreviewAiDeps {
-  /** The pinned CLI's helper command for a game (`GenexCliService.practiceLaunch`). */
-  launch: (project: string, live: { maxCredits: number } | null) => Promise<PracticeLaunch>;
+  /**
+   * The pinned CLI's helper command for a game (`GenexCliService.practiceLaunch`): made-up answers,
+   * real models for `live`'s cap, or with `host` the mode in which this service answers.
+   */
+  launch: (project: string, live: { maxCredits: number } | null, host?: boolean) => Promise<PracticeLaunch>;
   /** ProcessSandbox's `spawnLongLived`. */
   spawn: (request: {
     command: string;
@@ -76,6 +88,8 @@ export interface PreviewAiDeps {
     label?: string;
     policy?: PracticeLaunch["policy"];
     loopbackServer?: boolean;
+    /** The caller keeps writing to the answer's `input` (a host helper's answers). */
+    liveInput?: boolean;
   }) => Promise<{ child: ChildProcess; input: Writable; expose?: LoopbackExpose }>;
   /** Whether the app is signed in to Genex now. */
   signedIn: () => Promise<boolean>;
@@ -89,6 +103,12 @@ export interface PreviewAiDeps {
   host: (project: string) => Promise<GenexHosting>;
   /** Whether this profile may spend at all: false in a test (fixture) profile. */
   liveAllowed: () => boolean;
+  /** The person's own plans that can answer now (`readyPlans`); none where the pinned CLI cannot ask. */
+  plans: () => Promise<PreviewAiPlan[]>;
+  /** The models of a plan a game is offered (`planModels`). */
+  planModels: (engine: string) => Promise<HostModel[]>;
+  /** One call answered on a plan (`answerOnPlan`); never throws. */
+  answer: (engine: string, ask: HostAsk, signal: AbortSignal) => Promise<HostAnswer>;
   /** A game's state changed: the bar hears it. */
   emit: (state: PreviewAiState) => void;
   /** Load Live again when it shows `project`, so its page takes the helper's new key. */
@@ -114,6 +134,15 @@ interface Helper {
   closed: Promise<void>;
   /** Asked to stop by the service: its exit is no failure. */
   stopping: boolean;
+  /** Where the service writes to it (a host helper's hello and answers). */
+  input: Writable;
+  /** The plan that answers its calls (a host helper only). */
+  plan: PreviewAiPlan | null;
+  /** Ends the answers under way when it stops. */
+  ending: AbortController;
+  /** Calls being answered now, and the ones waiting their turn. */
+  answering: number;
+  waiting: HostAsk[];
 }
 
 /** Why real models cannot start for a game, with Genex's own words when it gave any. */
@@ -191,6 +220,11 @@ export class PreviewAiService {
    * the cap and never the whole of it again. A held bill counts as spent.
    */
   readonly #spent = new Map<string, number>();
+  /**
+   * The plan of their own the person chose for each game by pressing Start in Live's bar, for this
+   * app session: the only way a helper is started in host mode (`#startHost`).
+   */
+  readonly #plans = new Map<string, PreviewAiPlan>();
   readonly #states = new Map<string, PreviewAiState>();
   #closing = false;
 
@@ -216,6 +250,11 @@ export class PreviewAiService {
     if (this.state(project).onGenex !== onGenex) this.#set(project, { onGenex });
   }
 
+  /** The plans the bar offers for a game, said only when they changed. */
+  #notePlans(project: string, plans: PreviewAiPlan[]): void {
+    if (JSON.stringify(this.state(project).plans) !== JSON.stringify(plans)) this.#set(project, { plans });
+  }
+
   /** The microphone's ask for a game changed (`preview-mic.ts`). */
   setMic(project: string, mic: PreviewMicAsk): void {
     this.#set(project, { mic });
@@ -230,10 +269,17 @@ export class PreviewAiService {
     const before = this.#holders.get(handle);
     this.#holders.set(handle, project);
     if (before !== undefined && before !== project) await this.#letGo(before);
-    if (handle === this.#liveHandle) this.#noteOnGenex(project, await this.#deps.hasDraft(project));
+    if (handle === this.#liveHandle) {
+      this.#noteOnGenex(project, await this.#deps.hasDraft(project));
+      this.#notePlans(project, await this.#deps.plans().catch(() => []));
+    }
     if (handle === this.#liveHandle && this.#approved.has(project)) {
       const live = await this.#startLive(project);
       if (live?.key) return live.key;
+    }
+    if (handle === this.#liveHandle && this.#plans.has(project)) {
+      const own = await this.#startHost(project);
+      if (own?.key) return own.key;
     }
     if (handle === this.#liveHandle && this.state(project).mode === PreviewAiMode.None)
       this.#set(project, { mode: PreviewAiMode.Practice });
@@ -251,11 +297,12 @@ export class PreviewAiService {
 
   /**
    * Preview `handle` shows `project`, whose code calls no play-time model (any more): it lets go of
-   * the helper, and in Live the bar goes, unless real models were approved for the game.
+   * the helper, and in Live the bar goes, unless real models or a plan were chosen for the game.
    */
   async noModels(handle: string, project: string): Promise<void> {
     await this.release(handle);
-    const idle = handle === this.#liveHandle && !this.#approved.has(project);
+    const chosen = this.#approved.has(project) || this.#plans.has(project);
+    const idle = handle === this.#liveHandle && !chosen;
     if (idle && this.state(project).mode !== PreviewAiMode.None)
       this.#set(project, { mode: PreviewAiMode.None, reason: null, error: null });
   }
@@ -265,6 +312,7 @@ export class PreviewAiService {
     const shown = [...this.#holders.values()].includes(project);
     const inLive = this.#holders.get(this.#liveHandle) === project;
     if (!inLive) await this.#stop(PracticeKind.Live, project);
+    if (!inLive) await this.#stop(PracticeKind.Host, project);
     if (!shown) await this.#stop(PracticeKind.Mock, project);
   }
 
@@ -281,8 +329,10 @@ export class PreviewAiService {
       this.#set(project, { mode: PreviewAiMode.Unavailable, ...refusal, capCredits: null });
       return this.state(project);
     }
-    // A new cap starts a new run, counted from nothing: the one on the old cap ends first.
+    // A new cap starts a new run, counted from nothing: the one on the old cap ends first, and so
+    // does the person's own plan, which credits now replace.
     await this.#stop(PracticeKind.Live, project);
+    await this.#leavePlan(project);
     this.#approved.set(project, capCredits);
     this.#spent.delete(project);
     this.#set(project, {
@@ -297,10 +347,43 @@ export class PreviewAiService {
     return this.state(project);
   }
 
+  /**
+   * The person pressed Start in Live's bar for a plan of their own: recorded as their choice for
+   * this game, then Live is loaded again with that plan answering. No credits are spent, so real
+   * models on credits end first. Refused with the reason the bar shows when the plan is not one
+   * that is ready here.
+   */
+  async startPlan(project: string, engine: string): Promise<PreviewAiState> {
+    const plans = await this.#deps.plans().catch(() => []);
+    const plan = plans.find((one) => one.engine === engine);
+    this.#notePlans(project, plans);
+    if (!plan) {
+      const reason = PreviewAiUnavailable.PlanNotReady;
+      this.#set(project, { mode: PreviewAiMode.Unavailable, reason, error: null, capCredits: null, plan: null });
+      return this.state(project);
+    }
+    this.#approved.delete(project);
+    this.#spent.delete(project);
+    await this.#stop(PracticeKind.Live, project);
+    await this.#stop(PracticeKind.Host, project);
+    this.#plans.set(project, plan);
+    this.#set(project, { mode: PreviewAiMode.Starting, reason: null, error: null, capCredits: null, plan });
+    await this.#deps.reloadLive(project);
+    return this.state(project);
+  }
+
+  /** The person's own plan stops answering for a game: its choice ends and its helper stops. */
+  async #leavePlan(project: string): Promise<void> {
+    this.#plans.delete(project);
+    await this.#stop(PracticeKind.Host, project);
+    if (this.state(project).plan !== null) this.#set(project, { plan: null });
+  }
+
   /** The person went back to practice answers: the approval ends and Live loads on made-up answers. */
   async backToPractice(project: string): Promise<PreviewAiState> {
     this.#approved.delete(project);
     await this.#stop(PracticeKind.Live, project);
+    await this.#leavePlan(project);
     this.#spent.delete(project);
     this.#set(project, { mode: PreviewAiMode.Practice, reason: null, error: null, capCredits: null });
     await this.#deps.reloadLive(project);
@@ -355,6 +438,18 @@ export class PreviewAiService {
     return null;
   }
 
+  /**
+   * Live's helper answered by the plan the person chose for this game, or null (then the state says
+   * why and practice answers go on). Nothing but a recorded choice starts one.
+   */
+  async #startHost(project: string): Promise<Helper | null> {
+    if (!this.#plans.has(project)) return null;
+    const helper = await this.#ensure(PracticeKind.Host, project, null);
+    if (!helper?.key) return null;
+    if (this.state(project).mode === PreviewAiMode.Starting) this.#set(project, { mode: PreviewAiMode.Plan });
+    return helper;
+  }
+
   /** The running helper of this kind for the game, or a new one; null when it could not start. */
   async #ensure(kind: PracticeKind, project: string, cap: number | null): Promise<Helper | null> {
     const id = `${kind}:${project}`;
@@ -370,18 +465,24 @@ export class PreviewAiService {
   /** Start a helper and wait for its first line. */
   async #start(kind: PracticeKind, project: string, cap: number | null): Promise<Helper | null> {
     if (this.#closing) return null;
+    const plan = kind === PracticeKind.Host ? (this.#plans.get(project) ?? null) : null;
     let launch: PracticeLaunch;
+    let hello: string | null = null;
     try {
+      // The plan's models are read before anything is started: a plan with none answers nothing.
+      if (plan) hello = await this.#hello(plan);
       launch = await this.#deps.launch(
         project,
         kind === PracticeKind.Live && cap !== null ? { maxCredits: cap } : null,
+        kind === PracticeKind.Host,
       );
     } catch (error) {
       this.#failed(kind, project, error);
       return null;
     }
     const { root, ...request } = launch;
-    const spawned = await this.#deps.spawn({ ...request, loopbackServer: true }).catch((error: unknown) => {
+    const piped = hello === null ? {} : { liveInput: true };
+    const spawned = await this.#deps.spawn({ ...request, ...piped, loopbackServer: true }).catch((error: unknown) => {
       this.#failed(kind, project, error);
       return null;
     });
@@ -401,9 +502,16 @@ export class PreviewAiService {
       settled: false,
       closed,
       stopping: false,
+      input: spawned.input,
+      plan,
+      ending: new AbortController(),
+      answering: 0,
+      waiting: [],
     };
     const id = `${kind}:${project}`;
     this.#helpers.set(id, helper);
+    // The helper listens only once its host said who answers.
+    if (hello !== null) this.#write(helper, hello);
     void closed.then(() => this.#ended(id, helper));
     const first = await this.#firstLine(helper, spawned.expose);
     if (first.status === PracticeStatus.Listening) return helper;
@@ -411,6 +519,44 @@ export class PreviewAiService {
     if (first.status === PracticeStatus.Off) this.#laneOff(project);
     else this.#failed(kind, project, first.error);
     return null;
+  }
+
+  /** A host helper's first line of input: the plan's name and the models it answers as. */
+  async #hello(plan: PreviewAiPlan): Promise<string> {
+    const models = await this.#deps.planModels(plan.engine);
+    if (models.length === 0) throw new Error(`${plan.label} lists no model to answer with`);
+    return JSON.stringify({ host: { name: plan.label, models } });
+  }
+
+  /** One line to a helper; a helper that is gone takes none. */
+  #write(helper: Helper, line: string): void {
+    if (helper.stopping || helper.input.destroyed) return;
+    helper.input.write(`${line}\n`, () => {});
+  }
+
+  /**
+   * A host helper asked for the words of a call: answered on the person's plan, a few at a time,
+   * and written back with the call's id. A helper that stopped meanwhile gets nothing.
+   */
+  #asked(helper: Helper, ask: HostAsk): void {
+    helper.waiting.push(ask);
+    this.#answerNext(helper);
+  }
+
+  #answerNext(helper: Helper): void {
+    const plan = helper.plan;
+    if (!plan || helper.answering >= PLAN_ANSWERS_AT_ONCE) return;
+    const ask = helper.waiting.shift();
+    if (!ask) return;
+    helper.answering += 1;
+    void this.#deps
+      .answer(plan.engine, ask, helper.ending.signal)
+      .catch((): HostAnswer => ({ id: ask.id, error: HostError.Failed }))
+      .then((answer) => {
+        helper.answering -= 1;
+        this.#write(helper, JSON.stringify({ answer }));
+        this.#answerNext(helper);
+      });
   }
 
   /** The helper's first line, then every later one kept as it comes. */
@@ -452,11 +598,16 @@ export class PreviewAiService {
     return first;
   }
 
-  /** A later line of a helper on real models: what it spent, and whether the cap is used up. */
+  /** A later line of a helper: a host helper's question, or what a run on real models spent. */
   #note(helper: Helper, text: string): void {
-    if (helper.kind !== PracticeKind.Live) return;
+    if (helper.kind === PracticeKind.Mock) return;
     const line = jsonLine(text);
     if (!line) return;
+    if (helper.kind === PracticeKind.Host) {
+      const ask = parseHostAsk(line);
+      if (ask) this.#asked(helper, ask);
+      return;
+    }
     if (line.event === PracticeEvent.Live) {
       const charged = credits(line.chargedCredits);
       const held = credits(line.heldCredits);
@@ -476,11 +627,13 @@ export class PreviewAiService {
     const known = Object.values(PreviewAiUnavailable).find((reason) => reason === code);
     const words = typeof error === "string" ? error : errorMessage(error);
     if (kind === PracticeKind.Live) this.#forget(project);
+    if (kind === PracticeKind.Host) this.#plans.delete(project);
     this.#set(project, {
-      mode: kind === PracticeKind.Live ? PreviewAiMode.Unavailable : PreviewAiMode.Practice,
+      mode: kind === PracticeKind.Mock ? PreviewAiMode.Practice : PreviewAiMode.Unavailable,
       reason: known ?? PreviewAiUnavailable.HelperFailed,
       error: known ? null : words.slice(0, ERROR_MAX_CHARS),
       capCredits: null,
+      ...(kind === PracticeKind.Mock ? {} : { plan: null }),
     });
   }
 
@@ -516,7 +669,7 @@ export class PreviewAiService {
       helper.project,
       `the helper stopped (${helper.child.exitCode ?? helper.child.signalCode})`,
     );
-    if (helper.kind === PracticeKind.Live) await this.#deps.reloadLive(helper.project).catch(() => {});
+    if (helper.kind !== PracticeKind.Mock) await this.#deps.reloadLive(helper.project).catch(() => {});
   }
 
   /** Stop the game's helper of this kind, if it runs. */
@@ -530,6 +683,8 @@ export class PreviewAiService {
   /** Ask a helper to stop (its totals print on the way out), then end its process tree. */
   async #stopHelper(helper: Helper): Promise<void> {
     helper.stopping = true;
+    helper.ending.abort();
+    helper.waiting.length = 0;
     const id = `${helper.kind}:${helper.project}`;
     if (this.#helpers.get(id) === helper) this.#helpers.delete(id);
     signalTree(helper.child, "SIGTERM");

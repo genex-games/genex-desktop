@@ -6367,6 +6367,14 @@ export default {
   "The cap is used up": "한도를 다 썼어",
   "This game wants to hear you through your microphone.": "이 게임이 마이크로 네 목소리를 듣고 싶어 해.",
   "Use real AI": "실제 AI 사용",
+  "Use my plan": "내 요금제 사용",
+  "Your own {plan} plan answers in this preview, on this computer. No Genex credits are spent; your plan's limits apply, answers come slower, and voices stay practice.":
+    "이 미리보기에서는 이 컴퓨터에서 네 {plan} 요금제가 답해. Genex 크레딧은 쓰지 않아. 요금제 한도가 적용되고, 답은 더 느리게 오고, 음성은 연습용 그대로야.",
+  "The plan that answers": "답하는 요금제",
+  "Starting {plan}…": "{plan} 시작하는 중…",
+  "{plan} answers · your own plan, no credits": "{plan}이(가) 답하는 중 · 내 요금제, 크레딧 없음",
+  "That plan is not signed in or ready on this computer. Check it in Settings, then try again. Practice answers go on.":
+    "그 요금제는 이 컴퓨터에서 로그인되어 있지 않거나 준비되지 않았어. 설정에서 확인한 다음 다시 해 봐. 연습 답변은 계속돼.",
   "A local model is answering a chat or build. Delete the model when it finishes.":
     "로컬 모델이 채팅이나 빌드에 답하는 중이에요. 끝나면 모델을 삭제해 주세요.",
   "Download Inkling 2 Mini in Settings › Local Models.": "설정 › 로컬 모델에서 Inkling 2 Mini를 다운로드해 주세요.",

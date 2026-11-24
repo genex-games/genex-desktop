@@ -6629,6 +6629,14 @@ export default {
   "The cap is used up": "Le plafond est atteint",
   "This game wants to hear you through your microphone.": "Ce jeu veut t'entendre avec ton micro.",
   "Use real AI": "Utiliser la vraie IA",
+  "Use my plan": "Utiliser mon forfait",
+  "Your own {plan} plan answers in this preview, on this computer. No Genex credits are spent; your plan's limits apply, answers come slower, and voices stay practice.":
+    "Ton propre forfait {plan} répond dans cet aperçu, sur cet ordinateur. Aucun crédit Genex n'est dépensé ; les limites de ton forfait s'appliquent, les réponses arrivent plus lentement et les voix restent d'entraînement.",
+  "The plan that answers": "Le forfait qui répond",
+  "Starting {plan}…": "Démarrage de {plan}…",
+  "{plan} answers · your own plan, no credits": "{plan} répond · ton propre forfait, sans crédits",
+  "That plan is not signed in or ready on this computer. Check it in Settings, then try again. Practice answers go on.":
+    "Ce forfait n'est pas connecté ou pas prêt sur cet ordinateur. Vérifie-le dans les Réglages, puis réessaie. Les réponses d'entraînement continuent.",
   "A local model is answering a chat or build. Delete the model when it finishes.":
     "Un modèle local répond dans un chat ou un build. Supprime le modèle quand il aura fini.",
   "Download Inkling 2 Mini in Settings › Local Models.": "Télécharge Inkling 2 Mini dans Réglages › Modèles locaux.",
