@@ -123,7 +123,10 @@ const STAND = {
 /** A `studio:dev` profile, unpackaged, with live providers. */
 const DEVELOPMENT = { developerProfile: true, packaged: false, fixture: false };
 /** What every launch that is not a development one gets, whatever its environment says. */
-const RELEASE_STAND = { origins: PLAY_ORIGIN, hostToolsApi: null, gamesCaFile: null };
+const RELEASE_STAND = { origins: PLAY_ORIGIN, hostToolsApi: null, gamesCaFile: null, buildHosts: null };
+const PACKAGED = { developerProfile: true, packaged: true, fixture: false };
+const FIXTURE = { developerProfile: true, packaged: false, fixture: true };
+const NORMAL = { developerProfile: false, packaged: false, fixture: false };
 
 describe("a development profile's stand", () => {
   it("is genex.games for every launch but an unpackaged, non-fixture development profile", () => {
@@ -160,6 +163,7 @@ describe("a development profile's stand", () => {
       origins: { api: "http://localhost:3000", web: "http://localhost:5173", games: "https://localhost:8443" },
       hostToolsApi: "http://localhost:3000",
       gamesCaFile: "/tmp/mkt-e2e/certs/ca.pem",
+      buildHosts: null,
     });
     // Without a stand API the host tools stay on genex.games with the Genex plugin's account.
     assert.deepEqual(devStand({}, DEVELOPMENT), RELEASE_STAND);
@@ -167,6 +171,40 @@ describe("a development profile's stand", () => {
     // A CA is trusted only for a stand's own game host.
     const noGames = { ...STAND, [PlayOriginEnv.Games]: undefined };
     assert.equal(devStand(noGames, DEVELOPMENT).gamesCaFile, null);
+  });
+
+  it("trusts a stand's own build host for native games, only with the stand's API", () => {
+    const builds = { [PlayOriginEnv.Builds]: "https://cdn.stand.example.test" };
+    assert.deepEqual(
+      [...(devStand({ ...STAND, ...builds }, DEVELOPMENT).buildHosts ?? [])],
+      ["cdn.stand.example.test"],
+    );
+    // A port is not part of a host's name, and this Mac's own stand may serve builds over http.
+    const local = devStand({ ...STAND, [PlayOriginEnv.Builds]: "http://localhost:9000" }, DEVELOPMENT).buildHosts;
+    assert.deepEqual([...(local ?? [])], ["localhost"]);
+    // No build host named: genex.games' own stays the only one (null leaves the default in place).
+    assert.equal(devStand(STAND, DEVELOPMENT).buildHosts, null);
+    // Without the stand's API a build host is ignored: genex.games' games install only from genex.games.
+    assert.equal(devStand(builds, DEVELOPMENT).buildHosts, null);
+    assert.equal(devStand({ [PlayOriginEnv.Web]: "http://localhost:5173", ...builds }, DEVELOPMENT).buildHosts, null);
+    // Never outside a development profile, and never from anything that is not a bare origin.
+    for (const launch of [PACKAGED, FIXTURE, NORMAL])
+      assert.equal(devStand({ ...STAND, ...builds }, launch).buildHosts, null);
+    const hostile = [
+      "cdn.stand.example.test",
+      "http://cdn.stand.example.test",
+      "https://cdn.stand.example.test/builds",
+      "https://u:p@cdn.stand.example.test",
+      "https://cdn.stand.example.test\n.evil.example",
+      "*",
+      "",
+    ];
+    for (const raw of hostile)
+      assert.equal(
+        devStand({ ...STAND, [PlayOriginEnv.Builds]: raw }, DEVELOPMENT).buildHosts,
+        null,
+        JSON.stringify(raw),
+      );
   });
 
   it("refuses a CA file that is not one absolute path", () => {

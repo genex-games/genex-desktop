@@ -1352,7 +1352,8 @@ function genexAccountPort(studio: StudioCore): GenexAccountPort {
 
 /**
  * Play's native installs on this computer, or null where Genex launches no native game: genex.games'
- * build CDN over the network, or a fixture launch's own made-up build host.
+ * build CDN over the network, a development profile's stand's own build host, or a fixture launch's
+ * made-up one.
  */
 function playInstallsFor(studio: StudioCore): NativeInstaller | null {
   const host = thisComputer();
@@ -1360,7 +1361,7 @@ function playInstallsFor(studio: StudioCore): NativeInstaller | null {
   nativeInstaller ??= nativeInstalls({
     root: studio.layout.installedGames,
     host,
-    hosts: buildHostsFor(fixtureNativePolicy),
+    hosts: stand.buildHosts ?? buildHostsFor(fixtureNativePolicy),
     game: (slug) => playCatalogFor(studio).game(slug),
     // A fixture launch never reaches the network: its archives are the fixture's own files.
     fetch: fixtureNativePolicy ? fixtureNativeFetch : globalThis.fetch,
@@ -1574,6 +1575,8 @@ function playCatalogFor(studio: StudioCore): PlayGallery {
     now: Date.now,
     localImages: fixtureNativePolicy,
     ...(host ? { host } : {}),
+    // A development profile's stand serves its native builds from its own host.
+    ...(stand.buildHosts ? { buildHosts: stand.buildHosts } : {}),
   });
   return playCatalog;
 }
@@ -1592,6 +1595,7 @@ function playAccountFor(studio: StudioCore): NonNullable<typeof playAccount> {
     upload: fixtureNativePolicy ? fixtureUpload : networkUpload(globalThis.fetch),
     refused: account.refused,
     web: playOrigin.web,
+    ...(stand.buildHosts ? { buildHosts: stand.buildHosts } : {}),
   };
   // A 401 to a creator's numbers or the credits ends the sign-in as one to the account's own calls does.
   const counted = { ...deps, request: refusingRequest(deps.request, deps.refused) };
