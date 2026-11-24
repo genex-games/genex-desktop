@@ -16,33 +16,13 @@ import { GenexHosting } from "../../src/shared/genex.ts";
 import { PreviewAiMode, type PreviewAiState, PreviewAiUnavailable } from "../../src/shared/preview-ai.ts";
 import { withGenexSdkImport } from "../../src/shared/genex-page.ts";
 import { codeCallsPlayTimeModels, gameCallsPlayTimeModels } from "../../src/substrate/project-shape.ts";
+import { HEX, listening, program, type Script } from "../helpers/practice-helper.ts";
 import { running } from "../helpers/processes.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const LIVE = "live";
 const TEMPLATE_PAGE = path.resolve(import.meta.dirname, "../../src/game-template/index.html");
 const AGENT = "game-preview-facet-1";
-const HEX = "0123456789abcdef0123456789abcdef";
-
-/** What a helper of each kind prints first; later lines follow after `after` ms. */
-interface Script {
-  first: Record<string, unknown>;
-  later?: Record<string, unknown>[];
-}
-
-/** A program printing `script` as JSON lines that runs until it is told to stop. */
-const program = (script: Script) =>
-  `const lines=${JSON.stringify([script.first, ...(script.later ?? [])].map((line) => JSON.stringify(line)))};` +
-  `let i=0;const next=()=>{if(i<lines.length){process.stdout.write(lines[i++]+"\\n");setTimeout(next,20);}};next();` +
-  `process.on("SIGTERM",()=>{process.stdout.write(JSON.stringify({event:"stopped"})+"\\n");process.exit(0);});setInterval(()=>{},1000);`;
-
-const listening = (port: number, mode: "mock" | "live") => ({
-  command: "llm practice",
-  status: "listening",
-  port,
-  key: `genex_llm_practice=${port}.${HEX}`,
-  mode,
-});
 
 /** What the service is told when it asks Genex for a game's project: an outcome, or the error thrown. */
 type Hosting = GenexHosting | Error;

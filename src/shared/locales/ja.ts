@@ -39,6 +39,7 @@ export default {
   "A card battler where your deck is a stack of recipes": "デッキがレシピの束になっているカードバトル",
   "A castle siege where you defend with catapults and bad jokes": "カタパルトとつまらないダジャレで守る城の攻防戦",
   "A cave diving game where your light slowly runs out": "ライトが少しずつ切れていく洞窟ダイビングゲーム",
+  "A change here applies from the next Play in Unreal.": "ここでの変更は、Unrealで次にPlayしたときから反映されます。",
   "A chess variant where pieces level up after each capture": "駒を取るたびにレベルアップする変則チェス",
   "A city builder on the back of a giant walking turtle": "歩く巨大なカメの背中で街をつくるゲーム",
   "A clockwork tower where you fix gears to reach the top": "歯車を直しててっぺんを目指すからくり時計塔",

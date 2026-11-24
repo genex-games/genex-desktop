@@ -908,6 +908,12 @@ export interface StudioApi {
   previewAiReal(project: string, capCredits: number): Promise<PreviewAiState>;
   /** The person went back to practice answers (free, made up) for this game in Live. */
   previewAiPractice(project: string): Promise<PreviewAiState>;
+  /**
+   * Live's view of this game is its Unreal card (`shown`), or is so no longer: while it is, a game
+   * whose Unreal project calls Genex's models has Live's practice helper named to the Unreal editor,
+   * so a Play there is answered as Live's bar says.
+   */
+  previewAiEditor(project: string, shown: boolean): Promise<boolean>;
   /** The person's answer to the game's microphone ask in Live: allowed for this game until the app quits, or not now. */
   previewMicAnswer(project: string, allow: boolean): Promise<PreviewAiState>;
   /** What waits for this game's Live Reload and the build Live shows, as `live.behind` says it: read on mount. */

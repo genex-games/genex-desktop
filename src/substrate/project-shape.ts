@@ -2,14 +2,14 @@
  * How a game folder runs: its entry, its build, the folder the preview serves and what kind of
  * game it is — recorded in studio.json, or read from the evidence in the folder itself.
  */
-import { readdir, readFile } from "node:fs/promises";
+import { lstat, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { GAME_RUNTIMES, TargetRuntime } from "../shared/computer-target.ts";
 import type { GameCandidate, PlayCommand, PlayEngine, ProjectKind, ProjectShape } from "../shared/game-project.ts";
 import { DESIGN_FOLDER } from "../shared/design-board.ts";
 import { pageLoadsGenexSdk } from "../shared/genex-page.ts";
 import { CoreFact, FolderHolds, hasFact } from "../shared/project-facts.ts";
-import { pathExists, readJsonIfExists } from "./fsx.ts";
+import { pathExists, readJsonIfExists, readRegularFile } from "./fsx.ts";
 import { isRemoteSrc, pageScripts, projectRelative } from "./game-page.ts";
 import { containedReal } from "./paths.ts";
 import { detectFacts } from "./project-facts.ts";
@@ -293,6 +293,100 @@ export async function gameCallsPlayTimeModels(dir: string): Promise<boolean> {
   for (const file of await ownCodeFiles(dir)) {
     const code = await readFile(file, "utf8").catch(() => "");
     if (codeCallsPlayTimeModels(code)) return true;
+  }
+  return false;
+}
+
+/** The folder of a game's Unreal project (the Unreal plugin's `GAME_PROJECT_FOLDER`). */
+const UNREAL_PROJECT_FOLDER = "unreal";
+/** Genex's Unreal kit in that project, by the folders on the way to it. */
+const UNREAL_KIT_FOLDERS = ["Plugins", "GenexMultiplayer"];
+/** The kit's class an Unreal game calls play-time models through, as code and Blueprints name it. */
+const UNREAL_MODELS_CLASS = "GenexModelsSubsystem";
+/** Where an Unreal project keeps its own work, and the files in each that name a class they use. */
+const UNREAL_OWN_FILES: ReadonlyArray<{ folder: string; extensions: ReadonlySet<string> }> = [
+  { folder: "Source", extensions: new Set([".h", ".cpp"]) },
+  { folder: "Content", extensions: new Set([".uasset", ".umap"]) },
+];
+/** Folders of an Unreal project that hold none of the game's own work: what Unreal makes, and plugins. */
+const NOT_OWN_UNREAL: ReadonlySet<string> = new Set([
+  "Intermediate",
+  "Saved",
+  "Binaries",
+  "DerivedDataCache",
+  "Plugins",
+]);
+/** The most of one Unreal file the check reads: a larger one is a mesh, a texture or a level's data. */
+const UNREAL_SCAN_MAX_BYTES = 4 * 1024 * 1024;
+/** The most Unreal files the check looks at, and the most bytes it reads of them in all. */
+const UNREAL_SCAN_MAX_FILES = 2000;
+const UNREAL_SCAN_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
+/** How deep below `Source` and `Content` the check looks. */
+const UNREAL_SCAN_MAX_DEPTH = 8;
+
+/** Whether `dir` is a folder of its own, never a link to one. */
+async function isPlainFolder(dir: string): Promise<boolean> {
+  return (await lstat(dir).catch(() => null))?.isDirectory() === true;
+}
+
+/** What the check may still look at: files, and bytes read of them. */
+interface UnrealScanLeft {
+  files: number;
+  bytes: number;
+}
+
+/** Whether the check has looked at all it may. */
+const scanSpent = (left: UnrealScanLeft): boolean => left.files <= 0 || left.bytes <= 0;
+
+/** Whether `file` holds the models class's name as plain bytes; a file too large or unreadable does not. */
+async function fileNamesModels(file: string, left: UnrealScanLeft): Promise<boolean> {
+  left.files -= 1;
+  const bytes = await readRegularFile(file, UNREAL_SCAN_MAX_BYTES).catch(() => null);
+  if (bytes === null) return false;
+  left.bytes -= bytes.length;
+  return bytes.includes(UNREAL_MODELS_CLASS, 0, "latin1");
+}
+
+/**
+ * Whether a file with one of `extensions` below `dir` names the models class (a Blueprint keeps the
+ * class path as plain bytes), never through a link and within what `left` allows.
+ */
+async function unrealFilesNameModels(
+  dir: string,
+  extensions: ReadonlySet<string>,
+  left: UnrealScanLeft,
+  depth = 0,
+): Promise<boolean> {
+  if (depth > UNREAL_SCAN_MAX_DEPTH) return false;
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+  const own = entries.filter((entry) => !entry.name.startsWith(".") && !entry.isSymbolicLink());
+  for (const entry of own) {
+    if (scanSpent(left)) return false;
+    const full = path.join(dir, entry.name);
+    const ownFolder = entry.isDirectory() && !NOT_OWN_UNREAL.has(entry.name);
+    const ownFile = entry.isFile() && extensions.has(path.extname(entry.name).toLowerCase());
+    if (ownFolder && (await unrealFilesNameModels(full, extensions, left, depth + 1))) return true;
+    if (ownFile && (await fileNamesModels(full, left))) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether an Unreal game calls play-time models when it is played in the editor: its `unreal/`
+ * project holds Genex's kit (`Plugins/GenexMultiplayer/`) and its own work names the kit's
+ * `GenexModelsSubsystem`, in a `.h` or `.cpp` under `Source/` or in the bytes of a `.uasset` or
+ * `.umap` under `Content/`. Such a game gets a practice helper named to the editor
+ * (`main/core/practice-handoff.ts`). No link is followed, and a file over
+ * {@link UNREAL_SCAN_MAX_BYTES} is not read.
+ */
+export async function unrealGameCallsPlayTimeModels(dir: string): Promise<boolean> {
+  const project = path.join(dir, UNREAL_PROJECT_FOLDER);
+  const kit = UNREAL_KIT_FOLDERS.map((_, at) => path.join(project, ...UNREAL_KIT_FOLDERS.slice(0, at + 1)));
+  for (const folder of [project, ...kit]) if (!(await isPlainFolder(folder))) return false;
+  const left: UnrealScanLeft = { files: UNREAL_SCAN_MAX_FILES, bytes: UNREAL_SCAN_MAX_TOTAL_BYTES };
+  for (const { folder, extensions } of UNREAL_OWN_FILES) {
+    const root = path.join(project, folder);
+    if ((await isPlainFolder(root)) && (await unrealFilesNameModels(root, extensions, left))) return true;
   }
   return false;
 }

@@ -15,7 +15,7 @@ An active run opens Builds once; a build shown from chat or empty Builds opens L
 ## The two views
 
 **Live** plays the browser game natively; previews pause unwatched or hidden. Pages load
-hidden at Live's size, shown at its first frame (3 s at most). Opened tabs stay. The strip
+hidden at Live's size, shown at its first frame (≤3 s). Opened tabs stay. The strip
 holds Live/Builds/[Design](../design-board.md)/Assets, Reload, Play/Stop and Sound (⌥⌘M; heard when shown) once the
 game has content, Full screen (hold Esc), plugin actions, Multiplayer, Publish. Stop halts it until
 Play/Reload. An empty scaffold shows “Ready for your first idea”, or
@@ -23,11 +23,12 @@ Play/Reload. An empty scaffold shows “Ready for your first idea”, or
 Opening a game starts nothing; otherwise only the user changes Live (Play,
 Reload, Make live) or a finished engine `web/` build. A changed game folder or a broken shown
 build lights Reload; hidden and not stopped, they go in at once. Its
-network is open as a page's. Other folders' views:
-[projects](projects-engines.md#lives-views).
+network is open as a page's. Other folders:
+[views](projects-engines.md#lives-views).
 
-Previews answer model calls with free [practice](../../src/main/core/preview-ai.ts); Live's **Use real
-AI** spends credits to a per-game cap, asking for declared mics.
+Previews and Unreal's [editor Play](../plugins.md#a-games-engine) answer model calls with free
+[practice](../../src/main/core/preview-ai.ts); Live's **Use real AI** spends credits to a per-game
+cap, asking for declared mics.
 
 **Builds** lists Working now, then What changed, newest first; a finished run's
 build heads it. A row is a step: its mark, when it ended, what it made or how it stands, its

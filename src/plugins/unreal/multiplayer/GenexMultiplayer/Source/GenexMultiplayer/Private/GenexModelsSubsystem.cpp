@@ -6,12 +6,14 @@
 #include "GenexCore/GenexModels.h"
 #include "GenexCore/GenexModelsHttp.h"
 #include "GenexIdentitySubsystem.h"
+#include "GenexMultiplayerModule.h"
 #include "GenexSettings.h"
 #include "GenexUnrealJson.h"
 #include "Subsystems/SubsystemCollection.h"
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -114,8 +116,26 @@ void UGenexModelsSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	// The bridge asks the identity for a token before every request: it is initialized first.
 	UGenexIdentitySubsystem* Identity = Collection.InitializeDependency<UGenexIdentitySubsystem>();
 	Http = MakeShared<FGenexModelsHttp>(Identity);
-	Models = MakeShared<genex::models::Models>(
-		std::make_unique<genex::models::HttpBridge>(GenexModelsSubsystemDetail::BridgeOptions(Identity, Http.Get())));
+	// A game being developed: as Play in editor began, the editor module handed this play a practice
+	// helper on this computer (GenexLocalPractice). The key is taken, so nothing this game starts
+	// inherits it, and the calls go there with nobody signed in. Only an editor build looks: a
+	// packaged game, and so every game a player installed, asks Genex whatever its environment says.
+	std::optional<genex::models::PracticeTarget> Practice;
+#if WITH_EDITOR
+	Practice = genex::models::TakePracticeKey();
+#endif
+	if (Practice)
+	{
+		genex::models::HttpBridgeOptions Options = genex::models::HttpBridgeOptionsForPractice(*Practice, Http.Get());
+		Options.usePump = false;
+		Models = MakeShared<genex::models::Models>(std::make_unique<genex::models::HttpBridge>(MoveTemp(Options)));
+		UE_LOG(LogGenex, Display, TEXT("Genex models: this play asks the practice helper on this computer (port %d)."), Practice->port);
+	}
+	else
+	{
+		Models = MakeShared<genex::models::Models>(
+			std::make_unique<genex::models::HttpBridge>(GenexModelsSubsystemDetail::BridgeOptions(Identity, Http.Get())));
+	}
 	TickerHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateUObject(this, &UGenexModelsSubsystem::OnTicker));
 }
 

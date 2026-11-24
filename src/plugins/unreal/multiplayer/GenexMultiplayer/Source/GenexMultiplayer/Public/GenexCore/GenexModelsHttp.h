@@ -35,6 +35,20 @@
 // Every request asks the token provider for a fresh token and reads the API base again (the
 // launcher's GENEX_API_URL wins). No Origin header is sent. No token and no body is ever logged.
 //
+// PRACTICE (a game being developed). `genex llm practice`, which Genex's desktop app runs for a game
+// being made, serves these same routes on 127.0.0.1 and stands in for the player: made-up answers,
+// the maker's own AI plan, or real models under a cap the maker set. A bridge made for such a
+// helper (HttpBridgeOptionsForPractice, `practice` true) sends every request there with the
+// helper's own token, never the player's, and asks it what a published build may not ask anyone:
+//
+//   init                 no request: the local tester, a guest, and `shell` "local"
+//   requestSpendGrant    POST /grants                    then GET /grants/{id} every 750 ms
+//   generate, no grantId POST /generations               then GET /generations/{id} every 750 ms
+//
+// The helper is named by a key, `<port>.<32 hex>` (the SDK's `genex_llm_practice` value): a port on
+// this computer and nothing else, so a key can point nowhere but 127.0.0.1. Only the program that
+// starts a game hands it one (kPracticeEnv); Genex never does for a game a player installed.
+//
 // ASYNCHRONOUS and single-threaded, like the rest of GenexCore: a call answers its request id at
 // once and settles as an event at a later drain. The waits (the 750 ms cadence, a call's timeout)
 // advance on the bridge's own clock from Update (genex::Pump) and from Pending(), which
@@ -63,6 +77,8 @@ namespace http_limits {
 inline constexpr double kPollIntervalMs = 750.0;
 /** How long generate, generateStream and waitForGeneration wait by default (GENERATION_WAIT_MS). */
 inline constexpr double kGenerationWaitMs = 1200000.0;
+/** How long a practice requestSpendGrant waits for the helper's answer by default (the SDK's 600 s). */
+inline constexpr double kGrantWaitMs = 600000.0;
 /** A judge call's default server wait, and what the bridge waits past it for a replay. */
 inline constexpr double kJudgeWaitMs = 20000.0;
 inline constexpr double kJudgeWaitMarginMs = 10000.0;
@@ -99,7 +115,35 @@ struct HttpBridgeOptions {
   /** Register with genex::Pump while a call waits. False for a host that polls Models every frame
    *  (Pending() advances the waits too) and may run without the Colyseus core. */
   bool usePump = true;
+  /** The requests go to a practice helper that stands in for the player (see PRACTICE above):
+   *  requestSpendGrant and a generate with no grantId ask it, and init answers the local tester. */
+  bool practice = false;
 };
+
+/** The environment variable a launcher hands a game being developed its practice helper in:
+ *  `<port>.<token>`. Read once and removed (TakePracticeKey). */
+inline constexpr const char* kPracticeEnv = "GENEX_LLM_PRACTICE";
+
+/** A practice helper: its port on 127.0.0.1 and the token it made for this run (not a Genex credential). */
+struct PracticeTarget {
+  int port = 0;
+  std::string token;
+};
+
+/** A practice key, `<port>.<token>`: a port from 1024 to 65535 with no leading zero, a dot, and 32
+ *  lowercase hex characters (embed-protocol's `readPracticeKey`). Anything else is no key. */
+GENEX_CORE_API std::optional<PracticeTarget> ParsePracticeKey(std::string_view key);
+
+/** The key a launcher put in kPracticeEnv, taken: the variable is removed whatever it held, so
+ *  nothing the game starts inherits it. Nothing when it was unset or not a key. */
+GENEX_CORE_API std::optional<PracticeTarget> TakePracticeKey();
+
+/** `http://127.0.0.1:<port>`: the only address a practice key can name. */
+GENEX_CORE_API std::string PracticeOrigin(int port);
+
+/** The options of a bridge over a practice helper: its origin as the API base, its token as the
+ *  bearer, nobody signed in, `practice` true. */
+GENEX_CORE_API HttpBridgeOptions HttpBridgeOptionsForPractice(PracticeTarget target, IHttp* http = nullptr);
 
 /** The options of a bridge over `identity`: its token provider, API base, slug and player. The
  *  identity must outlive the bridge. */
@@ -156,6 +200,8 @@ class GENEX_CORE_API HttpBridge final : public Bridge, public IPumped {
     std::string call;
     bool stream = false;
     bool judge = false;
+    /** A practice requestSpendGrant waiting for the helper's answer: `generationId` holds the budget's id. */
+    bool grant = false;
     /** The first read of a waitForGeneration: no token there ends the call. */
     bool endsWithoutSession = false;
     std::string generationId;
@@ -188,8 +234,10 @@ class GENEX_CORE_API HttpBridge final : public Bridge, public IPumped {
   void Read(int id, const std::string& call, std::string path, bool post);
   void ActiveGrant(int id);
   void RequestGrant(int id, const Json& args);
+  /** Practice: ask the helper for the budget (POST /grants), then wait for its answer. */
+  void AskForGrant(int id, const Json& options);
   /** The code a generate or generateStream is refused with before anything is asked, or empty. */
-  static std::string InvalidGeneration(const Json& options, bool stream);
+  std::string InvalidGeneration(const Json& options, bool stream) const;
   void Generate(int id, const Json& args);
   void SendGeneration(int id, const std::string& grantId, double timeoutMs, Json body);
   void Judge(int id, const Json& args);

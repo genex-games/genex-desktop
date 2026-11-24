@@ -39,6 +39,7 @@ export default {
   "A card battler where your deck is a stack of recipes": "덱이 레시피 더미인 카드 배틀",
   "A castle siege where you defend with catapults and bad jokes": "투석기와 썰렁한 농담으로 막아 내는 성 공방전",
   "A cave diving game where your light slowly runs out": "손전등 불빛이 점점 꺼져 가는 동굴 다이빙 게임",
+  "A change here applies from the next Play in Unreal.": "여기서 바꾼 내용은 Unreal의 다음 Play부터 적용돼요.",
   "A chess variant where pieces level up after each capture": "기물을 잡을 때마다 레벨업하는 체스 변형",
   "A city builder on the back of a giant walking turtle": "걸어 다니는 거대한 거북이 등 위에 짓는 도시 건설 게임",
   "A clockwork tower where you fix gears to reach the top": "톱니바퀴를 고치며 꼭대기까지 오르는 시계탑",

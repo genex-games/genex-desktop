@@ -43,6 +43,7 @@ export default {
   "A castle siege where you defend with catapults and bad jokes":
     "Осада замка: защищайся катапультами и плохими шутками",
   "A cave diving game where your light slowly runs out": "Пещерный дайвинг, где твой фонарь медленно гаснет",
+  "A change here applies from the next Play in Unreal.": "Изменение здесь сработает со следующего Play в Unreal.",
   "A chess variant where pieces level up after each capture": "Шахматы, где фигуры прокачиваются после каждого взятия",
   "A city builder on the back of a giant walking turtle": "Градостроитель на спине гигантской шагающей черепахи",
   "A clockwork tower where you fix gears to reach the top":
