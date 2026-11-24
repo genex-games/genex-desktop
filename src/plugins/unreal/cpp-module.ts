@@ -202,8 +202,8 @@ const MESSAGE = {
 
 /** One file of the module: where it goes (relative, `/`-separated) and its text. */
 type ModuleFile = { relative: string; text: string };
-/** How the .uproject is written, so a rewrite keeps it. */
-type TextFormat = { bom: boolean; indent: string; eol: string; trailingNewline: boolean };
+/** How a descriptor (.uproject, .uplugin) is written, so a rewrite keeps it. */
+export type TextFormat = { bom: boolean; indent: string; eol: string; trailingNewline: boolean };
 /** A .uproject read for the change: its real folder and file, its JSON and how it is written. */
 type Project = { root: string; file: string; json: Record<string, unknown>; format: TextFormat };
 
@@ -255,7 +255,8 @@ async function readProjectText(file: string): Promise<string> {
   }
 }
 
-function formatOf(text: string): TextFormat {
+/** How a descriptor's text is written: its byte order mark, indentation, line endings and last newline. */
+export function formatOf(text: string): TextFormat {
   return {
     bom: text.startsWith(BOM),
     indent: /^([ \t]+)\S/m.exec(text)?.[1] ?? "\t",
@@ -264,11 +265,22 @@ function formatOf(text: string): TextFormat {
   };
 }
 
+/** `json` as a descriptor's text, written the way `format` says the file was. */
+export function writtenLike(format: TextFormat, json: unknown): string {
+  const text = JSON.stringify(json, null, format.indent).replaceAll("\n", format.eol);
+  return `${format.bom ? BOM : ""}${text}${format.trailingNewline ? format.eol : ""}`;
+}
+
+/** A descriptor's text as JSON, its byte order mark aside; throws when it isn't JSON. */
+export function parseDescriptor(text: string): unknown {
+  return JSON.parse(text.startsWith(BOM) ? text.slice(BOM.length) : text);
+}
+
 /** The .uproject's JSON object, with a list (or nothing) as its Modules. */
 function parseProject(text: string): Record<string, unknown> {
   let json: unknown;
   try {
-    json = JSON.parse(text.startsWith(BOM) ? text.slice(BOM.length) : text);
+    json = parseDescriptor(text);
   } catch {
     throw refusal(CppModuleErrorCode.Unreadable, MESSAGE.Unreadable(MESSAGE.NotJson));
   }
@@ -300,7 +312,7 @@ async function readProjectJson(projectFile: string): Promise<Record<string, unkn
   if (!isProjectPath(projectFile)) return undefined;
   try {
     const text = (await readRegularFile(projectFile, UPROJECT_MAX_BYTES)).toString("utf8");
-    const json: unknown = JSON.parse(text.startsWith(BOM) ? text.slice(BOM.length) : text);
+    const json: unknown = parseDescriptor(text);
     return isJsonObject(json) ? json : undefined;
   } catch {
     return undefined;
@@ -362,7 +374,7 @@ async function macModuleLibrary(projectFile: string, module: string): Promise<st
     const file = path.join(root, ...MAC_MODULES_FILE);
     if ((await realpath(file)) !== file) return undefined;
     const text = (await readRegularFile(file, MODULES_MAX_BYTES)).toString("utf8");
-    const json: unknown = JSON.parse(text.startsWith(BOM) ? text.slice(BOM.length) : text);
+    const json: unknown = parseDescriptor(text);
     const modules = isJsonObject(json) ? json.Modules : undefined;
     const library = isJsonObject(modules) ? modules[module] : undefined;
     return typeof library === "string" ? library : undefined;
@@ -552,8 +564,7 @@ function withModule(project: Project, module: string): string {
   const next = Array.isArray(modules)
     ? { ...json, [MODULES_KEY]: [...modules, entry] }
     : insertBefore(json, PLUGINS_KEY, MODULES_KEY, [entry]);
-  const text = JSON.stringify(next, null, format.indent).replaceAll("\n", format.eol);
-  return `${format.bom ? BOM : ""}${text}${format.trailingNewline ? format.eol : ""}`;
+  return writtenLike(format, next);
 }
 
 /** Every check {@link addCppModule} makes before it writes: the project read, its module's name and what to write. */
@@ -599,8 +610,7 @@ function withPlugin(project: Project, name: string): string {
     ? listed.map((entry) => (named(entry) ? { ...entry, Enabled: true } : entry))
     : [...listed, { Name: name, Enabled: true }];
   const next = { ...json, [PLUGINS_KEY]: plugins };
-  const text = JSON.stringify(next, null, format.indent).replaceAll("\n", format.eol);
-  return `${format.bom ? BOM : ""}${text}${format.trailingNewline ? format.eol : ""}`;
+  return writtenLike(format, next);
 }
 
 /**

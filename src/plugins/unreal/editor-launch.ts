@@ -24,6 +24,7 @@ import { hotLibraryLoaded, projectModule } from "./cpp-module.ts";
 import { inProjectBlock, portFree, rememberChoice, SetupStorage } from "./editor-port.ts";
 import { pollUntil } from "./editor-queue.ts";
 import { buildErrors } from "./editor-restart.ts";
+import { unpinMultiplayerEngine } from "./multiplayer-tools.ts";
 import { isProjectPath } from "./project-file.ts";
 import {
   addToolsetPlugins,
@@ -473,6 +474,17 @@ async function updateBeforeOpen(
 }
 
 /**
+ * Before Genex opens a project it set up, by a person's Open or the Loop's: a copy of Genex's
+ * multiplayer plugin an older Genex put in the game stops naming an engine version, so Unreal
+ * doesn't stop on "Attempt to load it anyway?", which nobody answers when the Loop opens it. Unlike
+ * {@link updateBeforeOpen} no game snapshot comes first: one field Genex wrote goes, and nothing of
+ * the person's is replaced. A copy that can't be repaired stays as it is; the project opens either way.
+ */
+async function unpinMultiplayerBeforeOpen(state: ProjectState): Promise<void> {
+  if (state.undoable) await unpinMultiplayerEngine(realProjectFile(state)).catch(() => undefined);
+}
+
+/**
  * On a Mac, builds the game's C++ module with UnrealBuildTool when the project's last editor ran a
  * hot-reloaded library of it, so Unreal opens on code built from the Source; a Blueprint project,
  * a cold build and other computers build nothing. Throws NotBuilt, with the build's first errors.
@@ -492,8 +504,9 @@ async function buildIfHotReloaded(project: string, engine: Engine, options: Laun
 /**
  * Opens a project in the user's own Unreal, like double-clicking it, unless its editor already
  * answers or is still starting. Everything is checked before anything starts or is written. A
- * user's Open (`helperUpdate`) first updates an older Genex editor helper while no editor runs; on
- * a Mac, a hot-reloaded game module is built first. It waits for the project's port to be free,
+ * user's Open (`helperUpdate`) first updates an older Genex editor helper while no editor runs; any
+ * Open of a set-up project takes the engine version out of an older copy of Genex's multiplayer
+ * plugin ({@link unpinMultiplayerBeforeOpen}); on a Mac, a hot-reloaded game module is built first. It waits for the project's port to be free,
  * and opens anyway once the wait runs out (Unreal may still manage), keeping that port in the
  * Starting record so status can say why. After the launch, Genex keeps when it opened the project
  * and makes it the panel's chosen one.
@@ -506,6 +519,7 @@ export async function openEditor(file: string, options: LaunchOptions, request: 
   const opening = await alreadyOpening(project, state.port, options);
   if (opening) return opening;
   const helper = await updateBeforeOpen(state, options, request.helperUpdate);
+  await unpinMultiplayerBeforeOpen(state);
   await buildIfHotReloaded(project, engine, options);
   const busyPort = await heldPort(state.port, launch);
   await launch.open(openEditorLaunch(engine, project, env.platform));

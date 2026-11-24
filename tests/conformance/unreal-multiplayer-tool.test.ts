@@ -5,6 +5,10 @@
  * the pinned one is never used. On Windows the app's own pinned Win64 core is placed, each file
  * checked by sha256 first, never downloaded; a shipped core that isn't the pinned one, or a link in
  * its way, adds nothing of it. A link anywhere on the plugin's way refuses the call with nothing written.
+ *
+ * A copy an older Genex put into a game named Unreal 5.8.0 in its descriptor, so any other Unreal
+ * asks before loading it. `unpinMultiplayerEngine` takes that one field out of the game's copy and
+ * leaves every other byte, a prebuilt plugin and anything reached through a link as they are.
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -18,6 +22,7 @@ import {
   type UnrealMultiplayerDeps,
   SHIPPED_MULTIPLAYER,
   type Unzip,
+  unpinMultiplayerEngine,
 } from "../../src/plugins/unreal/multiplayer-tools.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -84,6 +89,7 @@ async function files(dir: string): Promise<Map<string, Buffer>> {
 }
 
 const signal = () => new AbortController().signal;
+const LINKS = process.platform === "win32" && "links need privileges on Windows";
 
 type Fixture = Awaited<ReturnType<typeof project>>;
 
@@ -299,4 +305,131 @@ describe("unreal__multiplayer adds Genex's Unreal plugin and the core it links",
       assert.deepEqual(mac.fetched, [], `${name}: nothing downloaded`);
     }
   });
+});
+
+/** The descriptor an older Genex copied into a game: Unreal's own layout (tabs), naming the engine it was written for. */
+const PINNED_DESCRIPTOR = [
+  "{",
+  '\t"FileVersion": 3,',
+  '\t"VersionName": "0.1.0",',
+  '\t"FriendlyName": "Genex Multiplayer",',
+  '\t"EngineVersion": "5.8.0",',
+  '\t"CanContainContent": false,',
+  '\t"Installed": false,',
+  '\t"Modules": [',
+  '\t\t{ "Name": "GenexMultiplayer", "Type": "Runtime", "PlatformAllowList": [ "Mac", "Win64", "Linux" ] }',
+  "\t]",
+  "}",
+  "",
+].join("\n");
+const ENGINE_LINE = '\t"EngineVersion": "5.8.0",\n';
+const DESCRIPTOR = "Plugins/GenexMultiplayer/GenexMultiplayer.uplugin";
+
+/** A game whose project holds the plugin's descriptor as `text`. */
+async function gameWithDescriptor(text: string | Buffer = PINNED_DESCRIPTOR) {
+  const fx = await project();
+  const file = path.join(fx.dir, ...DESCRIPTOR.split("/"));
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, text);
+  return { ...fx, descriptor: file };
+}
+
+describe("A game's copy of the multiplayer plugin stops naming an engine version", () => {
+  it("takes out the one line and leaves every other byte, so Unreal 5.9 loads the plugin without asking", async () => {
+    const fx = await gameWithDescriptor();
+    assert.equal(await unpinMultiplayerEngine(fx.file), true);
+    assert.equal(await readFile(fx.descriptor, "utf8"), PINNED_DESCRIPTOR.replace(ENGINE_LINE, ""));
+    assert.equal(await unpinMultiplayerEngine(fx.file), false, "a second call has nothing to do");
+  });
+
+  it("keeps Windows line endings and a byte order mark", async () => {
+    const windows = `\uFEFF${PINNED_DESCRIPTOR.replaceAll("\n", "\r\n")}`;
+    const fx = await gameWithDescriptor(windows);
+    assert.equal(await unpinMultiplayerEngine(fx.file), true);
+    assert.equal(await readFile(fx.descriptor, "utf8"), windows.replace(ENGINE_LINE.replace("\n", "\r\n"), ""));
+  });
+
+  /** Layouts the line can't simply be cut from, and the indentation each is written back in (Unreal's tabs when it has none). */
+  const reshaped: Array<[string, string, string]> = [
+    ["the field is the last one", '{\n  "FileVersion": 3,\n  "EngineVersion": "5.8.0"\n}\n', "  "],
+    ["the file is one line", '{"FileVersion":3,"EngineVersion":"5.8.0","Installed":false}', "\t"],
+    [
+      "a nested object names the field too",
+      '{\n\t"Notes": {\n\t\t"EngineVersion": "5.8.0",\n\t\t"a": 1\n\t},\n\t"EngineVersion": "5.8.0",\n\t"FileVersion": 3\n}\n',
+      "\t",
+    ],
+  ];
+  for (const [name, text, indent] of reshaped)
+    it(`when ${name}, the descriptor is the same JSON without the field, in the file's own indentation`, async () => {
+      const fx = await gameWithDescriptor(text);
+      assert.equal(await unpinMultiplayerEngine(fx.file), true);
+      const written = await readFile(fx.descriptor, "utf8");
+      const { EngineVersion: _engine, ...rest } = JSON.parse(text);
+      assert.equal(written, `${JSON.stringify(rest, null, indent)}${text.endsWith("\n") ? "\n" : ""}`);
+    });
+
+  /** Descriptors and folders the repair leaves exactly as they are, answering false. */
+  const untouched: Array<{ name: string; links?: boolean; arrange: (fx: Fixture) => Promise<unknown> }> = [
+    { name: "the game has no multiplayer plugin", arrange: async () => {} },
+    {
+      name: "the descriptor names no engine",
+      arrange: (fx) => plant(fx, PINNED_DESCRIPTOR.replace(ENGINE_LINE, "")),
+    },
+    {
+      name: "a prebuilt plugin, whose binaries are for the engine it names",
+      arrange: (fx) => plant(fx, PINNED_DESCRIPTOR.replace('"Installed": false', '"Installed": true')),
+    },
+    { name: "the descriptor isn't JSON", arrange: (fx) => plant(fx, `${PINNED_DESCRIPTOR}}`) },
+    { name: "the descriptor is a list", arrange: (fx) => plant(fx, '[{"EngineVersion": "5.8.0"}]') },
+    {
+      name: "the descriptor is larger than any descriptor",
+      arrange: (fx) => plant(fx, PINNED_DESCRIPTOR.replace("Genex Multiplayer", "x".repeat(1024 * 1024))),
+    },
+    {
+      name: "the descriptor is a folder",
+      arrange: (fx) => mkdir(path.join(fx.dir, ...DESCRIPTOR.split("/")), { recursive: true }),
+    },
+    {
+      name: "the descriptor is a link to a file outside the project",
+      links: true,
+      arrange: async (fx) => {
+        await writeFile(path.join(fx.outside, "theirs.uplugin"), PINNED_DESCRIPTOR);
+        await mkdir(path.join(fx.dir, "Plugins", "GenexMultiplayer"), { recursive: true });
+        await symlink(path.join(fx.outside, "theirs.uplugin"), path.join(fx.dir, ...DESCRIPTOR.split("/")));
+      },
+    },
+    {
+      name: "the plugin's folder is a link to one outside the project",
+      links: true,
+      arrange: async (fx) => {
+        await writeFile(path.join(fx.outside, "GenexMultiplayer.uplugin"), PINNED_DESCRIPTOR);
+        await mkdir(path.join(fx.dir, "Plugins"), { recursive: true });
+        await symlink(fx.outside, path.join(fx.dir, "Plugins", "GenexMultiplayer"));
+      },
+    },
+    {
+      name: "Plugins is a link to a folder outside the project",
+      links: true,
+      arrange: async (fx) => {
+        const plugin = path.join(fx.outside, "GenexMultiplayer");
+        await mkdir(plugin, { recursive: true });
+        await writeFile(path.join(plugin, "GenexMultiplayer.uplugin"), PINNED_DESCRIPTOR);
+        await symlink(fx.outside, path.join(fx.dir, "Plugins"));
+      },
+    },
+  ];
+  /** The descriptor `text` in the game's own plugin folder. */
+  async function plant(fx: Fixture, text: string): Promise<void> {
+    const file = path.join(fx.dir, ...DESCRIPTOR.split("/"));
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, text);
+  }
+  for (const row of untouched)
+    it(`leaves everything as it is when ${row.name}`, { skip: row.links ? LINKS : false }, async () => {
+      const fx = await project();
+      await row.arrange(fx);
+      const witness = [await files(fx.dir), await files(fx.outside)];
+      assert.equal(await unpinMultiplayerEngine(fx.file), false);
+      assert.deepEqual([await files(fx.dir), await files(fx.outside)], witness, "no file changed, none appeared");
+    });
 });

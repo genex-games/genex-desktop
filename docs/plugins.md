@@ -2842,7 +2842,14 @@ downloaded. A Mac places that Win64 core too, before its own (the two share `inc
 byte for byte the same release's), so a game made on a Mac can be built for Windows by Build on Genex,
 whose machine compiles the plugin as the project holds it; the answer's `windows` says whether it was
 placed. A core that isn't the pinned one, or a link in its way, is a note in `core.why` (or
-`windows.why`), never a refusal; a link anywhere on the plugin's way refuses the call before anything is written. The `unreal-multiplayer` skill takes the builder from there: the room module
+`windows.why`), never a refusal; a link anywhere on the plugin's way refuses the call before anything is written.
+The plugin is source that compiles with the game, so its descriptor names no `EngineVersion`. A copy an
+older Genex put in a game named 5.8.0, and any other Unreal then asks "Attempt to load it anyway?" before
+loading it (with nobody to ask, it skips it). Nothing refreshes a game's copy but another
+`unreal__multiplayer`, so every Open by Genex of a set-up project, a person's or the Loop's, first takes
+that one field out of the game's copy (`unpinMultiplayerEngine`): the line is cut and every other byte
+kept, with no game snapshot. A prebuilt plugin (`Installed`), a descriptor that doesn't read and one
+reached through a link stay as they are, and the project opens either way. The `unreal-multiplayer` skill takes the builder from there: the room module
 and `genex.json`'s `authority` block, the `Genex Authority Subsystem` client, `genex__room` with bots
 (Play joins it through `.studio/authority.json`) and publish, which stages the room as for any game.
 A game whose own work names the plugin's `GenexModelsSubsystem` (`unrealGameCallsPlayTimeModels`: a
