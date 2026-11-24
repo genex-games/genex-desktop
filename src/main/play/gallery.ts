@@ -134,6 +134,11 @@ export interface GalleryDeps {
   /** A fixture launch: its drawn covers are let through, and its builds' made-up host. */
   localImages?: boolean;
   /**
+   * The hosts a native build may download from, when they are not the launch's usual ones: a
+   * development profile's stand serves builds from its own host (`origins.ts`, `devStand`).
+   */
+  buildHosts?: ReadonlySet<string>;
+  /**
    * This computer, when the app knows it: a game it cannot play at all (no web build, no build for
    * it) is left out of the tabs and search. Absent, every game is listed.
    */
@@ -353,13 +358,19 @@ const playsOn = (game: PlayGame, host: NativeHost | undefined): boolean => !host
  * A page of the gallery: its valid items (on `shelf` alone when one is named), each once, and the
  * next cursor. Given `host`, a game it cannot play at all is left out.
  */
-export function toFeedPage(body: unknown, local = false, shelf?: PlayShelf, host?: NativeHost): PlayFeedPage {
+export function toFeedPage(
+  body: unknown,
+  local = false,
+  shelf?: PlayShelf,
+  host?: NativeHost,
+  hosts = buildHostsFor(local),
+): PlayFeedPage {
   const items = isRecord(body) && Array.isArray(body.items) ? body.items : [];
   const seen = new Set<string>();
   const games: PlayGame[] = [];
   for (const item of items) {
     if (shelf && itemShelf(item) !== shelf) continue;
-    const game = toPlayGame(item, local);
+    const game = toPlayGame(item, local, hosts);
     if (!game || seen.has(game.id)) continue;
     if (!playsOn(game, host)) continue;
     seen.add(game.id);
@@ -375,11 +386,12 @@ export function toFeedPage(body: unknown, local = false, shelf?: PlayShelf, host
  * turned remixing off (a game for sale is not remixable either), and it names no mobile flag, so a
  * search's card carries no curation and offers no menu.
  */
-export function toSearchGame(item: unknown, local = false): PlayGame | null {
+export function toSearchGame(item: unknown, local = false, hosts = buildHostsFor(local)): PlayGame | null {
   if (!isRecord(item)) return null;
   const game = toPlayGame(
     { ...item, author: { name: item.author }, private: item.remixable !== true, online: null },
     local,
+    hosts,
   );
   if (!game) return null;
   const { curation: _unread, ...card } = game;
@@ -475,7 +487,7 @@ function corpusReads(deps: GalleryDeps, note: (body: unknown) => void = () => {}
         const items = isRecord(body) && Array.isArray(body.items) ? body.items : [];
         note(body);
         const entries = items.flatMap((item) => {
-          const game = toSearchGame(item, local);
+          const game = toSearchGame(item, local, deps.buildHosts);
           return game ? [{ shelf: itemShelf(item), game }] : [];
         });
         if (started === generation) corpus = { at: now(), entries };
@@ -535,7 +547,7 @@ function catalogReads(deps: GalleryDeps) {
     const started = generation;
     const body = await readRoute(request, `${PlayRoute.Feed}?${query}`);
     noteSources(body);
-    const page = toFeedPage(body, local, shelfOf(category), deps.host);
+    const page = toFeedPage(body, local, shelfOf(category), deps.host, deps.buildHosts);
     if (first && started === generation) firstPages.set(category, { at: now(), page });
     return page;
   };
@@ -633,7 +645,7 @@ function accountCalls(deps: GalleryDeps) {
     if (!isPlaySlug(slug)) throw new Error(MESSAGE.BadSlug);
     const body = await readRoute(request, PlayRoute.world(slug), await token());
     const item = isRecord(body) && isRecord(body.item) ? body.item : {};
-    const game = toPlayGame(item, local);
+    const game = toPlayGame(item, local, deps.buildHosts);
     if (!game) throw new GalleryError(PlayRoute.world(slug), BAD_GATEWAY);
     return { item, game };
   };

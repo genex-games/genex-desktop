@@ -13,8 +13,13 @@ import type { GenexAccountPort } from "../core/genex-account.ts";
 import { type GalleryRequest, isRecord } from "../play/gallery.ts";
 import { onWebsite } from "../play/origins.ts";
 
-/** What the approval page calls this sign-in. */
-const DEVICE_LABEL = "Genex development profile";
+/**
+ * What the approval page calls this sign-in: the app's own name, the one its sign-in on genex.games
+ * gives (the Genex plugin's `DEVICE_LABEL`). genex.games reads that name to know the desktop app,
+ * and answers some calls to it alone (a native game's AI budget, `play/ai-budget.ts`), so a
+ * development profile on a stand must sign in as the app does or those calls are refused.
+ */
+const DEVICE_LABEL = "AI Game Studio";
 /** The fastest the copy is polled, whatever it asks: genex.games' own floor. */
 const MIN_POLL_MS = MIN_POLL_INTERVAL_S * SECOND_MS;
 /** How long a sign-in waits for the browser when the copy names no lifetime. */

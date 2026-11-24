@@ -583,7 +583,7 @@ export function playPeople(given: PeopleDeps) {
     const person = toPerson(user, local);
     if (!person || !isRecord(user) || !isRecord(body)) throw new GalleryError(PeopleRoute.user(id), HTTP_NOT_FOUND);
     const games = (Array.isArray(body.games) ? body.games : [])
-      .map((game) => toPlayGame(game, local))
+      .map((game) => toPlayGame(game, local, deps.buildHosts))
       .filter((game): game is PlayGame => game !== null);
     return { person, joinedAt: isoDate(user.createdAt), games, friends, players: countOf(body.players) };
   };

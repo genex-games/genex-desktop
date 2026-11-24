@@ -165,6 +165,34 @@ describe("Play gallery items", () => {
     assert.equal(author(), null, "while genex.games does not say, the generated avatar shows");
   });
 
+  it("keeps a native build only from the launch's build hosts: genex.games' CDN, or a stand's own", () => {
+    const build = (host: string) => ({
+      platform: "mac",
+      arch: "universal",
+      version: "1.0.0",
+      sizeBytes: 1_000,
+      installedBytes: 2_000,
+      sha256: "a".repeat(64),
+      url: `https://${host}/builds/lost-cathedral/1.0.0/mac.zip`,
+      entry: "Lost Cathedral.app",
+      publishedAt: "2026-11-24T10:00:00.000Z",
+    });
+    const stand: ReadonlySet<string> = new Set(["cdn.stand.example.test"]);
+    const onStand = item({ builds: [build("cdn.stand.example.test")], web: true });
+    const onGenex = item({ builds: [build("cdn.genex.technology")], web: true });
+    // The usual launch: genex.games' CDN only, so a stand's build is no build.
+    assert.equal(toPlayGame(onGenex)?.native?.builds.length, 1);
+    assert.equal(toPlayGame(onStand)?.native?.builds.length ?? 0, 0);
+    // A development profile on a stand: the stand's host only, never both.
+    assert.equal(toPlayGame(onStand, false, stand)?.native?.builds.length, 1);
+    assert.equal(toPlayGame(onGenex, false, stand)?.native?.builds.length ?? 0, 0);
+    assert.equal(
+      toFeedPage({ items: [onStand] }, false, undefined, undefined, stand).games[0]?.native?.builds.length,
+      1,
+    );
+    assert.equal(toSearchGame({ ...onStand, author: "Simeon M" }, false, stand)?.native?.builds.length, 1);
+  });
+
   it("refuses an item that does not name a game", () => {
     const bad: unknown[] = [
       null,
