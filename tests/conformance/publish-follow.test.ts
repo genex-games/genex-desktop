@@ -209,6 +209,28 @@ describe("the big Publish button's follow-through", () => {
     off();
   });
 
+  it("forgets what it asked the agent for once that game's chat stops working, and tells the card", () => {
+    const { follow } = studio();
+    let told = 0;
+    const off = follow.subscribe(() => {
+      told += 1;
+    });
+    follow.remember(GAME, [PublishTarget.Mac]);
+    follow.remember("another-game", [PublishTarget.Linux]);
+    // The ask is queued: the chat has not started on it, so nothing ended.
+    follow.workChanged(new Set());
+    assert.equal(follow.asked(GAME).size, 1, "a chat that never worked ended nothing");
+    follow.workChanged(new Set([GAME, "another-game"]));
+    assert.equal(follow.asked(GAME).size, 1, "the agent works on it");
+    const before = told;
+    // The agent's turn ended with no new app (it found the one in the folder current).
+    follow.workChanged(new Set(["another-game"]));
+    assert.equal(follow.asked(GAME).size, 0, "the row stops saying the agent builds it");
+    assert.equal(follow.asked("another-game").size, 1, "another game's agent still works");
+    assert.ok(told > before, "the card hears it");
+    off();
+  });
+
   it("remembers what the card asked the agent for, by game", () => {
     const { world, follow } = studio();
     follow.remember(GAME, [PublishTarget.Windows]);

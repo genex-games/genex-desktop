@@ -36,6 +36,7 @@ import {
 import {
   busyThreadIds,
   gameRemovedFromThreads,
+  gamesWorking,
   harnessDown,
   initialThreads,
   personFirstLabel,
@@ -370,6 +371,16 @@ describe("the threads store: the open game is derived from the open chat", () =>
       ],
       ["b"],
     );
+  });
+
+  it("names the games whose chat is working, each once and in order", () => {
+    const two = statusReported(loaded, {
+      "rift-chat": { status: "director", since: 2 },
+      "pond-chat": { status: "building", since: 1 },
+      studio: { status: "working", since: 1 },
+    });
+    assert.equal(gamesWorking(two), "pond\nrift", "the Studio chat has no game");
+    assert.equal(gamesWorking(statusReported(two, { "pond-chat": { status: "idle", since: 3 } })), "");
   });
 
   it("removing the stage's game opens home and forgets the return to it", () => {

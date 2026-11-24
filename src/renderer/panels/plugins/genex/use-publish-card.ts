@@ -13,7 +13,8 @@ import type { FactRef } from "../../../../shared/project-facts.ts";
 import { type PublishPlatform, PublishTarget } from "../../../../shared/publish-platforms.ts";
 import { composeInChat } from "../../../compose-in-chat.ts";
 import { hostPlatform } from "../../../platform.ts";
-import { useLibrary } from "../../../state/hooks.ts";
+import { useLibrary, useThreads } from "../../../state/hooks.ts";
+import { gamesWorking } from "../../../state/threads.ts";
 import {
   type CardError,
   CardErrorKind,
@@ -95,6 +96,18 @@ function useErrorBlocks(
     };
     return { ...block, onSend };
   });
+}
+
+/**
+ * Tell the Publish card's follow which games' chats are working, from the app's shell, so an app the
+ * card asked for and the agent never built stops saying Building once that agent is done, the
+ * dialog open or not.
+ */
+export function usePublishAsksFollowWork(): void {
+  const working = useThreads(gamesWorking);
+  useEffect(() => {
+    publishFollow.workChanged(new Set(working ? working.split("\n") : []));
+  }, [working]);
 }
 
 /**

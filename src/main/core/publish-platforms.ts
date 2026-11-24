@@ -6,6 +6,7 @@
  * changing. A ready app goes with Publish once the pinned Genex CLI can send apps (`publishedApps`).
  * Read from the folder only; nothing is built or uploaded here.
  */
+import type { Dirent } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { MINUTE_MS } from "../../shared/duration.ts";
@@ -51,6 +52,21 @@ const MESSAGE = { NoGame: "not a game in the library" } as const;
 /** Files whose changes are not the game's: notes an agent keeps, logs, and hidden files such as Finder's `.DS_Store`. */
 const NOT_SOURCE_FILE = /^\.|\.(md|log)$/i;
 
+/**
+ * The game's Genex cover where an agent keeps it, at the top of the game's folder: a `cover` folder,
+ * or a `cover` picture or clip with the note an engine writes beside it (Godot's `.import`, Unity's
+ * `.meta`). Studio keeps its own copy and Publish sends that one, so a cover made after a build
+ * changes nothing players get. Only at the top: a folder or file of that name deeper is the game's.
+ */
+const COVER_FOLDER = "cover";
+const COVER_FILE = /^cover\.(png|jpe?g|webm|mp4)(\.import|\.meta)?$/i;
+
+/** A folder's entries without the game's cover, which only the top of the game's folder (`top`) holds. */
+const withoutCover = (entries: Dirent[], top: boolean): Dirent[] =>
+  top
+    ? entries.filter((entry) => !(entry.isDirectory() ? entry.name === COVER_FOLDER : COVER_FILE.test(entry.name)))
+    : entries;
+
 /** Whether a folder holds the game's sources: not hidden, a cache, an export, a bundle or a found build's folder. */
 const isSource = (name: string, at: string, builds: ReadonlySet<string>): boolean =>
   !name.startsWith(".") && !NOT_SOURCE.has(name) && !name.endsWith(".app") && !builds.has(at);
@@ -74,7 +90,7 @@ export async function lastChange(root: string, builds: readonly FoundBuild[]): P
   for (let dir = pending.pop(); dir !== undefined && seen < CHANGE_ENTRIES_MAX; dir = pending.pop()) {
     const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
     seen += entries.length;
-    for (const entry of entries) {
+    for (const entry of withoutCover(entries, dir === root)) {
       const at = path.join(dir, entry.name);
       if (entry.isDirectory() && isSource(entry.name, at, inBuild)) pending.push(at);
       if (entry.isFile() && !NOT_SOURCE_FILE.test(entry.name))

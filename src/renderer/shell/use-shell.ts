@@ -14,6 +14,7 @@ import { useGameLinks } from "./use-game-links.ts";
 import { useNavigation } from "./use-navigation.ts";
 import { useShellChrome } from "./use-shell-chrome.ts";
 import { useShellNotices } from "./use-shell-notices.ts";
+import { usePublishAsksFollowWork } from "../panels/plugins/genex/use-publish-card.ts";
 import { useShellShortcuts } from "./use-shell-shortcuts.ts";
 import { useStageViews } from "./use-stage-views.ts";
 import { useUsageAnalytics } from "./use-usage-analytics.ts";
@@ -64,6 +65,7 @@ export function useShell() {
     chooseView: views.chooseStageView,
   });
   const firstAsks = useEventLog(useShallow((s) => firstAsksFromEvents(s.feed)));
+  usePublishAsksFollowWork();
   const notices = useShellNotices(
     app,
     { ready, dialogs, away: chrome.workspaceCovered, openPlay: chrome.setPlayOpen },

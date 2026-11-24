@@ -263,6 +263,8 @@ export interface CoreViews {
 
 /** The core's checks and actions the services share. */
 export interface CoreChecks {
+  /** A chat turn the harness ran ended: its end is written past `append`, so the core's step after a chat's work is told here. */
+  afterTurnEnds(threadId: string): void;
   assertHarnessRoot(project: string, root: string | null | undefined): Promise<string | null>;
   assertNoLinkBelow(base: string, target: string): Promise<void>;
   /** Abort the connector calls in scope: a Stop's (`stop`, the default), or a turn's end (`turn`), which a lead's call outlives. */

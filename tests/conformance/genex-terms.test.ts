@@ -9,12 +9,12 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import path from "node:path";
 import { mkdir } from "node:fs/promises";
-import { assetCliTimeoutMs, GenexTools } from "../../src/plugins/genex/adapter.ts";
+import { assetCliTimeoutMs, GenexTools, TERMS_RECHECK_MS } from "../../src/plugins/genex/adapter.ts";
 import { INVOCATION_BUDGET_MS } from "../../src/plugins/genex/cover.ts";
 import { createGenexAccount, type GenexAccountPort } from "../../src/main/core/genex-account.ts";
 import { finishedPayload, startedPayload } from "../../src/main/plugin-activity.ts";
 import { GenexAccountStatus } from "../../src/shared/genex-account.ts";
-import { GENEX_PLUGIN_ID, GenexBlocked } from "../../src/shared/genex.ts";
+import { GENEX_PLUGIN_ID, GenexBlocked, GenexHosting } from "../../src/shared/genex.ts";
 import { PluginAccountState } from "../../src/shared/plugins.ts";
 import { asksForGenexTerms } from "../../src/renderer/panels/plugins/genex/genex-terms.ts";
 import { ToolState } from "../../src/renderer/ui/tool-state.ts";
@@ -271,4 +271,30 @@ test("the chat offers Review under Genex's running or terms-blocked calls only",
   assert.equal(asksForGenexTerms([row({ source: genex, state: ToolState.Failed })]), false);
   assert.equal(asksForGenexTerms([row({ source: genex, state: ToolState.Succeeded })]), false);
   assert.equal(asksForGenexTerms([row({ source: { id: "unity", name: "Unity" }, state: ToolState.Running })]), false);
+});
+
+test("a publish record that says the terms wait asks Genex again when it is read, and drops them once accepted", async () => {
+  const root = await tmpDir("genex-terms-record-");
+  // The host's question and the record's first one are refused; the next one is accepted.
+  const api = await termsApi(2);
+  try {
+    let now = Date.parse("2026-11-24T10:00:00.000Z");
+    const { tools } = await signedInTools(root, api.api, { now: () => now });
+    assert.deepEqual(await tools.host("game"), { hosting: GenexHosting.TermsPending });
+    const asked = () => api.calls.filter((call) => call === "GET /api/legal/status").length;
+    assert.equal(asked(), 1);
+
+    assert.equal((await tools.publishStatus("game")).terms?.accepted, false, "Genex still says they wait");
+    assert.equal(asked(), 2, "the record's read asked Genex");
+    assert.equal((await tools.publishStatus("game")).terms?.accepted, false);
+    assert.equal(asked(), 2, "a read right after it asks nothing more");
+
+    now += TERMS_RECHECK_MS;
+    assert.equal((await tools.publishStatus("game")).terms?.accepted, true, "the person accepted in the browser");
+    assert.equal(asked(), 3);
+    assert.equal((await tools.publishStatus("game")).terms?.accepted, true);
+    assert.equal(asked(), 3, "accepted terms are kept, and cost no more questions");
+  } finally {
+    await api.close();
+  }
 });

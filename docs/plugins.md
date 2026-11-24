@@ -3890,7 +3890,10 @@ Genex:
   shows offline after two; signed out reads nothing; a game whose publish runs is skipped. Each
   change is one host-written `genex_review` record in the game's chat, then told keys go back to
   `review.json`, so a restart never repeats one and a decision made while Studio was closed is told
-  once. Genex does not check public games again: the sweep only asks what it already decided. A
+  once. A first read of a game tells only what needs the person, and what Genex did with the apps
+  this Studio's own publish just sent (`sent`): a check that answers before the first read is still
+  told as live, an app that was live before Studio read the game is not. Genex does not check public
+  games again: the sweep only asks what it already decided. A
   fixture profile reads nothing (`genexReviewReads: false`) and answers the kept record.
   The Publish dialog of a game with apps shows Prepare · Upload · Check · Go live with the check's
   clock from `sentAt` (slow line at 15 min), the chips In review, Not approved and Taken down, and the
