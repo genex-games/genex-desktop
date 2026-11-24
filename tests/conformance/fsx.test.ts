@@ -242,9 +242,11 @@ it("createFileInDir makes a new file only: never over one there, never through a
   const swapped = path.join(root, "swapped");
   await mkdir(swapped);
   await assert.rejects(
-    createFileInDir(swapped, "b.txt", "planted", async () => {
-      await rename(swapped, path.join(root, "swapped-old"));
-      await symlink(outside, swapped);
+    createFileInDir(swapped, "b.txt", "planted", {
+      between: async () => {
+        await rename(swapped, path.join(root, "swapped-old"));
+        await symlink(outside, swapped);
+      },
     }),
     { code: "ELOOP" },
   );

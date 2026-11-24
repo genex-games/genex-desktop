@@ -15,7 +15,7 @@ import { EngineStatusCode } from "../../src/shared/engine-descriptor.ts";
 import { PermissionMode } from "../../src/shared/permissions.ts";
 import { EngineId } from "../../src/shared/providers.ts";
 import { vendorEnv } from "../../src/substrate/child-env.ts";
-import { antigravityHome } from "../../src/substrate/credential-homes.ts";
+import { ANTIGRAVITY_SIGN_IN_FILE, antigravityAppData } from "../../src/substrate/credential-homes.ts";
 import {
   AntigravityEngine,
   type AntigravityInvocation,
@@ -35,8 +35,8 @@ const SMALL_MODEL = "gemini-3.8-flash-low";
 /** What the build is asked to write in its folder, and outside it. */
 const PROOF = { file: "antigravity-proof.txt", text: "ok" } as const;
 
-/** The file the CLI keeps its sign-in in when the Keychain is out of its reach, as in every sandbox. */
-const SIGN_IN_FILE = path.join(antigravityHome(), "antigravity-cli", "antigravity-oauth-token");
+/** The file Genex's CLI keeps its sign-in in (its own app data folder), the Keychain out of its reach as in every sandbox. */
+const SIGN_IN_FILE = path.join(antigravityAppData(), ANTIGRAVITY_SIGN_IN_FILE);
 /** The hosts a session might need at the least, to learn whether `*.googleapis.com` can be narrowed. */
 const NARROW_HOSTS = [
   "cloudcode-pa.googleapis.com",

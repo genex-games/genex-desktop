@@ -90,7 +90,15 @@ import {
 } from "../spawn.ts";
 import { childEnv, vendorEnv } from "../child-env.ts";
 import { StudioPlatform } from "../../shared/boot.ts";
-import { antigravityHome, antigravityHomes, credentialHomes } from "../credential-homes.ts";
+import {
+  ANTIGRAVITY_SIGN_IN_FILE,
+  AntigravityAppData,
+  antigravityAppData,
+  antigravityHome,
+  antigravityHomes,
+  credentialHomes,
+} from "../credential-homes.ts";
+import { createFileInDir, ensureDirBelow, readRegularFile } from "../fsx.ts";
 import { killProcessTree } from "../process-tree.ts";
 import { spawnCommand } from "../command-launch.ts";
 import { withEnvPath } from "../toolchain.ts";
@@ -193,7 +201,7 @@ const NOTICE_LOGS = 4;
 const NOTICE_LOG_BYTES = 2 * 1024 * 1024;
 /** A log written this long before the turn started may still be the turn's: the clocks are the same, the writes are not. */
 const NOTICE_LOG_SLACK_MS = 2 * SECOND_MS;
-/** The CLI's own logs of its sessions, as it names them in `~/.gemini/antigravity-cli/log`. */
+/** The CLI's own logs of its sessions, as it names them in the `log` folder of its app data (`~/.gemini/antigravity-genex`). */
 const SESSION_LOG = /^acp-server-.*\.log$/;
 
 /** The log's record of a session opening, as every engine's mirror spells it (`shared/context.ts` reads it). */
@@ -283,7 +291,9 @@ export interface AntigravityEngineOptions {
   now?: () => number;
   /** Test seam: the clock a turn's watch runs on. */
   schedule?: AntigravitySchedule;
-  /** Where the CLI writes its logs; its own folder in `~/.gemini` when not given. */
+  /** The person's home, whose `~/.gemini` holds the CLI's app data folders; the real one when not given. */
+  home?: string;
+  /** Where the CLI writes its logs; the `log` folder of Genex's app data when not given. */
   logDir?: string;
   /** Open a page in the person's browser: Google's page for verifying the account. Nothing opens when not given. */
   openPage?: (url: string) => unknown;
@@ -339,6 +349,9 @@ export class AntigravityEngine implements Engine {
   readonly #now: () => number;
   readonly #schedule: AntigravitySchedule;
   readonly #logDir: string;
+  readonly #home: string;
+  /** The sign-in carried over from the CLI's default folder, once per engine (`carryOverAntigravitySignIn`). */
+  #carried: Promise<unknown> | null = null;
   readonly #openPage: ((url: string) => unknown) | undefined;
   /** The verification pages already opened: a Loop that keeps failing opens each one once. */
   readonly #opened = new Set<string>();
@@ -362,7 +375,8 @@ export class AntigravityEngine implements Engine {
     this.#lockRecovery = options.lockRecovery;
     this.#now = options.now ?? Date.now;
     this.#schedule = options.schedule ?? realSchedule;
-    this.#logDir = options.logDir ?? path.join(antigravityHome(), "antigravity-cli", "log");
+    this.#home = options.home ?? os.homedir();
+    this.#logDir = options.logDir ?? path.join(antigravityAppData(this.#home), "log");
     this.#openPage = options.openPage;
   }
 
@@ -768,6 +782,8 @@ export class AntigravityEngine implements Engine {
     denyReads: string[],
   ): Promise<AntigravityInvocation> {
     const builds = ctx.access === AntigravityAccess.Build;
+    this.#carried ??= carryOverAntigravitySignIn(this.#home).catch(() => {});
+    await this.#carried;
     if (ctx.asPerson)
       return {
         argv: [...ANTIGRAVITY_SESSION_ARGV],
@@ -1093,6 +1109,39 @@ export function antigravityBoxEnv(
  */
 export function antigravityPersonEnv(): Record<string, string> {
   return { ...ANTIGRAVITY_FILE_STORE };
+}
+
+/** A sign-in file is a few kilobytes: anything bigger in its place is not one. */
+const SIGN_IN_FILE_MAX_BYTES = 64 * 1024;
+/** Only the person may read Genex's copy of the sign-in, as the CLI's own file. */
+const SIGN_IN_FILE_MODE = 0o600;
+
+/**
+ * Genex's sign-in as it was before Genex kept an app data folder of its own: the file in the CLI's
+ * default folder is copied into Genex's, once, so a person signed in to Antigravity in Genex stays
+ * signed in. Only when Genex's folder has no sign-in yet: a sign-in made in it is never replaced.
+ * The bytes are copied, never parsed; one an `agy` outside Genex already deleted leaves the person
+ * to sign in once more. A boxed session may write in `~/.gemini`, so nothing is copied through a
+ * link: neither a linked file or folder in the CLI's (it could name any file of the person's) nor
+ * a linked Genex folder. Answers whether it copied.
+ */
+export async function carryOverAntigravitySignIn(home: string = os.homedir()): Promise<boolean> {
+  const gemini = await realpath(antigravityHome(home)).catch(() => null);
+  if (!gemini) return false;
+  const cliDir = path.join(gemini, AntigravityAppData.Cli);
+  if ((await realpath(cliDir).catch(() => null)) !== cliDir) return false;
+  const bytes = await readRegularFile(path.join(cliDir, ANTIGRAVITY_SIGN_IN_FILE), SIGN_IN_FILE_MAX_BYTES).catch(
+    () => null,
+  );
+  if (!bytes) return false;
+  const own = await ensureDirBelow(gemini, [AntigravityAppData.Genex]);
+  try {
+    await createFileInDir(own, ANTIGRAVITY_SIGN_IN_FILE, bytes, { mode: SIGN_IN_FILE_MODE });
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw err;
+  }
 }
 
 /** A sign-in started in the sessions' box: how its terminal starts it, and what gives the box back. */

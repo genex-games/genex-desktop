@@ -8,7 +8,8 @@
  * cancelled turn's answer, a loaded session's replayed history and Google's quota error.
  */
 import assert from "node:assert/strict";
-import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, readdir, readFile, realpath, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -28,11 +29,14 @@ import {
   antigravityPersonEnv,
   antigravityProcess,
   antigravitySandbox,
+  carryOverAntigravitySignIn,
   failure,
   googleFailure,
 } from "../../src/substrate/engines/antigravity.ts";
 import {
   ANTIGRAVITY_HOSTS,
+  ANTIGRAVITY_LOGIN_ARGV,
+  ANTIGRAVITY_SESSION_ARGV,
   AntigravityNotice,
   antigravityModelId,
   antigravityNotice,
@@ -40,7 +44,14 @@ import {
   parseAntigravitySession,
   verificationPage,
 } from "../../src/substrate/engines/antigravity-cli.ts";
-import { antigravityHome, antigravityHomes, sandboxedCliHomes } from "../../src/substrate/credential-homes.ts";
+import {
+  ANTIGRAVITY_SIGN_IN_FILE,
+  AntigravityAppData,
+  antigravityAppData,
+  antigravityHome,
+  antigravityHomes,
+  sandboxedCliHomes,
+} from "../../src/substrate/credential-homes.ts";
 import { childEnv } from "../../src/substrate/child-env.ts";
 import { type DelegateEvent, DelegateEventType, EngineError } from "../../src/substrate/engines/types.ts";
 import { EngineStatusCode, LoginSource } from "../../src/shared/engine-descriptor.ts";
@@ -100,6 +111,8 @@ async function engineWith(
     schedule?: AntigravitySchedule;
     now?: () => number;
     logDir?: string;
+    /** The person's home, whose `.gemini` the engine carries a sign-in in: the test's own folder when not given. */
+    home?: string;
     openPage?: (url: string) => unknown;
   } = {},
 ) {
@@ -174,7 +187,8 @@ async function engineWith(
     resolveCli: async () => ({ ready: true, path: "/Users/me/.local/bin/agy", version: "1.5.7", detail: "ok" }),
     ...(options.schedule ? { schedule: options.schedule } : {}),
     ...(options.now ? { now: options.now } : {}),
-    logDir: options.logDir ?? path.join(root, "agy-log"),
+    home: options.home ?? root,
+    ...(options.logDir ? { logDir: options.logDir } : {}),
     ...(options.openPage ? { openPage: options.openPage } : {}),
   });
   return { engine, agents, root };
@@ -460,7 +474,8 @@ describe("an Antigravity build", () => {
     await engine.delegate({ cwd, prompt: "go", denyReads: ["/Users/me/private"] });
     const invocation = agents[0]?.invocation;
     assert.ok(invocation);
-    assert.deepEqual(invocation.argv, ["acp"]);
+    // Flipped (#870): Genex's own app data folder, never the CLI's default one.
+    assert.deepEqual(invocation.argv, ["acp", "--app-data-dir", "antigravity-genex"]);
     assert.equal(invocation.cwd, cwd);
     assert.deepEqual(invocation.domains, [...ANTIGRAVITY_HOSTS]);
     assert.ok(boxOf(invocation).writableRoots.includes(cwd));
@@ -1053,5 +1068,116 @@ describe("Google's refusals the CLI writes as a turn's reply", () => {
       antigravityPersonEnv(),
       "never the Keychain, which may hold another Google account",
     );
+  });
+});
+
+/** A home with the CLI's default folder holding `token` as its sign-in file. */
+async function homeWith(token: string | null = "signed-in"): Promise<string> {
+  const home = await realpath(await tmpDir("antigravity-home-"));
+  await mkdir(antigravityAppData(home, AntigravityAppData.Cli), { recursive: true });
+  if (token !== null)
+    await writeFile(path.join(antigravityAppData(home, AntigravityAppData.Cli), ANTIGRAVITY_SIGN_IN_FILE), token);
+  return home;
+}
+
+/** Genex's own copy of the sign-in in `home`. */
+const genexFile = (home: string) => path.join(antigravityAppData(home), ANTIGRAVITY_SIGN_IN_FILE);
+
+/** What a session that may write in `~/.gemini` could plant in the CLI's folder, by name. */
+function plantsBeside(secret: string, outside: string): ReadonlyArray<[string, (home: string) => Promise<void>]> {
+  return [
+    [
+      "the sign-in file is a link to another file",
+      async (home) => {
+        await symlink(secret, path.join(antigravityAppData(home, AntigravityAppData.Cli), ANTIGRAVITY_SIGN_IN_FILE));
+      },
+    ],
+    [
+      "the CLI's folder is a link to another folder",
+      async (home) => {
+        await mkdir(path.join(outside, "cli"), { recursive: true });
+        await writeFile(path.join(outside, "cli", ANTIGRAVITY_SIGN_IN_FILE), "elsewhere");
+        await symlink(path.join(outside, "cli"), antigravityAppData(home, AntigravityAppData.Cli));
+      },
+    ],
+    [
+      "the sign-in file is a FIFO, which would hold the read open",
+      async (home) => {
+        execFileSync("mkfifo", [path.join(antigravityAppData(home, AntigravityAppData.Cli), ANTIGRAVITY_SIGN_IN_FILE)]);
+      },
+    ],
+  ];
+}
+
+describe("Antigravity's own app data folder (#870)", () => {
+  it("every `agy acp` Genex starts keeps to Genex's folder: the sign-in, each session, a Bypass build", async () => {
+    const own = ["--app-data-dir", AntigravityAppData.Genex];
+    assert.deepEqual(ANTIGRAVITY_LOGIN_ARGV, ["acp", "--login", ...own]);
+    assert.deepEqual(ANTIGRAVITY_SESSION_ARGV, ["acp", ...own]);
+    assert.equal(antigravityAppData("/Users/me"), path.join("/Users/me", ".gemini", "antigravity-genex"));
+    const { engine, agents } = await engineWith();
+    const bypass = { mode: PermissionMode.Bypass, ask: async () => ({ allow: true }) };
+    await engine.delegate({ cwd: await game(), prompt: "go", permissions: bypass as never });
+    assert.ok(agents.length > 0);
+    for (const agent of agents) assert.deepEqual(agent.invocation.argv, ["acp", ...own]);
+    // Still inside the sandbox's own folder: the sign-in file is renewed there.
+    assert.ok(antigravityHomes("/Users/me").some((dir) => antigravityAppData("/Users/me").startsWith(dir + path.sep)));
+  });
+
+  it("carries the sign-in Genex kept in the CLI's folder over once, private, and never over its own", async () => {
+    const home = await homeWith("old-sign-in");
+    assert.equal(await carryOverAntigravitySignIn(home), true);
+    assert.equal(await readFile(genexFile(home), "utf8"), "old-sign-in");
+    if (process.platform !== "win32") assert.equal((await stat(genexFile(home))).mode & 0o777, 0o600);
+    await writeFile(path.join(antigravityAppData(home, AntigravityAppData.Cli), ANTIGRAVITY_SIGN_IN_FILE), "outside");
+    assert.equal(await carryOverAntigravitySignIn(home), false, "a sign-in in Genex's folder is never replaced");
+    assert.equal(await readFile(genexFile(home), "utf8"), "old-sign-in");
+    const none = await homeWith(null);
+    assert.equal(await carryOverAntigravitySignIn(none), false, "nothing to carry: the person signs in once");
+    assert.equal(await stat(antigravityAppData(none)).catch(() => null), null, "and nothing is made");
+    const empty = await realpath(await tmpDir("antigravity-home-"));
+    assert.equal(await carryOverAntigravitySignIn(empty), false, "no `.gemini` at all");
+  });
+
+  it("copies nothing through a link a session could plant in `~/.gemini`", {
+    skip: process.platform === "win32" ? "links need privileges on Windows" : false,
+  }, async () => {
+    const outside = await realpath(await tmpDir("antigravity-outside-"));
+    const secret = path.join(outside, "id_ed25519");
+    await writeFile(secret, "private key");
+    for (const [name, plant] of plantsBeside(secret, outside)) {
+      const home = await realpath(await tmpDir("antigravity-home-"));
+      await mkdir(antigravityHome(home), { recursive: true });
+      if (!name.startsWith("the CLI's folder")) await mkdir(antigravityAppData(home, AntigravityAppData.Cli));
+      await plant(home);
+      assert.equal(await carryOverAntigravitySignIn(home), false, name);
+      assert.equal(await stat(genexFile(home)).catch(() => null), null, `${name}: nothing copied`);
+    }
+    const linked = await homeWith("old-sign-in");
+    const target = path.join(outside, "genex-elsewhere");
+    await mkdir(target);
+    await symlink(target, antigravityAppData(linked));
+    await assert.rejects(carryOverAntigravitySignIn(linked), { code: "ELOOP" }, "Genex's folder is a link");
+    assert.deepEqual(await readdir(target), [], "nothing written through it");
+  });
+
+  it("the engine carries the sign-in over before its first session, and reads Google's page from Genex's logs", async () => {
+    const home = await homeWith("old-sign-in");
+    const recorded = await json("antigravity-verification-required-1.5.9.json");
+    const logs = path.join(antigravityAppData(home), "log");
+    const prompt: Script["prompt"] = async (message, agent) => {
+      await mkdir(logs, { recursive: true });
+      await writeFile(path.join(logs, "acp-server-20261124_090000-1.log"), String(recorded.log));
+      agent.say({
+        method: AcpMethod.SessionUpdate,
+        params: { sessionId: (message.params as Json).sessionId, update: recorded.update },
+      });
+      return recorded.answer as Json;
+    };
+    const opened: string[] = [];
+    const { engine } = await engineWith({ prompt }, { home, openPage: (url) => opened.push(url) });
+    await engine.delegate({ cwd: await game(), prompt: "make pong" });
+    assert.equal(await readFile(genexFile(home), "utf8"), "old-sign-in", "carried over before the session");
+    assert.equal(opened.length, 1, "Google's page, from the log in Genex's own folder");
   });
 });

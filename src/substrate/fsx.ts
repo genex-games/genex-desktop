@@ -161,20 +161,28 @@ export async function writeFileInDir(
   }
 }
 
+/** How {@link createFileInDir} makes its file. */
+export interface CreateFileOptions {
+  /** The new file's permissions, before the umask: everyone may read it when not given. */
+  mode?: number;
+  /** Runs before the open: a test's swap. */
+  between?: () => Promise<void>;
+}
+
 /**
  * Create `name` in `dir` (a folder {@link ensureDirBelow} made) and write `data`, refusing a name
  * already there (a file or a link: EEXIST) and a `dir` swapped for a link after its check (ELOOP,
- * the file it made through the link removed again). `between` runs before the open: a test's swap.
+ * the file it made through the link removed again).
  */
 export async function createFileInDir(
   dir: string,
   name: string,
   data: string | Uint8Array,
-  between?: () => Promise<void>,
+  options: CreateFileOptions = {},
 ): Promise<void> {
-  await between?.();
+  await options.between?.();
   const file = path.join(dir, name);
-  const handle = await openNoFollow(file, FS.O_WRONLY | FS.O_CREAT | FS.O_EXCL, 0o666);
+  const handle = await openNoFollow(file, FS.O_WRONLY | FS.O_CREAT | FS.O_EXCL, options.mode ?? 0o666);
   let placed = false;
   try {
     placed = (await realpath(dir).catch(() => null)) === dir;
