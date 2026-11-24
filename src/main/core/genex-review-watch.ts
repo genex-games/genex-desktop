@@ -60,6 +60,8 @@ const REVIEW_PERSON_MS = 10 * MINUTE_MS;
 const REVIEW_BACKOFF_MAX_MS = 15 * MINUTE_MS;
 /** A game whose publish runs is asked again this soon. */
 const REVIEW_BUSY_MS = 30 * SECOND_MS;
+/** How far Genex's clock may run behind this computer's when a decision is matched to Studio's own send. */
+const REVIEW_CLOCK_SLACK_MS = 5 * MINUTE_MS;
 /** How many games are read at once: one, so one CLI or API read runs at a time. */
 export const REVIEW_READS_AT_ONCE = 1;
 
@@ -87,6 +89,11 @@ export interface ReviewWatch {
   focus(): void;
   /** Read `project` again now: an apps publish ended, a request went, Publish opened. */
   refresh(project: string): void;
+  /**
+   * Studio sends `project`'s apps now: read it as {@link ReviewWatch.refresh} does, and what Genex
+   * decides of them from here on is news even when the game was never read before.
+   */
+  sent(project: string): void;
 }
 
 /** One game's place in the watch. */
@@ -99,6 +106,8 @@ interface Watched {
   backoff: number | null;
   /** Its problem as last told to the window. */
   problem: GenexReviewReadProblem | undefined;
+  /** When Studio last sent its apps, until a read of it came back: what Genex decided since is news. */
+  sentAt?: number;
 }
 
 /** The game's name and link, as the records carry them. */
@@ -215,26 +224,40 @@ function takedownRecord(takedown: GenexTakedown, before: string | undefined, nam
   return { ...names, change: GenexReviewChange.Requested, ...things, requested: true, at };
 }
 
+/** Whether Genex sent or decided `app` since Studio sent the game's apps at `sentAt`: its own send's news. */
+function sinceSent(app: GenexReviewApp, sentAt: number | undefined): boolean {
+  if (sentAt === undefined) return false;
+  const moved = Date.parse(app.decidedAt ?? app.sentAt ?? "");
+  return Number.isFinite(moved) && moved >= sentAt - REVIEW_CLOCK_SLACK_MS;
+}
+
 /**
  * The records for what changed between what was told and Genex's `record`, and what is told once
- * they are written. A first read (nothing told yet) tells only what needs the person.
+ * they are written. A first read (nothing told yet) tells only what needs the person, and what Genex
+ * did with the apps Studio itself sent at `sentAt`: an app that was live before Studio ever read the
+ * game is no news, one its own publish just made live is.
  */
 export function reviewChanges(
   told: GenexReviewTold | null,
   record: GenexReviewRecord,
   now: number,
   names: GameNames,
+  sentAt?: number,
 ): { records: GenexReviewPayload[]; told: GenexReviewTold } {
   const keys = reviewKeys(record);
   const before = told?.keys ?? {};
   const at = new Date(now).toISOString();
   const records: GenexReviewPayload[] = [];
+  const own = new Set<GenexReviewPayload>();
   for (const app of record.apps) {
     const key = appKey(app);
     if (before[key] === keys[key]) continue;
     const was = toldAppOf(before[key]);
     const change = appChange(app, was);
-    if (change) records.push(appRecord(app, change, was, names, at));
+    if (!change) continue;
+    const said = appRecord(app, change, was, names, at);
+    records.push(said);
+    if (sinceSent(app, sentAt)) own.add(said);
   }
   const takedown = record.takedown;
   if (takedown && before[TAKEDOWN_KEY] !== keys[TAKEDOWN_KEY])
@@ -243,7 +266,7 @@ export function reviewChanges(
     const asked = toldTakedownRequest(before[TAKEDOWN_KEY]) === GenexHumanReview.Requested;
     records.push({ ...names, change: GenexReviewChange.Restored, ...(asked ? { requested: true } : {}), at });
   }
-  const shown = told ? records : records.filter((one) => TOLD_UNSEEN.has(one.change));
+  const shown = told ? records : records.filter((one) => TOLD_UNSEEN.has(one.change) || own.has(one));
   return { records: shown, told: { fingerprint: reviewFingerprint(record), keys } };
 }
 
@@ -251,10 +274,15 @@ export function reviewChanges(
  * Tell the records of what changed since the host last told, then keep what was told. The window
  * hears of every change, even one with no record (a first read): its sidebar line reads it.
  */
-async function tellChanges(deps: ReviewWatchDeps, project: string, status: GenexReviewStatus): Promise<void> {
+async function tellChanges(
+  deps: ReviewWatchDeps,
+  project: string,
+  status: GenexReviewStatus,
+  sentAt?: number,
+): Promise<void> {
   if (!status.record || status.told?.fingerprint === status.fingerprint) return;
   const names = { project, ...(await deps.game?.(project).catch(() => ({}))) };
-  const { records, told } = reviewChanges(status.told, status.record, deps.now(), names);
+  const { records, told } = reviewChanges(status.told, status.record, deps.now(), names, sentAt);
   if (records.length > 0) await deps.append(project, records);
   await deps.status(project, { told });
   deps.emit(project);
@@ -329,7 +357,11 @@ async function readGame(deps: ReviewWatchDeps, state: WatchState, project: strin
   const end = readEnd(status);
   planNext(game, end, status, deps.now());
   if (end === ReadEnd.SignedOut) state.signedOut = true;
-  if (end === ReadEnd.Back && status) await tellChanges(deps, project, status).catch(() => {});
+  if (end === ReadEnd.Back && status) {
+    await tellChanges(deps, project, status, game.sentAt).catch(() => {});
+    // Genex knows the game now: from here on what was told is the measure of what is news.
+    if (status.record) delete game.sentAt;
+  }
   if (status?.problem !== game.problem) {
     game.problem = status?.problem;
     deps.emit(project);
@@ -376,6 +408,15 @@ export function startReviewWatch(deps: ReviewWatchDeps): ReviewWatch {
       schedule();
     }
   };
+  const refresh = (project: string): void => {
+    if (state.stopped) return;
+    const game = entryOf(state, project);
+    game.due = deps.now();
+    game.polls = 0;
+    game.backoff = null;
+    state.signedOut = false;
+    schedule();
+  };
   schedule();
   return {
     stop() {
@@ -388,14 +429,11 @@ export function startReviewWatch(deps: ReviewWatchDeps): ReviewWatch {
       state.nextSweep = deps.now();
       schedule();
     },
-    refresh(project) {
+    refresh,
+    sent(project) {
       if (state.stopped) return;
-      const game = entryOf(state, project);
-      game.due = deps.now();
-      game.polls = 0;
-      game.backoff = null;
-      state.signedOut = false;
-      schedule();
+      entryOf(state, project).sentAt = deps.now();
+      refresh(project);
     },
   };
 }

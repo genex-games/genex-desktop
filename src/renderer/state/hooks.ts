@@ -11,6 +11,7 @@ import type { BootStore, BootStoreState } from "./boot.ts";
 import type { CommandRunsState } from "./command-runs.ts";
 import type { EnginesState } from "./engines.ts";
 import type { EventLogState } from "./event-log.ts";
+import type { GameAnalyticsState } from "./game-analytics.ts";
 import type { LaunchState } from "./launch.ts";
 import type { LayoutState } from "./layout.ts";
 import type { LibraryState } from "./library.ts";
@@ -43,6 +44,9 @@ export const useEngines = <T>(select: Selector<EnginesState, T>): T => useStore(
 export const usePlugins = <T>(select: Selector<PluginsState, T>): T => useStore(studio().plugins, select);
 export const usePlay = <T>(select: Selector<PlayState, T>): T => useStore(studio().play, select);
 export const usePeople = <T>(select: Selector<PeopleState, T>): T => useStore(studio().people, select);
+/** The analytics of the account's games as last read (`game-analytics.ts`). */
+export const useGameAnalytics = <T>(select: Selector<GameAnalyticsState, T>): T =>
+  useStore(studio().gameAnalytics, select);
 export const useItems = <T>(select: Selector<ItemsState, T>): T => useStore(studio().items, select);
 /** The sidebar's line under each game on Genex (`genex-review.ts`). */
 export const useGenexReviewLines = <T>(select: Selector<GenexReviewState, T>): T =>

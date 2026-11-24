@@ -13,6 +13,7 @@ import { fixtureCommentCount, fixtureCommentsAnswer } from "./fixture-comments.t
 import { categoriesShelf, PlayMobileSupport } from "../../shared/play-manage.ts";
 import { PlayShelf } from "../../shared/play.ts";
 import { fixtureCreatorAnswer } from "./fixture-creator.ts";
+import { createFixtureGameAnalytics } from "./fixture-game-analytics/index.ts";
 import { createFixtureManage } from "./fixture-manage.ts";
 import {
   type FixtureNative,
@@ -475,11 +476,19 @@ const catalog: FixtureCatalog = {
   games: (authorId) => listed().filter((game) => game.author.id === authorId),
 };
 
-/** The gallery's answers in a fixture launch, its people's (`fixture-people.ts`) and its numbers' (`fixture-creator.ts`). */
+/** The launch's game analytics: every analytics route of the account's own games, and what the launch saved. */
+const gameAnalytics = createFixtureGameAnalytics();
+
+/**
+ * The gallery's answers in a fixture launch, its people's (`fixture-people.ts`), its numbers'
+ * (`fixture-creator.ts`) and its games' analytics (`fixture-game-analytics/`).
+ */
 export const fixturePlayRequest: GalleryRequest = async (route, init) => {
   // The creator routes first: the account's stats live under `/api/users/me`, beside the people routes.
+  // A game's analytics before the card menu's routes, which sit under `/api/projects/` too.
   const people =
     fixtureCreatorAnswer(route, init, catalog) ??
+    gameAnalytics.answer(route, init, catalog) ??
     fixturePeopleAnswer(route, init, catalog) ??
     manage.answer(route, init);
   if (people) return people;

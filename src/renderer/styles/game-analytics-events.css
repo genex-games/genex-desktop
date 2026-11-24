@@ -1,0 +1,368 @@
+/* ── A game's analytics: Events ── */
+/* This report's own layout. The blocks it is built from (tiles, sections, charts, tables) are the
+   kit's, in game-analytics.css; colours are the stats tokens of people.css. */
+
+/* The strip above the list: whether events arrive, when the last came, how many there are, and the
+   way to the SDK tab at the row's end. */
+.game-analytics-events-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+  font-size: 13px;
+  line-height: 20px;
+}
+.game-analytics-events-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-weight: 500;
+}
+.game-analytics-events-faint {
+  color: var(--ink-3);
+}
+/* The dot repeats the words: lit while events arrive, grey when none came lately, hollow with none. */
+.game-analytics-events-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.game-analytics-events-dot[data-arrival="arriving"] {
+  background: var(--stats-up);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--stats-up) 20%, transparent);
+}
+.game-analytics-events-dot[data-arrival="quiet"] {
+  background: var(--ink-3);
+}
+.game-analytics-events-dot[data-arrival="none"] {
+  box-shadow: inset 0 0 0 1.5px var(--ink-3);
+}
+
+/* A text link: reads as the page's tabs do, quiet until hovered. */
+.game-analytics-events-link {
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+  transition: color var(--duration-quick);
+}
+.game-analytics-events-link:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 3px;
+}
+.game-analytics-events-link:focus-visible,
+.game-analytics-events-iconbutton:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+
+.game-analytics-events-strip > .game-analytics-events-link {
+  margin-inline-start: auto;
+}
+
+/* The list on the left, the event picked on the right; one under the other once the page is narrow. */
+.game-analytics-events-layout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 18px;
+}
+.game-analytics-events-listing {
+  display: flex;
+  flex: 1 1 360px;
+  flex-direction: column;
+  min-width: 0;
+}
+.game-analytics-events-detailing {
+  display: flex;
+  flex: 2 1 460px;
+  flex-direction: column;
+  min-width: 0;
+}
+.game-analytics-events-listing > .game-analytics-section,
+.game-analytics-events-detailing > .game-analytics-section {
+  min-width: 0;
+}
+
+/* The search box: the field of the Play dialogs. */
+.game-analytics-events-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding-inline: 12px;
+  border-radius: 8px;
+  background: var(--field);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  color: var(--ink-3);
+}
+.game-analytics-events-search:focus-within {
+  box-shadow: inset 0 0 0 1.5px var(--play-blue);
+}
+.game-analytics-events-search svg {
+  flex: none;
+}
+.game-analytics-events-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font: 13px / 20px var(--font-family-mono);
+}
+.game-analytics-events-search input::placeholder {
+  color: var(--ink-3);
+}
+
+/* A group of the list, and a block of the detail: a quiet title over what it holds. */
+.game-analytics-events-group,
+.game-analytics-events-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.game-analytics-events-subtitle {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.game-analytics-events-blockhead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+}
+.game-analytics-events-start {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+/* The event picked: its name, what it is for, and when it was first seen. */
+.game-analytics-events-detail {
+  gap: 18px;
+}
+.game-analytics-events-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.game-analytics-events-name,
+.game-analytics-events-funnelname {
+  margin: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.game-analytics-events-name {
+  font: 500 16px / 24px var(--font-family-mono);
+}
+.game-analytics-events-funnelname {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.game-analytics-events-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 6px;
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 20px;
+  text-wrap: pretty;
+}
+
+/* The saved funnels, ruled apart. */
+.game-analytics-events-funnels {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.game-analytics-events-funnels > li + li {
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.game-analytics-events-funnel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.game-analytics-events-funnelhead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+.game-analytics-events-funneltitle {
+  display: flex;
+  flex: 1 1 280px;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.game-analytics-events-ask {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.game-analytics-events-asktext {
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/* The form that makes a funnel, in place under the title. */
+.game-analytics-events-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+.game-analytics-events-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: 12px;
+}
+.game-analytics-events-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.game-analytics-events-label {
+  padding: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 16px;
+}
+.game-analytics-events-hint {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 20px;
+}
+.game-analytics-events-input {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding-inline: 12px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--field);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  color: var(--ink);
+  font: 13px / 20px var(--font-family-mono);
+}
+.game-analytics-events-input::placeholder {
+  color: var(--ink-3);
+}
+.game-analytics-events-input:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 1px;
+}
+.game-analytics-events-input[aria-invalid="true"] {
+  box-shadow: inset 0 0 0 1.5px var(--orange);
+}
+.game-analytics-events-problem {
+  margin: 0;
+  color: var(--stats-down);
+  font-size: 12.5px;
+  line-height: 16px;
+  text-wrap: pretty;
+}
+.game-analytics-events-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.game-analytics-events-steplist {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.game-analytics-events-step {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 32px;
+  gap: 8px;
+}
+.game-analytics-events-stepnumber {
+  padding-top: 22px;
+  color: var(--stats-ink);
+  font: 12px / 36px var(--font-family-mono);
+  white-space: nowrap;
+}
+.game-analytics-events-stepfields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+.game-analytics-events-iconbutton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 36px;
+  margin-top: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-quick),
+    color var(--duration-quick);
+}
+.game-analytics-events-iconbutton:hover:not(:disabled) {
+  background: var(--people-card-hover);
+  color: var(--ink);
+}
+.game-analytics-events-iconbutton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.game-analytics-events-addstep {
+  align-self: flex-start;
+}
+.game-analytics-events-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .game-analytics-events-link,
+  .game-analytics-events-iconbutton {
+    transition: none;
+  }
+}

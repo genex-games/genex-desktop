@@ -83,6 +83,7 @@ import {
   viewerReported,
 } from "./play.ts";
 import { createPeopleStore, type PeopleStore } from "./people.ts";
+import { createGameAnalyticsStore, type GameAnalyticsStore } from "./game-analytics.ts";
 import { createItemsStore, type ItemsStore, ItemsRead } from "./items.ts";
 import { createGenexReviewStore, type GenexReviewStore } from "./genex-review.ts";
 import { createPreviewAiStore, type PreviewAiStore } from "./preview-ai.ts";
@@ -161,6 +162,8 @@ export interface Studio {
   readonly play: PlayStore;
   /** Play's people: the Genex account, friends and profiles (`people.ts`). */
   readonly people: PeopleStore;
+  /** The analytics of the account's games: reports, campaign links, events status (`game-analytics.ts`). */
+  readonly gameAnalytics: GameAnalyticsStore;
   /** Create › Items: Browse, Selling and the presses on an item (`items.ts`). */
   readonly items: ItemsStore;
   /** The sidebar's line under each game on Genex: Public, In review, Taken down… (`genex-review.ts`). */
@@ -264,6 +267,7 @@ interface Stores {
   readonly plugins: PluginsStore;
   readonly play: PlayStore;
   readonly people: PeopleStore;
+  readonly gameAnalytics: GameAnalyticsStore;
   readonly items: ItemsStore;
   readonly genexReview: GenexReviewStore;
   readonly sharing: SharingStore;
@@ -281,12 +285,35 @@ interface Stores {
   readonly agentsStart: AgentsStartStore;
 }
 
-function createStores(
-  api: StudioApi,
-  storage: KeyValueStorage | null,
-  timers: StudioTimers,
-  visibility: VisibilitySource,
-): Stores {
+/** What the stores run on: the storage, the timers, whether the window shows, and the wall clock. */
+interface StoresHost {
+  storage: KeyValueStorage | null;
+  timers: StudioTimers;
+  visibility: VisibilitySource;
+  now: () => number;
+}
+
+/**
+ * The game analytics store, holding only the signed-in account's numbers: it starts on the account
+ * the people store remembers and is cleared the moment that account changes or signs out.
+ */
+function gameAnalyticsFor(api: StudioApi, people: PeopleStore, host: StoresHost): GameAnalyticsStore {
+  const { timers, visibility, now } = host;
+  const store = createGameAnalyticsStore(api, {
+    now,
+    setInterval: (run, ms) => timers.setInterval(run, ms),
+    clearInterval: (handle) => timers.clearInterval(handle),
+    hidden: () => visibility.hidden(),
+  });
+  store.accountChanged(people.getState().me?.id ?? null);
+  people.subscribe((state, before) => {
+    if (state.me?.id !== before.me?.id) store.accountChanged(state.me?.id ?? null);
+  });
+  return store;
+}
+
+function createStores(api: StudioApi, host: StoresHost): Stores {
+  const { storage, timers, visibility } = host;
   const publication = createPublicationBatch(unstable_batchedUpdates);
   const people = createPeopleStore(api, storage);
   return {
@@ -303,6 +330,7 @@ function createStores(
     // A change from a card's menu shows on a profile's cards too.
     play: createPlayStore(api, storage, Date.now, (gameId, next) => people.gameChanged(gameId, next)),
     people,
+    gameAnalytics: gameAnalyticsFor(api, people, host),
     items: createItemsStore(api, timers),
     genexReview: createGenexReviewStore(api),
     sharing: createSharingStore(api, timers),
@@ -783,7 +811,8 @@ export function createStudio(
   const storage = options.storage === undefined ? browserStorage() : options.storage;
   const timers = options.timers ?? browserTimers;
   const visibility = options.visibility ?? browserVisibility;
-  const stores = createStores(api, storage, timers, visibility);
+  const now = options.now ?? Date.now;
+  const stores = createStores(api, { storage, timers, visibility, now });
   const { session, threads, library } = stores;
   const notify: Notify = (text, tone = ToastTone.Info, code = null, channel = null) =>
     stores.toasts.notify(text, tone, code, channel);
@@ -794,7 +823,7 @@ export function createStudio(
   const follower = stageFollower(threads, storage);
   const ctx: StudioContext = {
     visibility,
-    now: options.now ?? Date.now,
+    now,
     api,
     stores,
     storage,

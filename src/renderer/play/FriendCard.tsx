@@ -13,6 +13,7 @@ import {
   type PlayFriendRequest,
   type PlayPerson,
 } from "../../shared/play-people.ts";
+import { GenexSurface } from "../../shared/game-analytics.ts";
 import { usePeople } from "../state/hooks.ts";
 import { studio } from "../state/studio.ts";
 import { Icon } from "../ui/icons.tsx";
@@ -44,7 +45,10 @@ export type FriendCardProps = (
 /** Join a friend: their game opens in the viewer, as a card would open it. */
 export function joinFriend(friend: PlayFriend): void {
   if (friend.playing)
-    void studio().play.open({ slug: friend.playing.slug, title: friend.playing.title, coverUrl: null });
+    void studio().play.open(
+      { slug: friend.playing.slug, title: friend.playing.title, coverUrl: null },
+      GenexSurface.Friends,
+    );
 }
 
 /** The line under a friend's name: how many games they made, when genex.games says. */

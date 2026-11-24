@@ -872,6 +872,7 @@ export class StudioCore {
         return core.planReviews;
       },
       assertHarnessRoot: (...args) => core.#assertHarnessRoot(...args),
+      afterTurnEnds: (threadId) => void core.#afterFixWork(threadId),
       assertNoLinkBelow: (...args) => core.#assertNoLinkBelow(...args),
       cancelConnectorCalls: (...args) => core.#cancelConnectorCalls(...args),
       capabilityFacts: (...args) => core.#connections.capabilityFacts(...args),
@@ -2172,7 +2173,7 @@ export class StudioCore {
    * publish runs, then follows what it sent through Genex's check, the dialog open or not.
    */
   genexReviewFollow(project: unknown): void {
-    if (typeof project === "string" && project) this.#reviewWatch?.refresh(project);
+    if (typeof project === "string" && project) this.#reviewWatch?.sent(project);
   }
 
   /**

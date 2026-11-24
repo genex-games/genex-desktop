@@ -1,0 +1,700 @@
+/* ── A game's analytics: the kit every report is drawn with ──────────────────────────────── */
+/* Tiles, sections, the segment switch, legends, the canvas charts' frame, the histogram, the heat
+   tables, the funnel, the bar list and the data table (`play/game-analytics/kit`). Colours are the
+   stats tokens of people.css (`--stats-*`, both themes); the selected look of a segment and of a
+   pressed tile is the app's own, in play.css. A report's own layout goes in its
+   game-analytics-<report>.css; the page's frame, header and tabs are in game-analytics-page.css. */
+
+/* ── Tiles: the Stats page's tile (people.css `.stats-tile`), and a pressable one ── */
+.game-analytics-tiles {
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+}
+.game-analytics-tile {
+  text-align: start;
+}
+/* A tile's number stands alone, and "5m 40s" or "3.8 s" keeps a plain space between number and unit. */
+.game-analytics-tile .stats-tile-value {
+  font-variant-numeric: normal;
+}
+button.game-analytics-tile {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: background-color var(--duration-quick);
+}
+button.game-analytics-tile:hover:not([aria-pressed="true"]) {
+  background: var(--people-card-hover);
+}
+button.game-analytics-tile:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+.game-analytics-tile .stats-tile-value[data-missing] {
+  color: var(--ink-3);
+}
+.game-analytics-tile-spark {
+  margin-top: auto;
+}
+/* A change in points or in a unit: good news in the up colour, bad news in the down colour, whichever
+   way the arrow points. */
+.game-analytics-delta[data-tone="good"] {
+  color: var(--stats-up);
+}
+.game-analytics-delta[data-tone="bad"] {
+  color: var(--stats-down);
+}
+/* A change whose direction is neither good nor bad news (an event a game sends) keeps its arrow and
+   sign in ink, Stats' own percentage mark included. */
+.game-analytics-neutral > .stats-change[data-change] {
+  color: var(--stats-ink);
+}
+
+/* ── A section of a report ── */
+.game-analytics-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 18px;
+  border-radius: 16px;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.game-analytics-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+.game-analytics-section-title {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.game-analytics-section-hint,
+.game-analytics-section-footnote {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 20px;
+  text-wrap: pretty;
+}
+.game-analytics-section-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-inline-start: auto;
+}
+.game-analytics-columns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+}
+.game-analytics-columns > * {
+  flex: 1 1 420px;
+  min-width: 0;
+}
+.game-analytics-empty {
+  margin: 0;
+  padding-block: 16px;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/* ── Small numbers in a row, and a list of terms ── */
+.game-analytics-ministats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  margin: 0;
+}
+.game-analytics-ministat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.game-analytics-ministat dt {
+  color: var(--stats-ink);
+  font: 12px / 16px var(--font-family-mono);
+}
+.game-analytics-ministat dd {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 26px;
+}
+.game-analytics-terms {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+.game-analytics-term {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.8fr) minmax(0, 2fr);
+  gap: 4px 16px;
+  padding-block: 9px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  line-height: 20px;
+}
+.game-analytics-term:first-child {
+  border-top: 0;
+}
+.game-analytics-term dt {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.game-analytics-terms[data-mono] dt {
+  font: 12px / 20px var(--font-family-mono);
+}
+.game-analytics-term dd {
+  margin: 0;
+  color: var(--ink-3);
+}
+
+/* ── The segment switch: the Stats period switch's size, in the same track (play.css) ── */
+.game-analytics-segments {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 10px;
+}
+.game-analytics-segment {
+  height: 28px;
+  padding-inline: 11px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-3);
+  font: 12px / 1 var(--font-family-mono);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--duration-quick);
+}
+.game-analytics-segment:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 1px;
+}
+
+/* ── Legends: a line's swatch is drawn as the line is, a series' as its fill ── */
+.game-analytics-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 0;
+  padding: 0;
+  color: var(--stats-ink);
+  font: 12px / 16px var(--font-family-mono);
+  list-style: none;
+}
+.game-analytics-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.game-analytics-swatch {
+  display: inline-block;
+  flex: none;
+}
+.game-analytics-swatch[data-line] {
+  width: 16px;
+  border-top: 2px solid var(--stats-line);
+}
+.game-analytics-swatch[data-line="before"] {
+  border-top: 2px dashed var(--stats-before);
+}
+.game-analytics-swatch[data-line="similar"] {
+  border-top: 2px dotted var(--stats-similar);
+}
+.game-analytics-swatch[data-series],
+.game-analytics-swatch[data-outline] {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+.game-analytics-swatch[data-series="1"] {
+  background: var(--stats-series-1);
+}
+.game-analytics-swatch[data-series="2"] {
+  background: var(--stats-series-2);
+}
+.game-analytics-swatch[data-series="3"] {
+  background: var(--stats-series-3);
+}
+.game-analytics-swatch[data-series="4"] {
+  background: var(--stats-series-4);
+}
+.game-analytics-swatch[data-series="5"] {
+  background: var(--stats-series-5);
+}
+.game-analytics-swatch[data-series="6"] {
+  background: var(--stats-series-6);
+}
+.game-analytics-swatch[data-series="rest"] {
+  background: var(--stats-series-rest);
+}
+.game-analytics-swatch[data-outline] {
+  box-shadow: inset 0 0 0 1.5px var(--stats-before);
+}
+
+/* ── The canvas charts: a legend, the plot the pointer and the arrow keys read, a hidden table ── */
+.game-analytics-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+}
+.game-analytics-chart > .game-analytics-legend {
+  justify-content: flex-end;
+}
+.game-analytics-plot {
+  border-radius: 8px;
+  cursor: crosshair;
+}
+.game-analytics-plot:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+.game-analytics-canvas {
+  display: block;
+  width: 100%;
+}
+
+/* ── The histogram: every bucket's value over its bar, its name under it ── */
+.game-analytics-histogram {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  font: 12px / 16px var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+  list-style: none;
+  text-align: center;
+}
+.game-analytics-bucket {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  height: 200px;
+}
+.game-analytics-bucket-value {
+  color: var(--ink);
+}
+.game-analytics-bucket-note,
+.game-analytics-bucket-label {
+  overflow: hidden;
+  color: var(--stats-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.game-analytics-bucket-bar {
+  display: block;
+  flex: none;
+  height: calc(var(--game-analytics-share) * 132px);
+  min-height: 2px;
+  border-radius: 4px 4px 0 0;
+  background: var(--stats-bar);
+}
+.game-analytics-bucket[data-peak] .game-analytics-bucket-bar {
+  background: var(--stats-line);
+}
+
+/* ── Heat tables: the weekday by hour heatmap and the retention triangle ── */
+.game-analytics-scroll {
+  overflow-x: auto;
+}
+.game-analytics-heatmap,
+.game-analytics-cohorts {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 3px;
+  font: 11px / 16px var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+}
+.game-analytics-heatmap th,
+.game-analytics-cohorts th {
+  padding: 0 2px;
+  color: var(--stats-ink);
+  font-weight: 400;
+  text-align: center;
+  white-space: nowrap;
+}
+.game-analytics-heatmap th[scope="row"],
+.game-analytics-cohorts th[scope="row"] {
+  padding-inline: 0 10px;
+  text-align: start;
+}
+/* The column that names the rows heads them from the start, as they read, and stays put while the
+   days scroll sideways under it; the page's colour covers the cells passing beneath, and the
+   spacing beside it. */
+.game-analytics-heatmap thead th:first-child,
+.game-analytics-cohorts thead th:first-child {
+  text-align: start;
+}
+.game-analytics-heatmap :is(thead th:first-child, th[scope="row"]),
+.game-analytics-cohorts :is(thead th:first-child, th[scope="row"]) {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: 1;
+  background: var(--page);
+  box-shadow: 3px 0 0 var(--page);
+}
+.game-analytics-cohorts th[data-align="end"] {
+  text-align: end;
+}
+/* A cell's tint is the heat colour at the cell's level (0.06 to 0.62); its number is always written. */
+.game-analytics-heat {
+  min-width: 34px;
+  height: 26px;
+  padding: 0 2px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--stats-heat) calc(var(--game-analytics-heat, 0) * 100%), transparent);
+  color: var(--ink);
+  text-align: center;
+}
+.game-analytics-heat[data-empty] {
+  background: none;
+}
+.game-analytics-cohorts th[scope="row"] {
+  color: var(--ink);
+  font: 13px / 20px var(--font-family-sans);
+  font-variant-numeric: normal;
+}
+.game-analytics-cohorts .game-analytics-heat {
+  min-width: 46px;
+  height: 30px;
+  font-size: 12px;
+}
+.game-analytics-cohort-size {
+  padding-inline: 8px 10px;
+  color: var(--stats-ink);
+  text-align: end;
+}
+.game-analytics-cohorts tr[data-summary] :is(th, td) {
+  font-weight: 500;
+}
+.game-analytics-flag {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-inline-start: 6px;
+  border-radius: 50%;
+  background: var(--stats-mark-campaign);
+  vertical-align: middle;
+}
+.game-analytics-heat-scale {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--stats-ink);
+  font: 11px / 16px var(--font-family-mono);
+}
+.game-analytics-heat-steps {
+  display: inline-flex;
+  gap: 3px;
+}
+.game-analytics-heat-steps > span {
+  width: 16px;
+  height: 10px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--stats-heat) var(--game-analytics-step), transparent);
+}
+.game-analytics-heat-steps > [data-step="1"] {
+  --game-analytics-step: 6%;
+}
+.game-analytics-heat-steps > [data-step="2"] {
+  --game-analytics-step: 25%;
+}
+.game-analytics-heat-steps > [data-step="3"] {
+  --game-analytics-step: 43%;
+}
+.game-analytics-heat-steps > [data-step="4"] {
+  --game-analytics-step: 62%;
+}
+
+/* ── The funnel: each step's count over a bar of its share of the first ── */
+.game-analytics-funnel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr));
+  gap: 16px 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* A step's five lines (name, count, bar, share that goes on, who leaves) sit on the funnel's rows, so
+   a name that wraps in one language (German's "An einem anderen Tag wiedergekommen") moves the
+   counts and bars of every step down with it instead of leaving one step lower than the rest. */
+.game-analytics-step {
+  display: grid;
+  grid-template-rows: subgrid;
+  grid-row: span 5;
+  row-gap: 6px;
+  min-width: 0;
+}
+.game-analytics-step-label {
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+.game-analytics-step-qualifier {
+  color: var(--stats-ink);
+  font: 12px / 18px var(--font-family-mono);
+}
+.game-analytics-step-count {
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 28px;
+  font-variant-numeric: tabular-nums;
+}
+.game-analytics-step-track {
+  display: flex;
+  align-items: flex-end;
+  height: 96px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--stats-track);
+}
+.game-analytics-step-bar {
+  display: block;
+  width: 100%;
+  height: calc(var(--game-analytics-share) * 100%);
+  min-height: 2px;
+  background: var(--stats-bar);
+}
+.game-analytics-step-onward,
+.game-analytics-step-lost {
+  font: 12px / 16px var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+}
+.game-analytics-step-onward {
+  color: var(--ink);
+}
+.game-analytics-step-lost {
+  color: var(--stats-ink);
+}
+
+/* ── The bar list: a name, a bar against the longest row, a value and a share, in shared columns ── */
+/* The names take the room they need, up to half the list, so a short name is never cut and a long
+   one is; the bars take the rest. */
+.game-analytics-barlist {
+  display: grid;
+  grid-template-columns: fit-content(50%) minmax(48px, 1fr) max-content max-content;
+  column-gap: 12px;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+  list-style: none;
+}
+.game-analytics-barlist-row {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
+  align-items: center;
+  min-height: 36px;
+}
+.game-analytics-barlist-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.game-analytics-barlist-label,
+.game-analytics-barlist-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.game-analytics-barlist-label {
+  color: var(--ink);
+}
+.game-analytics-barlist-detail {
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.game-analytics-barlist-value,
+.game-analytics-barlist-share {
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+.game-analytics-barlist-value {
+  color: var(--ink);
+}
+.game-analytics-barlist-share {
+  color: var(--stats-ink);
+}
+.game-analytics-track {
+  display: block;
+  flex: 1;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--stats-track);
+}
+.game-analytics-track-fill {
+  display: block;
+  width: calc(var(--game-analytics-share) * 100%);
+  height: 100%;
+  border-radius: 4px;
+  background: var(--stats-line);
+}
+
+/* ── The data table: rows on one grid (`--game-analytics-columns`), numbers at the end of their column ── */
+.game-analytics-table {
+  display: flex;
+  flex-direction: column;
+  min-width: min-content;
+}
+.game-analytics-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--game-analytics-columns);
+  align-items: center;
+  gap: 0 12px;
+  min-height: 40px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  line-height: 18px;
+}
+.game-analytics-row-head {
+  min-height: 0;
+  padding-block: 0 8px;
+  color: var(--stats-ink);
+  font: 12px / 16px var(--font-family-mono);
+}
+.game-analytics-row [data-align="end"] {
+  justify-content: flex-end;
+  text-align: end;
+}
+.game-analytics-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--ink);
+}
+.game-analytics-cell[data-align="end"] {
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.game-analytics-cell[data-quiet] {
+  color: var(--ink-3);
+}
+.game-analytics-cell-words {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.game-analytics-cell-text,
+.game-analytics-cell-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.game-analytics-cell[data-mono] .game-analytics-cell-text {
+  font: 12px / 18px var(--font-family-mono);
+}
+.game-analytics-cell-detail {
+  color: var(--ink-3);
+  font: 12px / 16px var(--font-family-mono);
+}
+/* A flagged number says so in a word; the colour only repeats it. */
+.game-analytics-cell-flag {
+  color: var(--stats-down);
+}
+.game-analytics-row[data-part] > :first-child {
+  padding-inline-start: 22px;
+  color: var(--ink-2);
+}
+.game-analytics-row[data-total] {
+  border-bottom: 0;
+  font-weight: 500;
+}
+.game-analytics-row[data-selected],
+.game-analytics-row:has(.game-analytics-cell-pick):hover {
+  background: var(--people-card-hover);
+}
+.game-analytics-row[data-selected] .game-analytics-cell-text {
+  font-weight: 500;
+}
+.game-analytics-expander {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-inline-start: -4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+/* A row with nothing inside, among rows that open: the button's room, so its name lines up with theirs. */
+.game-analytics-expander-space {
+  flex: none;
+  width: 20px;
+  margin-inline-start: -4px;
+}
+/* The button is small on the page and a comfortable target under the pointer. */
+.game-analytics-expander::before {
+  position: absolute;
+  inset: -8px;
+  content: "";
+}
+.game-analytics-expander:hover {
+  background: var(--people-card-hover);
+  color: var(--ink);
+}
+.game-analytics-expander:focus-visible,
+.game-analytics-cell-pick:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 1px;
+}
+.game-analytics-cell-pick {
+  display: flex;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+/* The whole row picks it. */
+.game-analytics-cell-pick::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button.game-analytics-tile,
+  .game-analytics-segment {
+    transition: none;
+  }
+}

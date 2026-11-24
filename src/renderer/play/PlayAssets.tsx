@@ -12,6 +12,7 @@ import { type AssetScope, LibraryKind } from "../../shared/asset-library.ts";
 import { GenexAccountStatus } from "../../shared/genex-account.ts";
 import type { GameProject } from "../../shared/game-project.ts";
 import { gameCoverUrl } from "../../shared/game-cover.ts";
+import { GenexSurface } from "../../shared/game-analytics.ts";
 import { PlayCategory, PlayShelf } from "../../shared/play.ts";
 import { useLibrary, usePeople, usePlay } from "../state/hooks.ts";
 import { feedOf } from "../state/play.ts";
@@ -197,11 +198,19 @@ function UseMenu({ tile }: { tile: AssetTile }): JSX.Element | null {
 }
 
 /** One asset: its square cover (a sound's drawing), its tag, Use on hover, its title and who made it. */
-const AssetTileView = memo(function AssetTileView({ tile }: { tile: AssetTile }): JSX.Element {
+const AssetTileView = memo(function AssetTileView({
+  tile,
+  surface,
+}: {
+  tile: AssetTile;
+  /** The place in Genex the tile is: a play it opens tells genex.games. */
+  surface: GenexSurface;
+}): JSX.Element {
   const { slug } = tile;
   const cover = useRef<HTMLDivElement>(null);
   const picture = useTilePicture(tile, cover);
-  const open = slug ? () => void studio().play.open({ slug, title: tile.title, coverUrl: tile.coverUrl }) : undefined;
+  const entry = slug ? { slug, title: tile.title, coverUrl: tile.coverUrl } : null;
+  const open = entry ? () => void studio().play.open(entry, surface) : undefined;
   return (
     <article className="play-asset" data-play-asset={tile.key} data-kind={tile.kind ?? undefined}>
       <div ref={cover} className="play-asset-cover">
@@ -239,12 +248,20 @@ function AssetTilePlaceholder(): JSX.Element {
   );
 }
 
-/** The grid of tiles, with the shapes of the ones still coming. */
-function AssetGrid({ tiles, placeholders }: { tiles: readonly AssetTile[]; placeholders: number }): JSX.Element {
+/** The grid of tiles, with the shapes of the ones still coming; a search's tiles are its place in Genex. */
+function AssetGrid({
+  tiles,
+  placeholders,
+  surface = GenexSurface.Feed,
+}: {
+  tiles: readonly AssetTile[];
+  placeholders: number;
+  surface?: GenexSurface;
+}): JSX.Element {
   return (
     <div className="play-asset-grid">
       {tiles.map((tile) => (
-        <AssetTileView key={tile.key} tile={tile} />
+        <AssetTileView key={tile.key} tile={tile} surface={surface} />
       ))}
       {Array.from({ length: placeholders }, (_, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: placeholders are identical and only counted
@@ -365,7 +382,7 @@ function SearchTiles({
   const waiting = search.status === FeedStatus.Loading && tiles.length === 0;
   return (
     <div aria-busy={search.status === FeedStatus.Loading}>
-      <AssetGrid tiles={tiles} placeholders={waiting ? PLACEHOLDERS : 0} />
+      <AssetGrid tiles={tiles} placeholders={waiting ? PLACEHOLDERS : 0} surface={GenexSurface.Search} />
     </div>
   );
 }

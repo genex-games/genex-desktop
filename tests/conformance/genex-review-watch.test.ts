@@ -321,6 +321,37 @@ describe("what the watch tells", () => {
     await time.advance(REVIEW_SWEEP_MS);
     assert.equal(appended.length, 2);
   });
+
+  it("tells an app Studio just sent as live when Genex decided before the watch first read the game", async () => {
+    // The game is new to Genex: nothing was ever read of it, so nothing was told.
+    const records: Record<string, GenexReviewRecord> = {};
+    const { time, plugin, appended, start } = watchOver(records);
+    const watch = start();
+    await time.advance(REVIEW_FIRST_SWEEP_MS);
+    plugin.publish("a", true);
+    watch.sent("a");
+    await time.advance(MINUTE_MS);
+    // The check answered within seconds: the first read after the publish already finds the app live,
+    // beside a Windows app that went live long before, from another computer.
+    records.a = recordOf([
+      app(GenexAppReview.Live, { sentAt: undefined, decidedAt: new Date(time.now()).toISOString() }),
+      app(GenexAppReview.Live, {
+        platform: "windows",
+        arch: "x64",
+        sentAt: undefined,
+        decidedAt: new Date(START - 30 * 24 * 60 * MINUTE_MS).toISOString(),
+      }),
+    ]);
+    plugin.publish("a", false);
+    await time.advance(30 * SECOND_MS);
+    assert.deepEqual(
+      appended.map((entry) => entry.records.map((record) => [record.change, record.app?.platform])),
+      [[[GenexReviewChange.Live, "mac"]]],
+      "the app this Studio sent is news; the one live before it watched is not",
+    );
+    await time.advance(REVIEW_SWEEP_MS);
+    assert.equal(appended.length, 1, "told once");
+  });
 });
 
 describe("the changes between what was told and what Genex says", () => {

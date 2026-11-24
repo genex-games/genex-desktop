@@ -65,6 +65,18 @@ import type {
 } from "./asset-library.ts";
 import type { HandleCheck, HandleSave } from "./handle.ts";
 import type { PlayStats, StatsPeriod } from "./play-stats.ts";
+import type {
+  AnalyticsRead,
+  CampaignLink,
+  CampaignTags,
+  EventFunnel,
+  EventFunnelDraft,
+  EventOrigin,
+  EventsStatus,
+  GameReportAnswer,
+  GameReportQuery,
+  GenexSurface,
+} from "./game-analytics.ts";
 import type { PerformanceMark } from "./performance.ts";
 import type { ComposerSendOptions } from "./composer.ts";
 import type {
@@ -634,10 +646,17 @@ export interface StudioApi {
   playRemixReady(slugs: string[]): Promise<Record<string, boolean>>;
   /** Play: players in each named game now; a game nobody counts is left out. */
   playOnline(slugs: string[]): Promise<Record<string, number>>;
-  /** Play: open a game full screen in the viewer, its bar showing `title`; how it goes arrives as `UiEvent.PlayViewer`. */
-  playOpen(slug: string, title: string): Promise<void>;
-  /** Play: a game's own page (a native game's, which has no web build to open): its card and what the page adds. */
-  playGame(slug: string): Promise<PlayGameDetail>;
+  /**
+   * Play: open a game full screen in the viewer, its bar showing `title`, led there from `surface`
+   * (Other when none is named); how it goes arrives as `UiEvent.PlayViewer`.
+   */
+  playOpen(slug: string, title: string, surface?: GenexSurface): Promise<void>;
+  /**
+   * Play: a game's own page (a native game's, which has no web build to open): its card and what the
+   * page adds. `shown` says the page is what Play shows now, so main may tell genex.games whether it
+   * offers this computer an install; a read for anything else (a Recent cover) leaves it out.
+   */
+  playGame(slug: string, shown?: boolean): Promise<PlayGameDetail>;
   /** Play: install a game's build for this computer; how it goes arrives as `UiEvent.PlayInstalls`. */
   playInstall(slug: string): Promise<void>;
   /** Play: stop a game's install, waiting or under way, or forget how a failed one ended. */
@@ -712,6 +731,20 @@ export interface StudioApi {
   playAvatarVariant(variant: number): Promise<PlayMe | null>;
   /** Play: the account's own stats for a period; null while genex.games has none to give. */
   playStats(days: StatsPeriod): Promise<PlayStats | null>;
+  /** Play: one report of the creator's own game over a period, or why genex.games has none to give. */
+  playGameReport(query: GameReportQuery): Promise<AnalyticsRead<GameReportAnswer>>;
+  /** Play: a game's own events as they arrive, from the published game or Studio's preview, for the SDK page. */
+  playGameEvents(slug: string, origin: EventOrigin): Promise<AnalyticsRead<EventsStatus>>;
+  /** Play: a game's saved campaign links, with what each brought over the period. */
+  playCampaignLinks(slug: string, days: StatsPeriod): Promise<AnalyticsRead<CampaignLink[]>>;
+  /** Play: save a campaign link for a game; the link as genex.games keeps it. Fails when it was refused. */
+  playCampaignLinkSave(slug: string, tags: CampaignTags): Promise<CampaignLink>;
+  /** Play: remove one of a game's saved campaign links. */
+  playCampaignLinkRemove(slug: string, id: string): Promise<void>;
+  /** Play: save a funnel over a game's events; the funnel with the players who reached each step. */
+  playFunnelSave(slug: string, draft: EventFunnelDraft): Promise<EventFunnel>;
+  /** Play: remove one of a game's saved funnels. */
+  playFunnelRemove(slug: string, id: string): Promise<void>;
   /** Play: the Top creators row; null while genex.games does not rank creators. */
   playCreators(): Promise<PlayCreator[] | null>;
   /** The Genex plugin's Credits tab: balance, plan, invite bonus, live prices and recent spends. */

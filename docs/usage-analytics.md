@@ -46,8 +46,10 @@ stops recording, opts out and resets the id.
 
 - **Screens**: `$pageview` per screen from the app's vocabularies (`renderer/analytics/screens.ts`:
   `/welcome/<step>`, `/home`, `/game/<view>`, `/harness`, `/plugins`, `/items`, `/play/<page>`,
-  `/settings/<section>`, `/search`, `/open-folder`, `/feedback`). The page hash names the screen
-  and every URL becomes it under `https://studio.invalid`.
+  `/play/game-analytics/<tab>`, `/settings/<section>`, `/search`, `/open-folder`, `/feedback`). The
+  page hash names the screen and every URL becomes it under `https://studio.invalid`. A game's
+  analytics page is the screen of its tab (`AnalyticsTab`), never of the game: its link, title and
+  numbers stay out.
 - **Clicks**: autocapture without text or attributes, rage and dead clicks, heatmaps.
 - **Product events**: one vocabulary per part of the app in `renderer/analytics/events/`
   (`launch`, `welcome`, `workspace`, `chat`, `builds`, `plugins`), with that part's pure
@@ -92,6 +94,8 @@ stops recording, opts out and resets the id.
   `assets_inventory_failed` says it as `code`, at the 1st, 2nd, 4th… failure in a row of its
   ten-second poll and at once when the why changes. One file Unity or a scanner holds open is left
   out of the read instead of failing it.
+  A game analytics save of a campaign link or a funnel that genex.games refuses because the game
+  keeps no more crosses as `AnalyticsSaveRefusal.Limit`; its form says to remove one first.
   Live's status (`previewLive`) names why its page did not load (`loadFailure`, a
   `LiveLoadFailure`: Chromium's error by kind, a page still loading after a minute, or the game's own
   build that failed or fell back to the last one that worked) and why its renderer went away
@@ -154,7 +158,10 @@ messages, streaming replies, questions, plans, file links (`[data-file-path]`) a
 marked `data-analytics-mask`. A component that shows a person's work or a name they chose
 inside a control marks its wrapper `data-analytics-mask`; pictures `data-analytics-block`; an
 app heading outside a control may opt in with `data-analytics-visible`. Pictures, canvases,
-frames, terminals and the file viewer are blocked and input is masked. `before_send` rewrites any
+frames, terminals and the file viewer are blocked and input is masked. A Stats row's game
+title is masked, and on a game's analytics page the game's title and link and the names inside its
+controls that the creator, the game or another site chose (campaign tags, sources and referrers,
+events, properties, funnels, items, versions, a level an insight quotes). `before_send` rewrites any
 `file://` address or home folder left in events and replay batches. In the PostHog project, turn
 on "Discard client IP data".
 

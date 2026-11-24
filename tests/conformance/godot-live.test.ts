@@ -10,7 +10,7 @@ import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
 import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
-import { mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -18,7 +18,10 @@ import type { PluginContext } from "../../src/plugin-sdk/index.d.ts";
 import { createGodotBackend, GodotTool } from "../../src/plugins/godot/backend.ts";
 import { systemEditorEnv } from "../../src/plugins/godot/editor.ts";
 import { liveEditor } from "../../src/plugins/godot/editor-bridge.ts";
-import { hasWebTemplate, templateVersion } from "../../src/plugins/godot/web-export.ts";
+import { ExportTemplate } from "../../src/plugins/godot/export-templates.ts";
+import { hasWebTemplate, templateVersion, webTemplates } from "../../src/plugins/godot/web-export.ts";
+import { findNativeBuilds } from "../../src/main/core/native-builds.ts";
+import { NativeArch, NativePlatform } from "../../src/shared/play-native.ts";
 import { findGodots, systemGodotEnv, usableGodot } from "../../src/plugins/godot/find-godot.ts";
 import { confinedRunner } from "../../src/plugins/godot/godot-run.ts";
 import { launchGameBridge } from "../../src/main/core/game-bridge-target.ts";
@@ -188,6 +191,37 @@ describe("the Godot plugin on this Mac's Godot", { skip: !LIVE, timeout: LIVE_TI
       "2",
     ]);
     assert.doesNotMatch(`${loaded.stdout}\n${loaded.stderr}`, /Corrupted|Couldn't load project data/);
+  });
+
+  it("exports a new game as a Mac app Publish finds: both processors, signed, and it starts", async (t) => {
+    const install = usableGodot(await findGodots(systemGodotEnv()));
+    assert.ok(install);
+    const template = path.join(webTemplates(systemGodotEnv().dataHome, install).folder, ExportTemplate.Mac);
+    if (!(await lstat(template).catch(() => null))?.isFile()) {
+      t.skip(`no Mac export template for Godot ${templateVersion(install.version)} on this Mac (125 MB to fetch)`);
+      return;
+    }
+    const { game, call } = await liveGame();
+    await call(GodotTool.NewGame, { template: "2d", name: "Live Probe" });
+    assert.match(
+      String(await call(GodotTool.AppExport, { platform: "mac" })),
+      /Exported the Mac app to godot\/Builds\/Mac\/LiveProbe\.app/,
+    );
+    const [build, ...others] = await findNativeBuilds(game);
+    assert.deepEqual(others, []);
+    assert.deepEqual(
+      [build?.platform, build?.arch, build?.entry],
+      [NativePlatform.Mac, NativeArch.Universal, "godot/Builds/Mac/LiveProbe.app"],
+    );
+    const app = path.join(game, "godot", "Builds", "Mac", "LiveProbe.app");
+    // macOS's own codesign reads the ad hoc signature Godot wrote: an unsigned arm64 program never starts.
+    await run("/usr/bin/codesign", ["--verify", "--deep", app]);
+    const started = await run(path.join(game, build?.program ?? ""), ["--headless", "--quit-after", "2"]);
+    assert.doesNotMatch(`${started.stdout}\n${started.stderr}`, /Corrupted|Couldn't load project data/);
+    // A second export replaces the app and adds no second preset.
+    assert.match(String(await call(GodotTool.AppExport, { platform: "mac" })), /Exported the Mac app/);
+    const presets = await readFile(path.join(game, "godot", "export_presets.cfg"), "utf8");
+    assert.equal(presets.split('name="Genex Mac"').length - 1, 1);
   });
 
   it("answers the installed version's API", async () => {

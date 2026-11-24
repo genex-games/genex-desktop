@@ -1,0 +1,67 @@
+/* ── A game's analytics: Acquisition ── */
+/* This report's own layout. The blocks it is built from (tiles, sections, charts, tables) are the
+   kit's, in game-analytics.css; colours are the stats tokens of people.css. */
+
+/* The switches at the end of a table's head: they wrap under each other on a narrow page. */
+.game-analytics-acquisition-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 12px;
+}
+
+/* The action that opens Campaign links: a small filled button, the look of a selected segment. */
+.game-analytics-acquisition-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding-inline: 12px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--people-card-hover);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--duration-quick);
+}
+.game-analytics-acquisition-action:hover {
+  background: color-mix(in srgb, var(--ink) 12%, var(--people-card-hover));
+}
+.game-analytics-acquisition-action:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+
+/* No campaign yet: what a link is, then the way to make one. */
+.game-analytics-acquisition-none {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.game-analytics-acquisition-none > .game-analytics-empty {
+  padding-block: 8px 0;
+}
+.game-analytics-acquisition-explain {
+  max-width: 64ch;
+  margin: 0 0 8px;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 20px;
+  text-wrap: pretty;
+}
+
+/* The campaigns' names are tags in the code face; the row that sums them is plain words. */
+[data-game-analytics-table="campaigns"] .game-analytics-row[data-total] .game-analytics-cell-text {
+  font: inherit;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .game-analytics-acquisition-action {
+    transition: none;
+  }
+}

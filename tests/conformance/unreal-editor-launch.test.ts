@@ -9,6 +9,7 @@
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { access, mkdir, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -3130,4 +3131,97 @@ describe("A hot-reloaded library is never trusted from", () => {
       assert.deepEqual([f.compiles, f.launched.length], [[], 1], "nothing was built, and Unreal opened");
       assert.deepEqual([await tree(path.dirname(f.drift)), await tree(outside)], witness);
     });
+});
+
+/** The multiplayer plugin's descriptor as an older Genex copied it into a game: it names Unreal 5.8.0. */
+const PINNED_MULTIPLAYER = `${JSON.stringify(
+  { FileVersion: 3, FriendlyName: "Genex Multiplayer", EngineVersion: "5.8.0", Installed: false },
+  null,
+  "\t",
+)}\n`;
+const multiplayerDescriptor = (file: string) =>
+  path.join(path.dirname(file), "Plugins", "GenexMultiplayer", "GenexMultiplayer.uplugin");
+const namesEngine = async (file: string) =>
+  "EngineVersion" in JSON.parse(await readFile(multiplayerDescriptor(file), "utf8"));
+
+/** The older copy of the plugin's descriptor in the project `file`. */
+async function olderMultiplayer(file: string): Promise<void> {
+  await mkdir(path.dirname(multiplayerDescriptor(file)), { recursive: true });
+  await writeFile(multiplayerDescriptor(file), PINNED_MULTIPLAYER);
+}
+
+describe("Open in Unreal with an older copy of Genex's multiplayer plugin in the game", () => {
+  /** Drift set up, holding the plugin as an older Genex copied it. */
+  async function olderCopy() {
+    const f = await launchFixture();
+    await f.act("setup", { project: f.drift });
+    await olderMultiplayer(f.drift);
+    return f;
+  }
+
+  it("takes the engine version out of the game's copy first, so Unreal doesn't stop to ask about it", async () => {
+    const f = await olderCopy();
+    const before = await tree(path.dirname(f.drift));
+    let pinnedAtLaunch: boolean | undefined;
+    f.outcome.onLaunch = () => {
+      pinnedAtLaunch = "EngineVersion" in JSON.parse(readFileSync(multiplayerDescriptor(f.drift), "utf8"));
+    };
+    await f.act("open-editor", { project: f.drift });
+    assert.equal(pinnedAtLaunch, false, "the descriptor was repaired before Unreal started");
+    assert.deepEqual(f.events, ["launch"], "no snapshot: nothing of the person's is replaced");
+    const after = await tree(path.dirname(f.drift));
+    const changed = Object.keys(after).filter((file) => after[file] !== before[file]);
+    assert.deepEqual(
+      [changed, Object.keys(after).length],
+      [["Plugins/GenexMultiplayer/GenexMultiplayer.uplugin"], Object.keys(before).length],
+    );
+  });
+
+  it("also when the Loop restarts Unreal, where nobody could answer the question", async () => {
+    const f = await olderCopy();
+    await f.linkGame("valley", f.drift);
+    f.outcome.onLaunch = () => {
+      f.live.running = true;
+      f.live.answering = true;
+    };
+    assert.deepEqual(await f.toolIn("valley", "reopen-editor"), { started: true });
+    let state: { reopening: { state: string; error?: string } } | undefined;
+    for (let tries = 0; tries < 100; tries++) {
+      state = (await f.toolIn("valley", "editor-state")) as typeof state;
+      if (state?.reopening.state !== "reopening") break;
+      await sleep(20);
+    }
+    assert.equal(state?.reopening.state, "done", state?.reopening.error);
+    assert.equal(await namesEngine(f.drift), false);
+    assert.deepEqual(f.events, ["launch"]);
+  });
+
+  it("never in a project Genex hasn't set up: it opens as it is", async () => {
+    const f = await launchFixture();
+    await olderMultiplayer(f.drift);
+    const witness = await tree(path.dirname(f.drift));
+    await f.act("open-editor", { project: f.drift });
+    assert.equal(f.launched.length, 1);
+    assert.deepEqual(await tree(path.dirname(f.drift)), witness);
+  });
+
+  it("never while this project's editor already answers: nothing is launched and nothing is written", async () => {
+    const f = await olderCopy();
+    f.live.running = true;
+    f.live.answering = true;
+    const witness = await tree(path.dirname(f.drift));
+    assert.equal((await f.act("open-editor", { project: f.drift })).launched, false);
+    assert.deepEqual(await tree(path.dirname(f.drift)), witness);
+  });
+
+  it("a copy it can't repair doesn't hold the Open back", { skip: LINKS }, async () => {
+    const f = await olderCopy();
+    const outside = path.join(f.root, "outside.uplugin");
+    await writeFile(outside, PINNED_MULTIPLAYER);
+    await rm(multiplayerDescriptor(f.drift));
+    await symlink(outside, multiplayerDescriptor(f.drift));
+    await f.act("open-editor", { project: f.drift });
+    assert.equal(f.launched.length, 1);
+    assert.equal(await readFile(outside, "utf8"), PINNED_MULTIPLAYER, "nothing is written through the link");
+  });
 });

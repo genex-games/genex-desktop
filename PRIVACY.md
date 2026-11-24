@@ -1,6 +1,6 @@
 # Desktop data and privacy
 
-Updated October 22, 2026. Contact: **team@genex.games**. This describes the desktop
+Updated November 17, 2026. Contact: **team@genex.games**. This describes the desktop
 application. Connected providers, plugins and the hosted Genex service have separate policies.
 
 ## Local storage
@@ -118,7 +118,9 @@ cdn.genex.technology, assets.genex.games, assets.genex.technology, api.genex.gam
 clip loads from cdn.genex.technology only while you rest the pointer on its card.
 
 Playing a game loads it from its own `https://<name>.genex.technology/` address, and genex.games
-counts the play. The game runs in Play's own storage, apart from your games and the rest of the
+counts the play. The address also tells genex.games that the game runs in the Genex app and which
+place in the app you opened it from: the feed, Featured, a search, a profile, a friend's game, or
+anywhere else. The game runs in Play's own storage, apart from your games and the rest of the
 app, where it keeps its saves; it may use only pointer lock, full screen and clipboard writes, and
 links that leave Genex games open in your browser (a coin purchase opens the app's own sheet
 instead). A game in voice chat gets a microphone the app controls: your microphone feeds it only
@@ -143,8 +145,21 @@ which game was played. genex.games counts each person once per game, as it count
 keeps each report with its time, as it does for a web play. Signed in, the report carries the
 account's token; signed out, or once genex.games no longer accepts the token, it carries a random
 id the app made for this computer instead. That id is kept in the app profile beside the installed
-games and stays the same until the profile is removed; it says nothing else about you or the
+games and stays the same until the profile is removed; the id itself says nothing about you or the
 computer.
+
+The app also tells the Genex API how a game's app fares on this computer, a moment at a time: that
+its page offered Install here, or could not (once per game each time the app starts); that you
+pressed Install; that the download finished; that the app was installed, or failed; that it
+opened; and that you removed it. Each report names the game, the moment, the computer's system in
+one word (a Mac with Apple silicon, an Intel Mac, Windows or Linux) and the app's version, and adds
+only what its moment needs: how many seconds the download took, a failure's code (such as not
+enough space), or why the page could offer nothing (a system too old, an Intel Mac, a Linux
+computer with an Arm processor, or another reason). Signed in, it carries the account's token;
+signed out, or once genex.games no longer accepts the token, the same random id as the play report.
+It never carries a file, a path, the game's name or anything about what the game is. An install you
+stop reports nothing more, and a report that fails is dropped; none of this holds up an install, a
+launch or a removal.
 
 A game's comments are read from the Genex API without a sign-in, a page at a time while you scroll
 them, with each writer's name and picture. Signed in, the app also sends the account's token to
@@ -177,10 +192,13 @@ page in your browser with your link filled in, and Share… hands the link to th
 neither sends anything until you post or choose an app there. A profile also reads that person's
 friends (yours first) and how many people played their games. Your own stats (plays and players
 per game per day, and who plays now) are read with the token only while your profile or the Stats
-page shows them, and only you see them. Top creators are read without a sign-in. Choosing your
-generated avatar or your photo, and Regenerate's new variant (a number), are sent with the token;
-the generated avatar itself is drawn in the app from your account id and that number and sends
-nothing. The Genex plugin's Credits tab reads, with the token,
+page shows them, and only you see them. So is each of your games' own analytics (its reports,
+campaign links and the state of its events), only while that game's page under Stats shows it; its
+SDK tab reads the state of the game's events again every few seconds while it is open. The campaign
+links and event funnels you save there are sent with the token. Top creators are read without a
+sign-in. Choosing your generated avatar or your photo, and Regenerate's new variant (a number), are
+sent with the token; the generated avatar itself is drawn in the app from your account id and that
+number and sends nothing. The Genex plugin's Credits tab reads, with the token,
 your balance, Pro allowance, invite bonus and last few spends, and the public price list; Get
 credits opens genex.games/plans in your browser. That an account has seen its avatar's welcome
 (and been asked for its nickname) stays in the app profile, as do the account last signed in (its
@@ -219,8 +237,9 @@ deletion are governed by the service, not by deletion of the desktop profile.
 
 ## Analytics and shared build metrics
 
-Apart from a downloaded game's play report (see Play) and the two consents below, Studio sends
-no usage analytics, session recordings or crash reports.
+Apart from what Play tells genex.games about the games you play (where in the app a game was
+opened from, a downloaded game's play, and how its install went; see Play) and the two consents
+below, Studio sends no usage analytics, session recordings or crash reports.
 
 **Share usage data** is asked once, before anything is sent: over the first launch's welcome,
 or at the first launch of a version that has it. **Don't share** and **Share** weigh the same;

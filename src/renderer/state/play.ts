@@ -8,6 +8,7 @@
 import { createStore, type StoreApi } from "zustand/vanilla";
 import type { LibraryPage, LibraryQuery } from "../../shared/asset-library.ts";
 import { MINUTE_MS } from "../../shared/duration.ts";
+import type { GenexSurface } from "../../shared/game-analytics.ts";
 import type { GenexCatalogItem } from "../../shared/mention-corpus.ts";
 import {
   PLAY_SHELF_TABS,
@@ -33,6 +34,7 @@ import {
   NO_INSTALLS,
   SessionAction,
 } from "../../shared/play-native.ts";
+import { type AnalyticsTab, DEFAULT_ANALYTICS_TAB } from "../play/game-analytics/tabs.ts";
 import { opensPage } from "../play/native-model.ts";
 import { changedGame } from "../play/card-menu/manage-model.ts";
 import {
@@ -67,7 +69,7 @@ export const FEED_STALE_MS = MINUTE_MS;
 
 /**
  * Which page Play shows: a shelf's dashboard, the Friends page, someone's profile, the account's
- * stats, or a native game's own page.
+ * stats, a native game's own page, or the analytics of one of the account's games.
  */
 export const PlayPage = {
   Shelf: "shelf",
@@ -75,6 +77,7 @@ export const PlayPage = {
   Profile: "profile",
   Stats: "stats",
   Game: "game",
+  GameAnalytics: "game-analytics",
 } as const;
 export type PlayPage = (typeof PlayPage)[keyof typeof PlayPage];
 
@@ -85,14 +88,16 @@ type ProfileFrom = typeof PlayPage.Shelf | typeof PlayPage.Friends;
  * The page Play shows. A profile remembers the page it was opened from, where Back goes; the stats
  * page remembers the profile it was opened from (the account's own), where its Back goes. A game's
  * page remembers the whole page it was opened from, and a profile opened from a game's page goes
- * back to it (`back`).
+ * back to it (`back`). A game's analytics page carries its game, the tab it is on and, like a
+ * game's page, the whole page its Back goes to.
  */
 export type PlayView =
   | { page: typeof PlayPage.Shelf }
   | { page: typeof PlayPage.Friends }
   | { page: typeof PlayPage.Profile; userId: string; from: ProfileFrom; back?: PlayView }
   | { page: typeof PlayPage.Stats; userId: string; from: ProfileFrom; back?: PlayView }
-  | { page: typeof PlayPage.Game; slug: string; back: PlayView };
+  | { page: typeof PlayPage.Game; slug: string; back: PlayView; surface?: GenexSurface }
+  | { page: typeof PlayPage.GameAnalytics; slug: string; tab: AnalyticsTab; back: PlayView };
 
 const SHELF_VIEW: PlayView = { page: PlayPage.Shelf };
 const FRIENDS_VIEW: PlayView = { page: PlayPage.Friends };
@@ -216,11 +221,14 @@ export const shelfChosen = (state: PlayState, shelf: PlayShelf): PlayState =>
 export const friendsShown = (state: PlayState): PlayState =>
   state.view.page === PlayPage.Friends ? state : { ...state, view: FRIENDS_VIEW };
 
-/** Someone's profile shows; Back returns to the page it was opened from (a game's page too). */
+/**
+ * Someone's profile shows; Back returns to the page it was opened from (a game's page and a game's
+ * analytics page too).
+ */
 export function profileShown(state: PlayState, userId: string): PlayState {
   const current = state.view;
   if (current.page === PlayPage.Profile && current.userId === userId) return state;
-  if (current.page === PlayPage.Game)
+  if (current.page === PlayPage.Game || current.page === PlayPage.GameAnalytics)
     return { ...state, view: { page: PlayPage.Profile, userId, from: PlayPage.Shelf, back: current } };
   const from = current.page === PlayPage.Profile || current.page === PlayPage.Stats ? current.from : current.page;
   const back = current.page === PlayPage.Profile || current.page === PlayPage.Stats ? current.back : undefined;
@@ -235,25 +243,71 @@ export function statsShown(state: PlayState): PlayState {
   return { ...state, view: { page: PlayPage.Stats, userId, from, ...(back ? { back } : {}) } };
 }
 
-/** Back: from the stats page to its profile, from a profile to the page it was opened from. */
+/**
+ * Back: from the stats page to its profile, from a profile to the page it was opened from, from a
+ * game's page or its analytics to the page they remember. Every page is named, so a new one cannot
+ * be left with a Back that does nothing.
+ */
 export function backFromProfile(state: PlayState): PlayState {
   const current = state.view;
-  if (current.page === PlayPage.Stats) {
-    const { userId, from, back } = current;
-    return { ...state, view: { page: PlayPage.Profile, userId, from, ...(back ? { back } : {}) } };
+  switch (current.page) {
+    case PlayPage.Stats: {
+      const { userId, from, back } = current;
+      return { ...state, view: { page: PlayPage.Profile, userId, from, ...(back ? { back } : {}) } };
+    }
+    case PlayPage.Game:
+    case PlayPage.GameAnalytics:
+      return { ...state, view: current.back };
+    case PlayPage.Profile:
+      if (current.back) return { ...state, view: current.back };
+      return { ...state, view: current.from === PlayPage.Friends ? FRIENDS_VIEW : SHELF_VIEW };
+    case PlayPage.Shelf:
+    case PlayPage.Friends:
+      return state;
   }
-  if (current.page === PlayPage.Game) return { ...state, view: current.back };
-  if (current.page !== PlayPage.Profile) return state;
-  if (current.back) return { ...state, view: current.back };
-  return { ...state, view: current.from === PlayPage.Friends ? FRIENDS_VIEW : SHELF_VIEW };
 }
 
-/** A native game's own page shows; Back returns to the page it was opened from. */
-export function gameShown(state: PlayState, slug: string): PlayState {
+/**
+ * A game's analytics page shows, on `tab` (Overview unless one is named). Back returns to the page
+ * it was opened from, or to `back` when the opener names another. Asked for the game already shown
+ * it changes only a tab that was named; asked for another game it takes the first one's place and
+ * keeps its Back, so pages of one kind never stack.
+ */
+export function gameAnalyticsShown(state: PlayState, slug: string, tab?: AnalyticsTab, back?: PlayView): PlayState {
+  const current = state.view;
+  const page = { page: PlayPage.GameAnalytics, slug, tab: tab ?? DEFAULT_ANALYTICS_TAB };
+  if (current.page !== PlayPage.GameAnalytics) return { ...state, view: { ...page, back: back ?? current } };
+  if (current.slug === slug) return gameAnalyticsTabChosen(state, tab ?? current.tab);
+  return { ...state, view: { ...page, back: back ?? current.back } };
+}
+
+/** The analytics page shown turns to another tab; any other page, or the tab already shown, changes nothing. */
+export function gameAnalyticsTabChosen(state: PlayState, tab: AnalyticsTab): PlayState {
+  const current = state.view;
+  if (current.page !== PlayPage.GameAnalytics || current.tab === tab) return state;
+  return { ...state, view: { ...current, tab } };
+}
+
+/**
+ * The account's Stats page as somewhere to go back to: where a game's analytics opened from Create
+ * returns, as if it had been opened from the Stats table. Signed out there is no Stats page: the shelf.
+ */
+export const ownStatsView = (userId: string | null): PlayView =>
+  userId ? { page: PlayPage.Stats, userId, from: PlayPage.Shelf } : SHELF_VIEW;
+
+/**
+ * A native game's own page shows; Back returns to the page it was opened from. `surface` is the place
+ * in Genex that opened it, which its Play in browser names too.
+ */
+export function gameShown(state: PlayState, slug: string, surface?: GenexSurface): PlayState {
   const current = state.view;
   if (current.page === PlayPage.Game && current.slug === slug) return state;
-  return { ...state, view: { page: PlayPage.Game, slug, back: current } };
+  return { ...state, view: { page: PlayPage.Game, slug, back: current, ...(surface ? { surface } : {}) } };
 }
+
+/** The place in Genex that opened `slug`'s page, while that page is shown. */
+const pageSurface = (state: PlayState, slug: string): GenexSurface | undefined =>
+  state.view.page === PlayPage.Game && state.view.slug === slug ? state.view.surface : undefined;
 
 /** The game Play has read as `slug`: its page, else a card; null when Play has read neither. */
 function readGame(state: PlayState, slug: string): PlayGame | null {
@@ -398,20 +452,27 @@ export function gameChanged(state: PlayState, game: Pick<PlayGame, "id" | "slug"
 
 /**
  * A changed game's own page: what Play read of it shows the change, kept under its new link once it
- * moved, and the page shown follows it there.
+ * moved, and the page shown follows it there. Its analytics page follows the link too, whether or
+ * not Play ever read the game's own page.
  */
 function pageFollows(
   state: PlayState,
   game: Pick<PlayGame, "id" | "slug">,
   next: PlayGame | null,
 ): Pick<PlayState, "games" | "view"> {
+  const view = next ? analyticsFollows(state.view, game.slug, next.slug) : state.view;
   const read = state.games[game.slug];
-  if (!next || !read?.game || read.game.id !== game.id) return { games: state.games, view: state.view };
+  if (!next || !read?.game || read.game.id !== game.id) return { games: state.games, view };
   const { [game.slug]: _old, ...others } = state.games;
   const games = { ...others, [next.slug]: { ...read, game: { ...read.game, ...next } } };
-  const { view } = state;
   const shown = view.page === PlayPage.Game && view.slug === game.slug;
   return { games, view: shown ? { ...view, slug: next.slug } : view };
+}
+
+/** The analytics page shown for the game at `slug` moves to its new link; any other view stays as it is. */
+function analyticsFollows(view: PlayView, slug: string, moved: string): PlayView {
+  const shown = view.page === PlayPage.GameAnalytics && view.slug === slug;
+  return shown && moved !== slug ? { ...view, slug: moved } : view;
 }
 
 /**
@@ -605,17 +666,31 @@ export interface PlayStore extends StoreApi<PlayState> {
   showProfile(userId: string): void;
   /** Show the account's stats, from its profile. */
   showStats(): void;
-  /** Back from the stats page or a profile. */
+  /** Back from the stats page, a profile, a game's page or a game's analytics. */
   back(): void;
+  /**
+   * Show the analytics of one of the account's games, on `tab` (Overview unless named). Back goes to
+   * the page shown now, or to `back` when the opener names another (`ownStatsView`).
+   */
+  showGameAnalytics(slug: string, tab?: AnalyticsTab, back?: PlayView): void;
+  /** Turn the analytics page shown to another tab. */
+  chooseAnalyticsTab(tab: AnalyticsTab): void;
   /** Read a tab's first page (when it has none or is stale), or with `more` its next one. */
   loadFeed(category: PlayCategory, options?: { more?: boolean; force?: boolean }): Promise<void>;
   /** Count the players in a tab's multiplayer games. */
   countOnline(category: PlayCategory): Promise<void>;
-  /** Open a game: in the viewer, or on its own page when it has an app to install or no web build. */
-  open(game: PlayRecentEntry): Promise<void>;
-  /** Play a game's web build in the viewer, whatever its card opens: its page's own Play in browser. */
-  openViewer(game: PlayRecentEntry): Promise<void>;
+  /**
+   * Open a game: in the viewer, or on its own page when it has an app to install or no web build.
+   * `surface` is the place in Genex it was opened from, which the play tells genex.games.
+   */
+  open(game: PlayRecentEntry, surface?: GenexSurface): Promise<void>;
+  /**
+   * Play a game's web build in the viewer, whatever its card opens: its page's own Play in browser,
+   * from `surface`, or else from the place that opened its page.
+   */
+  openViewer(game: PlayRecentEntry, surface?: GenexSurface): Promise<void>;
   close(): Promise<void>;
+  /** The viewer's own Try again: the same game, from the same place. */
   retry(): Promise<void>;
   /** Copy a card's game into a new game of the person's own; its name or its failure waits for the shell. */
   remix(game: PlayGame): Promise<void>;
@@ -636,11 +711,17 @@ export interface PlayStore extends StoreApi<PlayState> {
   manage(game: PlayGame, change: PlayGameChange): Promise<PlayChangeResult>;
   /** A game's new cover took: its cards show it. */
   coverChanged(game: PlayGame, coverUrl: string): void;
-  /** Show a game's own page, and read it; a native-only game then leads Recent. */
-  showGame(slug: string): void;
-  /** A Recent game shows no cover: read its page once in this window, for the cover it has now. */
+  /** Show a game's own page, opened from `surface` when one is named, and read it; a native-only game then leads Recent. */
+  showGame(slug: string, surface?: GenexSurface): void;
+  /**
+   * A Recent game shows no cover: read its page once in this window, for the cover it has now. The
+   * read never tells main the page is shown.
+   */
   findCover(slug: string): Promise<void>;
-  /** Read a native game's page (again). */
+  /**
+   * Read a game's page (again) for the page Play shows: main hears that it is shown, so it may tell
+   * genex.games whether the page offers this computer an install.
+   */
   loadGame(slug: string): Promise<void>;
   /** Read what is installed and installing here, and the games being played. */
   loadNative(): Promise<void>;
@@ -804,7 +885,7 @@ export function createPlayStore(
   };
 
   const native = nativeActions(api, set);
-  const { open, openViewer, close } = opening(api, store, set, native.showGame);
+  const { open, openViewer, close, retry } = opening(api, store, set, native.showGame);
 
   /** Make a game a new one of the person's own: shown from the press, its name or its failure kept for the shell. */
   const remix = async (game: PlayRecentEntry): Promise<void> => {
@@ -827,23 +908,14 @@ export function createPlayStore(
   return Object.assign(store, {
     ...assets,
     ...native,
+    ...pageActions(set),
     loadShelves,
-    chooseShelf: (shelf: PlayShelf) => set((state) => shelfChosen(state, shelf)),
-    showFriends: () => set(friendsShown),
-    showProfile: (userId: string) => set((state) => profileShown(state, userId)),
-    showStats: () => set(statsShown),
-    back: () => set(backFromProfile),
     loadFeed,
     countOnline,
-    findCover: coverFinder(native.loadGame),
     open,
     openViewer,
     close,
-    // The viewer's own Try again: the viewer again, whatever the game's card opens.
-    retry: async () => {
-      const shown = store.getState().viewer;
-      if (shown) await openViewer(shown);
-    },
+    retry,
     remix,
     checkRemix,
     remixViewed: async () => {
@@ -859,6 +931,20 @@ export function createPlayStore(
   });
 }
 
+/** Which page Play shows: the sidebar's and the pages' own presses, and Back. */
+function pageActions(set: (change: (state: PlayState) => PlayState) => void) {
+  return {
+    chooseShelf: (shelf: PlayShelf) => set((state) => shelfChosen(state, shelf)),
+    showFriends: () => set(friendsShown),
+    showProfile: (userId: string) => set((state) => profileShown(state, userId)),
+    showStats: () => set(statsShown),
+    back: () => set(backFromProfile),
+    showGameAnalytics: (slug: string, tab?: AnalyticsTab, back?: PlayView) =>
+      set((state) => gameAnalyticsShown(state, slug, tab, back)),
+    chooseAnalyticsTab: (tab: AnalyticsTab) => set((state) => gameAnalyticsTabChosen(state, tab)),
+  };
+}
+
 /** Remember Recent in `storage` whenever it changes, whichever press or read changed it. */
 function rememberRecent(store: StoreApi<PlayState>, storage: KeyValueStorage | null): void {
   store.subscribe((state, before) => {
@@ -867,12 +953,12 @@ function rememberRecent(store: StoreApi<PlayState>, storage: KeyValueStorage | n
 }
 
 /** Reading a Recent game's page for the cover it has now: once a window for each game, whatever it answered. */
-function coverFinder(loadGame: (slug: string) => Promise<void>): (slug: string) => Promise<void> {
+function coverFinder(readGame: (slug: string) => Promise<void>): (slug: string) => Promise<void> {
   const asked = new Set<string>();
   return (slug) => {
     if (asked.has(slug)) return Promise.resolve();
     asked.add(slug);
-    return loadGame(slug);
+    return readGame(slug);
   };
 }
 
@@ -885,31 +971,40 @@ function opening(
   api: Pick<PlayApi, "playOpen" | "playClose" | "playSession">,
   store: StoreApi<PlayState>,
   set: (change: (state: PlayState) => PlayState) => void,
-  showGame: (slug: string) => void,
+  showGame: (slug: string, surface?: GenexSurface) => void,
 ) {
-  const openViewer = async (game: PlayRecentEntry): Promise<void> => {
+  /** The place the viewer's game was opened from: its Try again names it too. */
+  let viewerSurface: GenexSurface | undefined;
+  const openViewer = async (game: PlayRecentEntry, surface?: GenexSurface): Promise<void> => {
     // One copy of a game at a time: its native app being played comes forward instead.
     if (beingPlayed(store.getState(), game.slug)) return api.playSession(game.slug, SessionAction.Show);
+    const from = surface ?? pageSurface(store.getState(), game.slug);
+    viewerSurface = from;
     set((state) => gameOpened(state, game));
     try {
-      await api.playOpen(game.slug, game.title);
+      await api.playOpen(game.slug, game.title, from);
     } catch {
       set((state) => openRefused(state, game.slug));
     }
   };
-  const open = async (game: PlayRecentEntry): Promise<void> => {
+  const open = async (game: PlayRecentEntry, surface?: GenexSurface): Promise<void> => {
     if (beingPlayed(store.getState(), game.slug)) return api.playSession(game.slug, SessionAction.Show);
     if (game.page || opensItsPage(store.getState(), game.slug)) {
       set((state) => ({ ...state, recent: withRecent(state.recent, { ...game, page: true }) }));
-      return showGame(game.slug);
+      return showGame(game.slug, surface);
     }
-    return openViewer(game);
+    return openViewer(game, surface);
   };
   const close = async (): Promise<void> => {
     set(unansweredClosed);
     await api.playClose();
   };
-  return { open, openViewer, close };
+  // The viewer's own Try again: the viewer again, whatever the game's card opens.
+  const retry = async (): Promise<void> => {
+    const shown = store.getState().viewer;
+    if (shown) await openViewer(shown, viewerSurface);
+  };
+  return { open, openViewer, close, retry };
 }
 
 /** The Assets shelf's reads: the person's library page by page, and the whole catalog. */
@@ -980,6 +1075,18 @@ function assetReads(
   return { loadLibrary, loadAssetCatalog, chooseAssets };
 }
 
+/** A game's page read on its way, and whether it was asked for the page Play shows. */
+interface PageRead {
+  read: Promise<void>;
+  shown: boolean;
+}
+
+/**
+ * Whether `running` answers a read asked with `shown`: a read for the page on screen joins only
+ * another one for the page, never a Recent cover's, which main tells nobody of.
+ */
+const answersRead = (running: PageRead, shown: boolean): boolean => running.shown || !shown;
+
 /** A native game's page, its installs and its sessions: reads, and what its buttons ask of main. */
 function nativeActions(
   api: Pick<
@@ -995,33 +1102,41 @@ function nativeActions(
   >,
   set: (change: (state: PlayState) => PlayState) => void,
 ) {
-  const reading = new Map<string, Promise<void>>();
-  const loadGame = (slug: string): Promise<void> => {
+  const reading = new Map<string, PageRead>();
+  /**
+   * Read `slug`'s page, telling main whether it is `shown`. A page opened while a cover's read of its
+   * game is on its way reads again at once, so its read is told now, not the next time it shows.
+   */
+  const readGame = (slug: string, shown: boolean): Promise<void> => {
     const running = reading.get(slug);
-    if (running) return running;
-    const read = (async () => {
+    if (running && answersRead(running, shown)) return running.read;
+    const read: Promise<void> = (async () => {
       set((state) => gameRequested(state, slug));
       try {
-        const game = await api.playGame(slug);
+        const game = await api.playGame(slug, shown);
         set((state) => gameLoaded(state, game));
       } catch {
         set((state) => gameFailed(state, slug));
       }
-    })().finally(() => reading.delete(slug));
-    reading.set(slug, read);
+    })().finally(() => {
+      if (reading.get(slug)?.read === read) reading.delete(slug);
+    });
+    reading.set(slug, { read, shown });
     return read;
   };
+  const loadGame = (slug: string): Promise<void> => readGame(slug, true);
   const loadNative = async (): Promise<void> => {
     const [installs, sessions] = await Promise.all([api.playInstalls(), api.playSessions()]).catch(() => [null, null]);
     if (installs) set((state) => installsReported(state, installs));
     if (sessions) set((state) => sessionsReported(state, sessions));
   };
   return {
-    showGame: (slug: string) => {
-      set((state) => gameShown(state, slug));
+    showGame: (slug: string, surface?: GenexSurface) => {
+      set((state) => gameShown(state, slug, surface));
       void loadGame(slug).then(() => set((state) => nativePageShown(state, slug)));
     },
     loadGame,
+    findCover: coverFinder((slug) => readGame(slug, false)),
     loadNative,
     install: (slug: string) => api.playInstall(slug),
     cancelInstall: (slug: string) => api.playInstallCancel(slug),

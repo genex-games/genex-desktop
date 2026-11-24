@@ -168,6 +168,7 @@ import {
   refusingRequest,
 } from "./play/people.ts";
 import { type CreatorStats, creatorStats } from "./play/creator-stats.ts";
+import { type GameAnalytics, gameAnalytics } from "./play/game-analytics/read.ts";
 import { type GenexCredits, genexCredits } from "./play/credits.ts";
 import {
   type AssetLibrary,
@@ -203,7 +204,8 @@ import { type GameGenex, type NativeSessions, type NativeSessionsDeps, nativeSes
 import { LocalPlays } from "./play/local-plays.ts";
 import { findNativeBuilds } from "./core/native-builds.ts";
 import { isStaleBuild, lastChange } from "./core/publish-platforms.ts";
-import { nativePlays } from "./play/native-plays.ts";
+import { computerIdOf, nativePlays } from "./play/native-plays.ts";
+import { type InstallReports, installReports } from "./play/install-reports.ts";
 import { hasGameWindow, showGameWindow } from "./play/native-windows.ts";
 import { linuxGameWindows } from "./play/native-windows-linux.ts";
 import { spawnNativeGame } from "../substrate/plugins/native-process.ts";
@@ -231,7 +233,8 @@ import { playStore } from "./play/store.ts";
 import { followStudioWindow, type StoreSheetControl, storeSheet } from "./play/store-sheet.ts";
 import { devStand, websitePageOpener } from "./play/origins.ts";
 import { devGamesTrust } from "./play/dev-games-trust.ts";
-import { PLAY_ORIGIN, type PlayPoint } from "../shared/play.ts";
+import { PLAY_ORIGIN, type PlayGameDetail, type PlayPoint } from "../shared/play.ts";
+import { InstallMoment } from "../shared/game-analytics.ts";
 import { playCoinPageUrl } from "../shared/play-purchase.ts";
 import { registerRunsIpc } from "./ipc/runs.ts";
 import { registerSettingsIpc } from "./ipc/settings.ts";
@@ -659,8 +662,13 @@ let preview: GamePreview | null = null;
 let gameScreen: GameFullScreen | null = null;
 /** Play's catalog, made with the core: the dashboard's reads and the viewer's likes and tickets. */
 let playCatalog: PlayGallery | null = null;
-let playAccount: { people: PlayPeople; creators: CreatorStats; credits: GenexCredits; library: AssetLibrary } | null =
-  null;
+let playAccount: {
+  people: PlayPeople;
+  creators: CreatorStats;
+  gameAnalytics: GameAnalytics;
+  credits: GenexCredits;
+  library: AssetLibrary;
+} | null = null;
 let gameLibrary: LibrarySharing | null = null;
 let playManage: PlayManage | null = null;
 let playBudget: PlayAiBudget | null = null;
@@ -669,6 +677,10 @@ let playStoreDeps: PlayStoreParts | null = null;
 /** Play's native installs and the games being played, made on first use (`playInstallsFor`, `playSessionsFor`). */
 let nativeInstaller: NativeInstaller | null = null;
 let nativeLauncher: NativeSessions | null = null;
+/** An app build's install moments for genex.games, made on first use (`installReportsFor`). */
+let installReporter: InstallReports | null = null;
+/** This computer's random id for the play and install reports, read or made once (`computerIdFor`). */
+let computerIds: (() => Promise<string>) | null = null;
 /** Play for the games being made: each one's own folder's app, made with the first core that plays one. */
 let localPlays: LocalPlays | null = null;
 /** The app's Genex account, made with the core: Play, Settings and Publish read it. */
@@ -1376,8 +1388,45 @@ function playInstallsFor(studio: StudioCore): NativeInstaller | null {
     inUse: (slug) => nativeLauncher?.playing(slug) ?? false,
     // The notifications feed reads the log: how an install ended is written there (Studio's thread).
     outcome: (outcome) => void recordInstall(studio, outcome),
+    moment: (news) => void installReportsFor(studio)?.tell(news),
   });
   return nativeInstaller;
+}
+
+/** This computer's random id for the play and install reports: one, shared, kept beside the installed games. */
+function computerIdFor(studio: StudioCore): () => Promise<string> {
+  computerIds ??= computerIdOf(studio.layout.installedGames);
+  return computerIds;
+}
+
+/**
+ * An app build's install moments for genex.games (`main/play/install-reports.ts`), or null where this
+ * computer has no name; a fixture or smoke launch's sends nothing.
+ */
+function installReportsFor(studio: StudioCore): InstallReports | null {
+  const host = thisComputer();
+  if (!host) return null;
+  const account = genexAccountFor(studio);
+  installReporter ??= installReports({
+    request: fixtureNativePolicy ? fixturePlayRequest : networkRequest(globalThis.fetch, playOrigin.api),
+    token: account.token,
+    refused: account.refused,
+    playerId: computerIdFor(studio),
+    host,
+    now: Date.now,
+    log: (line) => studioLog.write("main", line),
+    silent: fixtureNativePolicy,
+  });
+  return installReporter;
+}
+
+/** A game's page on screen was read: whether it shows Install here, or why it cannot, for genex.games. */
+async function reportPageRead(studio: StudioCore, game: PlayGameDetail): Promise<void> {
+  const builds = game.native?.builds ?? [];
+  const reports = installReportsFor(studio);
+  if (!reports || builds.length === 0) return;
+  const here = (await playInstallsFor(studio)?.state()) ?? null;
+  await reports.pageRead(game.slug, builds, here);
 }
 
 /** An install's end in the log, for the notifications feed: ready to play, or why it failed. */
@@ -1452,7 +1501,7 @@ function playSessionsFor(studio: StudioCore): NativeSessions | null {
     log: (line) => studioLog.write("main", line),
     // A fixture launch has no Genex to reach: its games stay offline, and their plays uncounted.
     ...(offline ? {} : { genex: (slug: string) => openGameGenex(studio, slug) }),
-    ...(fixtureNativePolicy ? {} : { presence: playsFor(studio) }),
+    ...(fixtureNativePolicy ? {} : { presence: playsFor(studio, installs) }),
   });
   return nativeLauncher;
 }
@@ -1492,17 +1541,31 @@ function localPlaysFor(core: () => StudioCore): StudioCoreOptions["localPlays"] 
   return { play: (project, engine) => plays().play(project, engine) };
 }
 
-/** Where a native game's plays go: genex.games, once its window is on screen (`main/play/native-plays.ts`). */
-function playsFor(studio: StudioCore): NonNullable<NativeSessionsDeps["presence"]> {
+/**
+ * Where a native game's plays go: genex.games, once its window is on screen, as a play
+ * (`main/play/native-plays.ts`) and as the installed build's Opened (`main/play/install-reports.ts`).
+ */
+function playsFor(studio: StudioCore, installs: NativeInstaller): NonNullable<NativeSessionsDeps["presence"]> {
   const account = genexAccountFor(studio);
   const plays = nativePlays({
     root: studio.layout.installedGames,
     request: apiRequest(),
     token: account.token,
     refused: account.refused,
+    playerId: computerIdFor(studio),
     log: (line) => studioLog.write("main", line),
   });
-  return { started: (slug) => void plays.report(slug), ended: () => undefined };
+  const opened = async (slug: string): Promise<void> => {
+    const version = (await installs.record(slug).catch(() => null))?.version ?? null;
+    await installReportsFor(studio)?.tell({ slug, moment: InstallMoment.Opened, version });
+  };
+  return {
+    started: (slug) => {
+      void plays.report(slug);
+      void opened(slug);
+    },
+    ended: () => undefined,
+  };
 }
 
 /**
@@ -1582,8 +1645,8 @@ function playCatalogFor(studio: StudioCore): PlayGallery {
 }
 
 /**
- * Play's people, a creator's numbers and the Credits tab for this core, all on the Genex account:
- * genex.games over the network, or a fixture launch's own people and numbers.
+ * Play's people, a creator's numbers, their games' analytics and the Credits tab for this core, all
+ * on the Genex account: genex.games over the network, or a fixture launch's own people and numbers.
  */
 function playAccountFor(studio: StudioCore): NonNullable<typeof playAccount> {
   const account = genexAccountFor(studio);
@@ -1597,11 +1660,13 @@ function playAccountFor(studio: StudioCore): NonNullable<typeof playAccount> {
     web: playOrigin.web,
     ...(stand.buildHosts ? { buildHosts: stand.buildHosts } : {}),
   };
-  // A 401 to a creator's numbers or the credits ends the sign-in as one to the account's own calls does.
+  // A 401 to a creator's numbers, a game's analytics or the credits ends the sign-in as one to the
+  // account's own calls does.
   const counted = { ...deps, request: refusingRequest(deps.request, deps.refused) };
   playAccount ??= {
     people: playPeople(deps),
     creators: creatorStats(counted),
+    gameAnalytics: gameAnalytics(counted),
     credits: genexCredits(counted),
     // Save sends whole game files, so its upload waits longer than an avatar's.
     library: assetLibrary({
@@ -2378,6 +2443,7 @@ function playIpcDeps(studio: StudioCore): PlayIpcDeps {
     reveal: (file) => shell.showItemInFolder(file),
     gameLinks: gameLinkQueue,
     localGame: (slug) => studio.genexGameOfSlug(slug),
+    pageRead: (game) => void reportPageRead(studio, game),
   };
 }
 

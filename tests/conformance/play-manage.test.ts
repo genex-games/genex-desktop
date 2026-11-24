@@ -514,6 +514,7 @@ describe("Play's manage channels", () => {
       reveal: () => {},
       people: unused as PlayIpcDeps["people"],
       creators: unused as PlayIpcDeps["creators"],
+      gameAnalytics: unused as PlayIpcDeps["gameAnalytics"],
       credits: unused as PlayIpcDeps["credits"],
       manage,
       web: PLAY_ORIGIN.web,

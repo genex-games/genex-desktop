@@ -235,6 +235,24 @@ describe("Publish's platform rows from the game folder", () => {
     assert.equal(changed.mac.state, PublishPlatformState.Stale, "a project setting is the game's");
   });
 
+  it("keeps an app ready when only the game's Genex cover was made after it", async () => {
+    const root = await tmpDir("publish-platforms-");
+    await source(root, "main.gd", T0);
+    await macApp(path.join(root, "Builds", "Mac"), "Collect a Single Coin", T0 + 10 * MINUTE_MS);
+    // What the cover step leaves once the build has landed: the picture, and the engine's note beside it.
+    const later = T0 + 30 * MINUTE_MS;
+    await source(root, "cover/cover.png", later);
+    await source(root, "cover/cover.png.import", later);
+    await source(root, "cover.jpg", later);
+    await source(root, "cover.jpg.meta", later);
+    const core = coreWith("coin", root, []);
+    assert.equal(byTarget(await publishPlatforms(core, "coin", true)).mac.state, PublishPlatformState.Ready);
+    assert.deepEqual(await publishedApps(core, "coin", true), ["Builds/Mac/Collect a Single Coin.app"]);
+    // A folder of that name deeper in the game is the game's own, and so is any other picture.
+    await source(root, "levels/cover/wall.tscn", later);
+    assert.equal(byTarget(await publishPlatforms(core, "coin", true)).mac.state, PublishPlatformState.Stale);
+  });
+
   it("lists a Linux app beside the others, and sends it with Publish while it is not older than the game", async () => {
     const root = await tmpDir("publish-platforms-");
     await source(root, "unity/Assets/Scripts/Player.cs", T0);

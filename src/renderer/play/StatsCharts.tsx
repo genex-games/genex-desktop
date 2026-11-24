@@ -1,29 +1,43 @@
 /**
  * The stats page's charts as components: the plays-per-day chart, which follows the pointer with a
  * crosshair and a tooltip, and a sparkline. Each draws again when its box changes size or the theme
- * changes, and has a text equivalent for screen readers.
+ * changes, and has a text equivalent for screen readers. `useRedraw` is the hook every canvas chart
+ * draws through, a game's analytics included (`game-analytics/kit`).
  */
 import type { JSX } from "react";
 import { useEffect, useRef, useState } from "react";
 import { t } from "../../shared/i18n.ts";
-import { useAppearance } from "../appearance/store.ts";
 import { dayAt, drawArea, drawSpark } from "./stats-chart.ts";
 
-/** Draw again whenever the canvas's box changes size. */
-function useRedraw(canvas: { current: HTMLCanvasElement | null }, draw: (element: HTMLCanvasElement) => void): void {
+/** What a new theme changes on the page's root (`appearance/paint.ts`): its scheme and its variables. */
+const THEME_ATTRIBUTES = ["data-theme", "style"];
+
+/**
+ * Draw on `canvas` after every render (new numbers, a hovered day), whenever its box changes size
+ * and whenever the theme repaints the page's colours. It reads no store, so a chart also renders
+ * where there is no window.
+ */
+export function useRedraw(
+  canvas: { current: HTMLCanvasElement | null },
+  draw: (element: HTMLCanvasElement) => void,
+): void {
   const latest = useRef(draw);
   latest.current = draw;
-  // A new theme re-renders, which draws again below in its colours.
-  useAppearance();
   useEffect(() => {
     const element = canvas.current;
     if (!element) return;
     latest.current(element);
-    const observer = new ResizeObserver(() => latest.current(element));
-    observer.observe(element);
-    return () => observer.disconnect();
+    const resized = new ResizeObserver(() => latest.current(element));
+    resized.observe(element);
+    // A new theme sets the root's scheme and variables; the canvas reads its colours as it draws.
+    const themed = new MutationObserver(() => latest.current(element));
+    themed.observe(document.documentElement, { attributes: true, attributeFilter: THEME_ATTRIBUTES });
+    return () => {
+      resized.disconnect();
+      themed.disconnect();
+    };
   }, [canvas]);
-  // Every render draws: new numbers, a hovered day, or a theme's colours.
+  // Every render draws: new numbers or a hovered day.
   useEffect(() => {
     if (canvas.current) latest.current(canvas.current);
   });
@@ -67,14 +81,14 @@ export function AreaChart({
   );
 }
 
-/** A sparkline of `data`, `width` × `height` CSS pixels. */
+/** A sparkline of `data`, `width` × `height` CSS pixels; a null is a gap in the line. */
 export function Sparkline({
   data,
   width,
   height,
   className,
 }: {
-  data: readonly number[];
+  data: readonly (number | null)[];
   width?: number;
   height: number;
   className?: string;

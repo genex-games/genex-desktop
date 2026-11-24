@@ -68,6 +68,7 @@ import {
   stillWithRemix,
 } from "../../src/renderer/play/remix-model.ts";
 import { StepState } from "../../src/renderer/ui/step-bar.ts";
+import { GenexSurface } from "../../src/shared/game-analytics.ts";
 import { PlayChangeOutcome, type PlayGameChange } from "../../src/shared/play-manage.ts";
 import {
   createPlayStore,
@@ -189,10 +190,14 @@ function fakeApi(handlers: Partial<PlayApi> = {}) {
     shelves: 0,
     online: [] as string[][],
     open: [] as string[],
+    /** The place in Genex each opening named, in order (undefined when it named none). */
+    surfaces: [] as Array<GenexSurface | undefined>,
     remix: [] as string[],
     close: 0,
     manage: [] as Array<{ gameId: string; change: PlayGameChange }>,
     game: [] as string[],
+    /** Whether each page read said its page is the one Play shows, in order. */
+    shown: [] as Array<boolean | undefined>,
     install: [] as string[],
     cancel: [] as string[],
     uninstall: [] as string[],
@@ -212,9 +217,10 @@ function fakeApi(handlers: Partial<PlayApi> = {}) {
       calls.online.push(slugs);
       return handlers.playOnline ? handlers.playOnline(slugs) : Promise.resolve({});
     },
-    playOpen: (slug, title) => {
+    playOpen: (slug, title, surface) => {
       calls.open.push(slug);
-      return handlers.playOpen ? handlers.playOpen(slug, title) : Promise.resolve();
+      calls.surfaces.push(surface);
+      return handlers.playOpen ? handlers.playOpen(slug, title, surface) : Promise.resolve();
     },
     playClose: () => {
       calls.close += 1;
@@ -236,9 +242,10 @@ function fakeApi(handlers: Partial<PlayApi> = {}) {
         ? handlers.playManage(gameId, change)
         : Promise.resolve({ outcome: PlayChangeOutcome.Done });
     },
-    playGame: (slug) => {
+    playGame: (slug, shown) => {
       calls.game.push(slug);
-      return handlers.playGame ? handlers.playGame(slug) : Promise.reject(new Error("no page"));
+      calls.shown.push(shown);
+      return handlers.playGame ? handlers.playGame(slug, shown) : Promise.reject(new Error("no page"));
     },
     playInstalls: () => (handlers.playInstalls ? handlers.playInstalls() : Promise.resolve(NO_INSTALLS)),
     playSessions: () => (handlers.playSessions ? handlers.playSessions() : Promise.resolve([])),
@@ -1093,6 +1100,52 @@ describe("Play store: an opening main refused", () => {
   });
 });
 
+describe("Play store: the place in Genex a game is opened from", () => {
+  const nativeAndWeb = (slug: string): PlayGameDetail => ({
+    ...game(slug, { native: { web: true, engine: "unity", builds: [] } }),
+    likes: 0,
+    liked: false,
+    comments: 0,
+    shots: [],
+    updatedAt: null,
+  });
+
+  it("tells main the place each opening came from, and nothing when the opener names none", async () => {
+    const { api, calls } = fakeApi();
+    const store = createPlayStore(api, memory(), manualClock().now);
+    await store.open(game("a"), GenexSurface.Featured);
+    await store.open(game("b"), GenexSurface.Search);
+    await store.open(game("c"));
+    assert.deepEqual(calls.open, ["a", "b", "c"]);
+    assert.deepEqual(calls.surfaces, [GenexSurface.Featured, GenexSurface.Search, undefined]);
+  });
+
+  it("plays a game's page's Play in browser as coming from the place that opened the page", async () => {
+    const { api, calls } = fakeApi({ playGame: async (slug) => nativeAndWeb(slug) });
+    const store = createPlayStore(api, memory(), manualClock().now);
+    await store.open({ ...entry("dust-runners"), page: true }, GenexSurface.Profile);
+    assert.equal(store.getState().view.page, PlayPage.Game);
+    await store.openViewer(entry("dust-runners"));
+    await store.close();
+    store.showGame("iron-tide");
+    await store.openViewer(entry("iron-tide"));
+    assert.deepEqual(calls.surfaces, [GenexSurface.Profile, undefined], "a page a link showed names no place");
+  });
+
+  it("tries a failed game again as coming from the same place", async () => {
+    let refuse = true;
+    const { api, calls } = fakeApi({
+      playOpen: () => (refuse ? Promise.reject(new Error("no view")) : Promise.resolve()),
+    });
+    const store = createPlayStore(api, memory(), manualClock().now);
+    await store.open(game("a"), GenexSurface.Friends);
+    assert.equal(store.getState().viewer?.phase, PlayViewerPhase.Failed);
+    refuse = false;
+    await store.retry();
+    assert.deepEqual(calls.surfaces, [GenexSurface.Friends, GenexSurface.Friends]);
+  });
+});
+
 describe("Play store: reading tabs", () => {
   it("reads a tab once while its first page is on its way", async () => {
     const pending = deferred<PlayFeedPage>();
@@ -1622,6 +1675,37 @@ describe("Play store: Recent's covers", () => {
     await store.findCover("arcade-golf");
     assert.deepEqual(calls.game, ["arcade-golf"], "one read a window");
     assert.equal(store.getState().recent[0]?.coverUrl, cover);
+  });
+
+  it("never says a cover lookup's read is the page shown; the page's own reads say so", async () => {
+    const { api, calls } = fakeApi({ playGame: async (slug) => page1(slug, { coverUrl: cover }) });
+    const store = createPlayStore(api, stored(entry("arcade-golf")), manualClock().now);
+    await store.findCover("arcade-golf");
+    store.showGame("dust-runners");
+    await store.loadGame("dust-runners");
+    await store.loadGame("dust-runners");
+    assert.deepEqual(calls.game, ["arcade-golf", "dust-runners", "dust-runners"]);
+    assert.deepEqual(calls.shown, [false, true, true]);
+  });
+
+  it("reads a page again as shown when it opens while a cover lookup of its game is on its way", async () => {
+    const lookup = deferred<PlayGameDetail>();
+    const shown = deferred<PlayGameDetail>();
+    const answers = [lookup.promise, shown.promise];
+    const { api, calls } = fakeApi({ playGame: (slug) => answers.shift() ?? Promise.resolve(page1(slug)) });
+    const store = createPlayStore(api, stored(entry("arcade-golf")), manualClock().now);
+    const looking = store.findCover("arcade-golf");
+    store.showGame("arcade-golf");
+    const reading = store.loadGame("arcade-golf");
+    assert.deepEqual(calls.shown, [false, true], "the page does not wait on the lookup's read");
+    shown.resolve(page1("arcade-golf", { coverUrl: cover }));
+    lookup.resolve(page1("arcade-golf"));
+    await Promise.all([looking, reading]);
+    assert.deepEqual(calls.game, ["arcade-golf", "arcade-golf"]);
+    assert.equal(store.getState().games["arcade-golf"]?.game?.slug, "arcade-golf");
+    await store.findCover("arcade-golf");
+    await store.loadGame("arcade-golf");
+    assert.deepEqual(calls.shown, [false, true, true], "once settled, a page read is a read of its own");
   });
 
   it("does not read again in the same window when the page could not be read", async () => {

@@ -5,7 +5,8 @@
  * signed-in account, or, signed out, this computer's own random id, kept beside the installed games
  * and sent only while no account is signed in. A token genex.games refuses (401) ends the sign-in,
  * as on Play's other calls, and the play goes again as this computer's. Best-effort: a report that
- * fails is logged and dropped, never retried, and never holds the game. Electron-free: the call, the
+ * fails is logged and dropped, never retried, and never holds the game. An app build's install
+ * moments (`install-reports.ts`) go the same way, with the same id. Electron-free: the call, the
  * account's token and the folder are deps.
  */
 import { randomUUID } from "node:crypto";
@@ -19,15 +20,23 @@ const PLAYER_FILE = "player.json";
 /** The only id this computer keeps: one `randomUUID()`, as it made it. */
 const PLAYER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-/** What reporting a play takes. */
-export interface NativePlayDeps {
-  /** The installed-games folder (`StudioLayout.installedGames`), where this computer's id is kept. */
-  root: string;
+/** What a report from the app takes: the account's token, or this computer's id while there is none. */
+export interface LauncherReportDeps {
   request: GalleryRequest;
   /** The unlocked Genex account's token, or undefined while there is none. */
   token(): Promise<string | undefined>;
   /** genex.games answered 401 to `token`: its sign-in has ended (`GenexAccount.refused`). */
   refused?(token: string): void;
+  /** This computer's id, sent only while no account is signed in (`computerIdOf`). */
+  playerId(): Promise<string>;
+}
+
+/** What reporting a play takes. */
+export interface NativePlayDeps extends Omit<LauncherReportDeps, "playerId"> {
+  /** The installed-games folder (`StudioLayout.installedGames`), where this computer's id is kept. */
+  root: string;
+  /** This computer's id, when other reports share it; read from `root` by default. */
+  playerId?(): Promise<string>;
   log(line: string): void;
 }
 
@@ -65,38 +74,55 @@ async function computerId(root: string): Promise<string> {
   return playerId;
 }
 
-/** The reporter over `deps`: one computer id per start of Genex, read or made once. */
-export function nativePlays(deps: NativePlayDeps): NativePlays {
+/**
+ * This computer's id for the app's reports, kept in `root`: read or made once per start of Genex, and
+ * shared by every report given the same function, so two reports at once never make two ids.
+ */
+export function computerIdOf(root: string): () => Promise<string> {
   let id: Promise<string> | null = null;
-  /** The token genex.games last refused: while the account still holds it, reports go signed out. */
-  let refusedToken: string | null = null;
-  const playerId = (): Promise<string> => {
-    id ??= computerId(deps.root).catch((error: unknown) => {
+  return () => {
+    id ??= computerId(root).catch((error: unknown) => {
       id = null;
       throw error;
     });
     return id;
   };
+}
 
-  const sendSignedOut = async (slug: string): Promise<number> => {
-    const body = { slug, playerId: await playerId() };
-    return (await deps.request(PlayRoute.NativePlay, { method: "POST", body })).status;
+/**
+ * How the app sends a report (from main: genex.games refuses one from a page): `body` as the
+ * signed-in account, or with this computer's id beside it while there is none. A token genex.games
+ * refuses (401) ends the sign-in, and the report, and every later one while the account still holds
+ * that token, goes as this computer's. Answers genex.games' status; a failed request throws.
+ */
+export function launcherSender(
+  deps: LauncherReportDeps,
+): (route: string, body: Readonly<Record<string, unknown>>) => Promise<number> {
+  /** The token genex.games last refused: while the account still holds it, reports go signed out. */
+  let refusedToken: string | null = null;
+  const sendSignedOut = async (route: string, body: Readonly<Record<string, unknown>>): Promise<number> => {
+    const signedOut = { ...body, playerId: await deps.playerId() };
+    return (await deps.request(route, { method: "POST", body: signedOut })).status;
   };
-
-  const send = async (slug: string): Promise<number> => {
+  return async (route, body) => {
     const token = await deps.token();
-    if (!token || token === refusedToken) return sendSignedOut(slug);
-    const { status } = await deps.request(PlayRoute.NativePlay, { method: "POST", body: { slug }, token });
+    if (!token || token === refusedToken) return sendSignedOut(route, body);
+    const { status } = await deps.request(route, { method: "POST", body, token });
     if (status !== HTTP_UNAUTHORIZED) return status;
     refusedToken = token;
     deps.refused?.(token);
-    return sendSignedOut(slug);
+    return sendSignedOut(route, body);
   };
+}
+
+/** The reporter over `deps`: one computer id per start of Genex, read or made once. */
+export function nativePlays(deps: NativePlayDeps): NativePlays {
+  const send = launcherSender({ ...deps, playerId: deps.playerId ?? computerIdOf(deps.root) });
 
   const report = async (slug: string): Promise<void> => {
     if (!isPlaySlug(slug)) return;
     try {
-      const status = await send(slug);
+      const status = await send(PlayRoute.NativePlay, { slug });
       if (status < 200 || status >= 300) deps.log(`play of ${slug} not counted: genex.games answered ${status}`);
     } catch (error) {
       deps.log(`play of ${slug} not counted: ${error instanceof Error ? error.message : String(error)}`);

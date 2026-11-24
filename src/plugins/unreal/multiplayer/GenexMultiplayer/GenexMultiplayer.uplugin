@@ -8,7 +8,6 @@
 	"CreatedBy": "Genex",
 	"CreatedByURL": "https://genex.games",
 	"DocsURL": "https://github.com/genex-games/genex-demo/blob/main/sdks/unreal/README.md",
-	"EngineVersion": "5.8.0",
 	"CanContainContent": false,
 	"Installed": false,
 	"Modules": [

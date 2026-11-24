@@ -56,6 +56,15 @@ is product copy, not this glossary.
   on sale is the person's press, never the agent's.
 - **Local draft**: an item made before its game is on Genex (`.genex/items/`); its card's Sell when
   published is an approval in app data (`item-approvals.ts`).
+- **Game analytics / usage analytics**: two different things. Game analytics is what a creator
+  sees about one of their published games, computed by genex.games (Stats › a game's row:
+  [Play](../play.md#a-games-analytics)). Usage analytics is Studio's own opt-in PostHog telemetry
+  about how the app is used ([usage analytics](../usage-analytics.md), `src/renderer/analytics/`);
+  it reports the game analytics page as a screen by its tab, never the game. A bare "analytics" in
+  code and docs means usage analytics.
+- **Player, play, visit, source** (game analytics): a player is one person, a play one session that
+  finished loading, a visit only opening the page, a source where a visit came from. The header of
+  [the contract](../../src/shared/game-analytics.ts) defines them once, for every report.
 
 ## Runs
 

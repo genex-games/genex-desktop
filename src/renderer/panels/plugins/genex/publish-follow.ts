@@ -86,21 +86,54 @@ interface Follow {
 
 const NOT_ASKED: ReadonlyMap<PublishTarget, string> = new Map();
 
+/**
+ * The apps the Publish card asked the agent to build, by game and by when, until a build answers
+ * each (`askedStill`) or the agent's work on them ends.
+ */
+function createAsks(clock: () => number, changed: () => void) {
+  const asked = new Map<string, ReadonlyMap<PublishTarget, string>>();
+  /** The games whose chat was working when the app last said (`workChanged`). */
+  let working: ReadonlySet<string> = new Set();
+  return {
+    /** The apps the agent was asked to build for `project` from its card, by when. */
+    of: (project: string): ReadonlyMap<PublishTarget, string> => asked.get(project) ?? NOT_ASKED,
+    /** The card asked the agent for `targets` now. */
+    remember(project: string, targets: readonly PublishTarget[]): void {
+      const at = new Date(clock()).toISOString();
+      const next = new Map(asked.get(project) ?? NOT_ASKED);
+      for (const target of targets) next.set(target, at);
+      asked.set(project, next);
+      changed();
+    },
+    /**
+     * The games whose chat is working now. A game whose chat was working and no longer is ended its
+     * agent's work: an app it was asked for and did not build is not being built, so its ask is over
+     * (a build that landed already answered it). A chat that has not started on the ask ends nothing.
+     */
+    workChanged(now: ReadonlySet<string>): void {
+      const ended = [...asked.keys()].filter((game) => working.has(game) && !now.has(game));
+      working = now;
+      for (const game of ended) asked.delete(game);
+      if (ended.length > 0) changed();
+    },
+  };
+}
+
 /** The Publish card's follow-through over `host`: the app has one (`publishFollow`), a test its own. */
 export function createPublishFollow(host: FollowHost) {
   const follows = new Map<string, Follow>();
-  const asked = new Map<string, ReadonlyMap<PublishTarget, string>>();
   const errors = new Map<string, string>();
   const listeners = new Set<() => void>();
   let stop: (() => void) | null = null;
   const changed = (): void => {
     for (const listener of listeners) listener();
   };
+  const asks = createAsks(host.now, changed);
 
   const rowsOf = async (follow: Follow): Promise<CardRow[]> => {
     const { project, card } = follow.request;
     const [platforms, state] = await Promise.all([host.platforms(project), host.state(project)]);
-    const context = { ...card, now: host.now(), asked: asked.get(project) ?? NOT_ASKED };
+    const context = { ...card, now: host.now(), asked: asks.of(project) };
     return recordRows(gateByPlugin(platforms, state.native), state, context);
   };
 
@@ -188,15 +221,11 @@ export function createPublishFollow(host: FollowHost) {
     /** Why the follow's last send for `project` was refused; empty when none was. */
     error: (project: string): string => errors.get(project) ?? "",
     /** The apps the agent was asked to build for `project` from its card, by when. */
-    asked: (project: string): ReadonlyMap<PublishTarget, string> => asked.get(project) ?? NOT_ASKED,
+    asked: asks.of,
     /** The card asked the agent for `targets` now. */
-    remember(project: string, targets: readonly PublishTarget[]): void {
-      const at = new Date(host.now()).toISOString();
-      const next = new Map(asked.get(project) ?? NOT_ASKED);
-      for (const target of targets) next.set(target, at);
-      asked.set(project, next);
-      changed();
-    },
+    remember: asks.remember,
+    /** The games whose chat is working now: one that stopped working ended its asks. */
+    workChanged: asks.workChanged,
     subscribe(listener: () => void): () => void {
       listeners.add(listener);
       return () => listeners.delete(listener);

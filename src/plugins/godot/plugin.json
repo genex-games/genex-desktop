@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "godot",
-  "version": "0.12.3",
+  "version": "0.12.4",
   "icon": "icon.svg",
   "name": "Godot",
   "publisher": "Genex",
@@ -147,10 +147,27 @@
       }
     },
     {
+      "name": "app-export",
+      "timeoutMs": 540000,
+      "facts": ["godot-project"],
+      "description": "Export the game as an app with Godot's own export: a Mac app, a Windows program or a Linux program (64-bit x86), one platform a call, into Builds/Mac, Builds/Windows or Builds/Linux in the project, where Publish finds it. Call it when the person wants the game as an app, when Publish asks for a build, and again after changing the project. Use it instead of running godot --export-release in your shell: Genex runs the export itself, so it works in every session, where a shell may not reach Godot's settings and temporary files. It fetches the platform's export template for this Godot version when it is missing (Mac 125 MB, Windows 40 MB, Linux 70 MB), sets project.godot to import ETC2/ASTC textures for a Mac app, and adds a preset of Genex's own to export_presets.cfg once (Genex Mac, Genex Windows, Genex Linux): set the app's version, icon or bundle identifier in that preset, and Genex keeps what you set. A Mac app is signed ad hoc with the entitlements in Builds/genex-mac-entitlements.plist (none by default) and runs on both Apple silicon and Intel; it is exported on a Mac only. An export Godot gave up on leaves no app: the answer names what Godot said.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "platform": {
+            "type": "string",
+            "enum": ["mac", "windows", "linux"],
+            "description": "The app to export: mac, windows or linux."
+          }
+        },
+        "required": ["platform"]
+      }
+    },
+    {
       "name": "export-templates",
       "timeoutMs": 540000,
       "facts": ["godot-project"],
-      "description": "Get Godot's export templates for this Godot version so Godot's own command line can export the game as an app: web, windows, mac and linux (comma-separated; all four when left out). Genex fetches only those templates from Godot's own release (web 10 MB, Windows 40 MB, Mac 125 MB, Linux 70 MB, 64-bit x86) into the person's templates folder; on Windows it also puts them where Genex's sandbox, and so your shell, reads them. For mac it sets project.godot to import ETC2/ASTC textures, which a Mac export needs. Call it once before exporting an app with godot --headless --export-release; for the web, call web-export instead, which fetches its own.",
+      "description": "Get Godot's export templates for this Godot version so Godot's own command line can export the game as an app: web, windows, mac and linux (comma-separated; all four when left out). Genex fetches only those templates from Godot's own release (web 10 MB, Windows 40 MB, Mac 125 MB, Linux 70 MB, 64-bit x86) into the person's templates folder; on Windows it also puts them where Genex's sandbox, and so your shell, reads them. For mac it sets project.godot to import ETC2/ASTC textures, which a Mac export needs. Call it only when you export with a preset of your own from your shell (godot --headless --export-release); to export the game as an app call app-export, and for the web web-export: each fetches its own.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -258,8 +275,8 @@
     {
       "name": "godot",
       "facts": ["godot-project"],
-      "tools": ["check", "run-scene", "screenshot", "class-reference", "web-export"],
-      "summary": "How to build this Godot 4 game: scenes and typed GDScript in its project, godot__check after each change, run-scene and screenshot to see it play, class-reference for the API, the genex_shot camera, filling any window size and web-export.",
+      "tools": ["check", "run-scene", "screenshot", "class-reference", "web-export", "app-export"],
+      "summary": "How to build this Godot 4 game: scenes and typed GDScript in its project, godot__check after each change, run-scene and screenshot to see it play, class-reference for the API, the genex_shot camera, filling any window size, web-export and app-export.",
       "file": "skills/godot.md"
     }
   ],

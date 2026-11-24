@@ -408,6 +408,18 @@ const FIXTURE_SAFE = [
   "studio:play.stats",
   "studio:play.creators",
   "studio:play.credits",
+  // A game's analytics, which only its creator sees: a fixture launch answers every report, the
+  // events as they arrive and the campaign links from its own made-up, self-consistent numbers
+  // (`dev/fixture-game-analytics/`), signed out unless it asks for its fixture account.
+  "studio:play.game-report",
+  "studio:play.game-events",
+  "studio:play.campaign-links",
+  // A saved or removed campaign link or funnel: a fixture launch keeps it in memory for the launch,
+  // so no socket opens.
+  "studio:play.campaign-link-save",
+  "studio:play.campaign-link-remove",
+  "studio:play.funnel-save",
+  "studio:play.funnel-remove",
   // The asset library and Save, Share and Add: a fixture launch answers from its own made-up
   // library (`dev/fixture-asset-library.ts`), signed out unless it asks for its fixture account;
   // a share or a save lasts the launch, and Add writes only into the fixture's own game.

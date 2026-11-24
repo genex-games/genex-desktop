@@ -98,6 +98,8 @@ export const PlayRoute = {
   Ticket: "/api/embed/ticket",
   /** A downloaded game's play, once its window is on screen (`native-plays.ts`). */
   NativePlay: "/api/embed/native-play",
+  /** A moment of an app build's install on this computer (`install-reports.ts`). */
+  NativeInstall: "/api/embed/native-install",
   Referral: "/api/referrals/me",
   world: (slug: string) => `/api/gallery/world/${encodeURIComponent(slug)}`,
   like: (id: string) => `/api/projects/${encodeURIComponent(id)}/like`,

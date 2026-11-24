@@ -1,0 +1,58 @@
+/* ── A game's analytics: Installs ── */
+/* This report's own layout. The blocks it is built from (tiles, sections, charts, tables) are the
+   kit's, in game-analytics.css; colours are the stats tokens of people.css. */
+
+/* A tile's quiet lines, one under another (the latest version's tile has two). */
+.game-analytics-installs-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Under the funnel: the visitors who wanted the build and could not get one, then each reason with
+   how many it stopped. Ruled above, as the funnel's own section ends. */
+.game-analytics-installs-blocked {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 28px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  line-height: 20px;
+}
+.game-analytics-installs-blocked-sentence {
+  margin: 0;
+  color: var(--ink);
+  text-wrap: pretty;
+}
+.game-analytics-installs-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 28px;
+  margin: 0;
+  padding: 0;
+  color: var(--ink-2);
+  list-style: none;
+}
+.game-analytics-installs-reason-people {
+  color: var(--ink);
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The versions and the channels share the column beside the comparison of places. */
+.game-analytics-installs-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* By system has six columns: it asks for the room they need (their narrowest tracks, gaps and the
+   section's padding), so the last column never hides behind a sideways scroll beside the chart; the
+   chart takes the rest, or the two stack. */
+[data-game-analytics-report="installs"] .game-analytics-columns > [data-game-analytics-section="systems"] {
+  flex-basis: 670px;
+}

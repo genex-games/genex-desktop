@@ -55,6 +55,28 @@
   --stats-surface: var(--popover);
   --stats-edge: var(--line-strong);
   --stats-crosshair: color-mix(in oklab, var(--ink) 28%, transparent);
+  --stats-shadow: rgb(16 17 18 / 0.12);
+  /* A game's analytics. The period before's line and similar games' are greys told apart by their
+     dashes. The series palette is six hues in a fixed order and a grey for "everything else": the
+     first is the stats line, the rest are stepped for each theme so that neighbours in a stack stay
+     apart for colour-blind readers and every one stands 3:1 off the page. A campaign's mark is the
+     campaigns' series; a version's is the axis ink. A heat cell is tinted with the line's hue, up to
+     62%, where the ink still reads 4.6:1 on it. A bar whose number is written beside it (a funnel
+     step, a bucket) is the line's hue thinned, a list's track the faintest ink. */
+  --stats-before: #8b8d91;
+  --stats-similar: #6f7175;
+  --stats-series-1: var(--stats-line);
+  --stats-series-2: #d95926;
+  --stats-series-3: #199e70;
+  --stats-series-4: #c98500;
+  --stats-series-5: #d55181;
+  --stats-series-6: #0ca30c;
+  --stats-series-rest: #6f7175;
+  --stats-mark-campaign: var(--stats-series-2);
+  --stats-mark-version: var(--stats-ink);
+  --stats-heat: var(--stats-line);
+  --stats-track: color-mix(in oklab, var(--ink) 7%, transparent);
+  --stats-bar: color-mix(in srgb, var(--stats-line) 60%, transparent);
   --shard-light: #aeb7e2;
   --shard-mid: #6b7fdc;
   --shard-dark: #4555a8;
@@ -98,6 +120,21 @@
   --stats-surface: #ffffff;
   --stats-edge: #e4e4e7;
   --stats-crosshair: #c9ccd8;
+  --stats-shadow: rgb(16 17 18 / 0.12);
+  --stats-before: #6b6d72;
+  --stats-similar: #8a8c91;
+  --stats-series-1: var(--stats-line);
+  --stats-series-2: #d9632f;
+  --stats-series-3: #12956a;
+  --stats-series-4: #b87f00;
+  --stats-series-5: #d4578c;
+  --stats-series-6: #2f8f2f;
+  --stats-series-rest: #8a8c91;
+  --stats-mark-campaign: var(--stats-series-2);
+  --stats-mark-version: var(--stats-ink);
+  --stats-heat: var(--stats-line);
+  --stats-track: #ededee;
+  --stats-bar: color-mix(in srgb, var(--stats-line) 75%, transparent);
   --shard-mid: #4b60bf;
   --shard-dark: #313e7c;
 }

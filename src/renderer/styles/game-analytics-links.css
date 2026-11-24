@@ -1,0 +1,214 @@
+/* ── A game's analytics: Campaign links ── */
+/* This tab's own layout. The blocks it is built from (sections, columns, the data table) are the
+   kit's, in game-analytics.css; Copy's icon button is the page's (game-analytics-page.css);
+   colours are the app's roles and the stats tokens of people.css. */
+
+/* ── The form: the four tags in a grid that folds to one column, then the link, then Save ── */
+.game-analytics-links-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin: 0;
+}
+/* Each field is three rows of the grid (its name, its input, its note), so the inputs side by side
+   line up when one name's hint takes two lines. */
+.game-analytics-links-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: 0 14px;
+}
+.game-analytics-links-field {
+  display: grid;
+  grid-row: span 3;
+  grid-template-rows: subgrid;
+  row-gap: 6px;
+  min-width: 0;
+  padding-block-end: 16px;
+}
+/* A name sits right over its input, however tall the row its neighbour's hint makes. */
+.game-analytics-links-field-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  align-self: end;
+  gap: 0 8px;
+}
+.game-analytics-links-field-name {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.game-analytics-links-field-hint,
+.game-analytics-links-field-note {
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 20px;
+}
+.game-analytics-links-field-note {
+  color: var(--stats-down);
+}
+/* The tag is written in the code face it will be saved in, in the app's field, in ink: the shared
+   Input's own text class leaves it the page's colour. */
+.game-analytics-links-input {
+  height: 36px;
+  border: 0;
+  border-radius: 10px;
+  color: var(--ink);
+  font: 13px / 20px var(--font-family-mono);
+}
+.game-analytics-links-input::placeholder {
+  color: var(--ink-3);
+}
+.game-analytics-links-input[aria-invalid] {
+  box-shadow: inset 0 0 0 1.5px var(--stats-down);
+}
+.game-analytics-links-input:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: -2px;
+}
+
+/* ── The sources already used: small chips that fill Source ── */
+.game-analytics-links-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.game-analytics-links-chips-label {
+  margin-inline-end: 4px;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 20px;
+}
+.game-analytics-links-chip {
+  max-width: 100%;
+  height: 28px;
+  padding: 0 10px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 8px;
+  background: var(--field);
+  color: var(--ink-2);
+  font: 12px / 28px var(--font-family-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-quick),
+    color var(--duration-quick);
+}
+.game-analytics-links-chip:hover {
+  background: var(--people-card-hover);
+  color: var(--ink);
+}
+.game-analytics-links-chip:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+
+/* ── The link as it will be, and the short link of the saved link that has these tags ── */
+.game-analytics-links-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--surface);
+}
+.game-analytics-links-address {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.game-analytics-links-address + .game-analytics-links-address {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.game-analytics-links-address-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.game-analytics-links-address-label {
+  color: var(--stats-ink);
+  font: 12px / 16px var(--font-family-mono);
+}
+.game-analytics-links-address-url {
+  color: var(--ink);
+  font: 13px / 20px var(--font-family-mono);
+  overflow-wrap: anywhere;
+}
+
+/* ── Save, and what stands beside it: the note on tags, a refusal, or that the list is full ── */
+.game-analytics-links-save {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+}
+.game-analytics-links-note,
+.game-analytics-links-full,
+.game-analytics-links-refused {
+  flex: 1 1 240px;
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 20px;
+  text-wrap: pretty;
+}
+.game-analytics-links-full {
+  color: var(--ink);
+}
+.game-analytics-links-refused {
+  flex-basis: 100%;
+  color: var(--stats-down);
+}
+
+/* ── How a visit is credited: the five rules, numbered in the code face ── */
+.game-analytics-links-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+  padding: 0 0 0 30px;
+  list-style: decimal;
+  font-size: 13px;
+  line-height: 20px;
+}
+.game-analytics-links-rules > li::marker {
+  color: var(--stats-ink);
+  font-family: var(--font-family-mono);
+}
+.game-analytics-links-rule-text {
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+.game-analytics-links-rule-lead {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+/* ── The saved links' buttons: Copy and Remove, or the two that ask before removing ── */
+.game-analytics-links-actions,
+.game-analytics-links-confirm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  width: 100%;
+}
+.game-analytics-links-failed {
+  margin: 0;
+  color: var(--stats-down);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .game-analytics-links-chip {
+    transition: none;
+  }
+}

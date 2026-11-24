@@ -1,0 +1,189 @@
+/* ── A game's analytics: SDK ── */
+/* This tab's own layout. The blocks it is built from (sections, columns, terms, the data table, the
+   segment switch) are the kit's, in game-analytics.css; Copy's text button is the app's Button;
+   colours are the app's roles and the stats tokens of people.css. */
+
+/* Each of the page's two columns stacks its blocks with the page's gap. The one with the events
+   arriving asks for its table's width (its tracks, gaps and the section's padding), so the player
+   column is never cut off beside the other; the two stack when the page cannot hold both. */
+.game-analytics-sdk-column {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
+}
+.game-analytics-columns > .game-analytics-sdk-column:last-child {
+  flex-basis: 540px;
+}
+
+/* ── Send your own events: why this game can't yet, and the code to copy ── */
+.game-analytics-sdk-notice {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 20px;
+  text-wrap: pretty;
+}
+.game-analytics-sdk-sample {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.game-analytics-sdk-sample-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.game-analytics-sdk-sample-label {
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 20px;
+}
+.game-analytics-sdk-code {
+  padding: 14px 16px;
+  overflow-x: auto;
+  border-radius: 12px;
+  background: var(--surface);
+  font: 13px / 20px var(--font-family-mono);
+}
+.game-analytics-sdk-code:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+.game-analytics-sdk-code pre {
+  margin: 0;
+  color: var(--ink);
+  font: inherit;
+}
+.game-analytics-sdk-code code {
+  font: inherit;
+  white-space: pre;
+}
+
+/* ── Names that fill in reports: the names over what they fill, each group ruled above ── */
+.game-analytics-sdk-known {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+.game-analytics-sdk-known-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-block: 10px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  line-height: 20px;
+}
+.game-analytics-sdk-known-group:first-child {
+  padding-block-start: 0;
+  border-top: 0;
+}
+.game-analytics-sdk-known-group dt {
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font: 12px / 20px var(--font-family-mono);
+}
+.game-analytics-sdk-known-group dd {
+  margin: 0;
+  color: var(--ink-3);
+  text-wrap: pretty;
+}
+.game-analytics-sdk-name + .game-analytics-sdk-name::before {
+  content: ", ";
+}
+.game-analytics-sdk-with {
+  margin-inline-start: 6px;
+  color: var(--ink-3);
+}
+
+/* ── Events arriving now ── */
+.game-analytics-sdk-event-name,
+.game-analytics-sdk-properties {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.game-analytics-sdk-event-name {
+  color: var(--ink);
+  font: 12px / 18px var(--font-family-mono);
+}
+.game-analytics-sdk-event-name[data-automatic] {
+  color: var(--ink-3);
+}
+/* A long row stops at two lines; its title holds all of it. */
+.game-analytics-sdk-properties {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--ink-2);
+  font: 12px / 18px var(--font-family-mono);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.game-analytics-sdk-property + .game-analytics-sdk-property::before {
+  margin-inline: 6px;
+  color: var(--ink-3);
+  content: "·";
+}
+.game-analytics-sdk-property-name,
+.game-analytics-sdk-none {
+  color: var(--ink-3);
+}
+.game-analytics-sdk-none {
+  font: 12px / 18px var(--font-family-mono);
+}
+
+/* ── Dropped in the last 24 hours: a name and what to send instead, and the count at the end ── */
+.game-analytics-sdk-dropped {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.game-analytics-sdk-dropped-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding-block: 10px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  line-height: 20px;
+}
+.game-analytics-sdk-dropped-row:first-child {
+  border-top: 0;
+  padding-block-start: 0;
+}
+.game-analytics-sdk-dropped-words {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.game-analytics-sdk-dropped-name {
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font: 12px / 20px var(--font-family-mono);
+}
+.game-analytics-sdk-dropped-sentence {
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+.game-analytics-sdk-dropped-count {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  color: var(--stats-ink);
+  font: 12px / 20px var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.game-analytics-sdk-dropped-last {
+  color: var(--ink-3);
+  font-size: 11px;
+  line-height: 16px;
+}

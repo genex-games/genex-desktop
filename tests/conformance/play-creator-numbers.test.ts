@@ -8,14 +8,18 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { fixtureCreatorAnswer } from "../../src/main/dev/fixture-creator.ts";
+import { createFixtureGameAnalytics } from "../../src/main/dev/fixture-game-analytics/index.ts";
 import { fixturePlayRequest } from "../../src/main/dev/fixture-play.ts";
 import { FixtureAccount, fixtureAccountToken } from "../../src/main/dev/fixture-people.ts";
 import { CreatorRoute, creatorStats, toCreators, toStats } from "../../src/main/play/creator-stats.ts";
 import { CreditsRoute, genexCredits, toPlan, toPrices, toRecent } from "../../src/main/play/credits.ts";
 import { type GalleryAnswer, type GalleryRequest, PlayRoute, SignInNeeded } from "../../src/main/play/gallery.ts";
+import { toReportAnswer } from "../../src/main/play/game-analytics/reports.ts";
+import { reportRoute } from "../../src/main/play/game-analytics/routes.ts";
+import { GameReport, OverviewMetric } from "../../src/shared/game-analytics.ts";
 import { GenexOperation } from "../../src/shared/genex.ts";
 import { canAfford, CreditKind, operationPrice } from "../../src/shared/play-credits.ts";
-import { statsTotals } from "../../src/shared/play-stats.ts";
+import { STATS_PERIODS, type StatsPeriod, statsTotals } from "../../src/shared/play-stats.ts";
 
 const TOKEN = "genex-cli-token";
 const COVER = "https://cdn.genex.technology/covers/a.webp";
@@ -227,16 +231,18 @@ describe("the Credits tab", () => {
   });
 });
 
+/** The fixture account's two games, as the fixture catalog lists them. */
+const items = ["lost-cathedral", "stick-steel"].map((slug, index) => ({
+  slug,
+  title: slug,
+  thumbnailUrl: null,
+  playsCount: 2000 + index * 500,
+  online: index,
+  author: { id: "fx-simeon-m", name: "Simeon M" },
+}));
+const catalog = { games: (authorId: string) => (authorId === "fx-simeon-m" ? items : []) };
+
 describe("the fixture account's numbers", () => {
-  const items = ["lost-cathedral", "stick-steel"].map((slug, index) => ({
-    slug,
-    title: slug,
-    thumbnailUrl: null,
-    playsCount: 2000 + index * 500,
-    online: index,
-    author: { id: "fx-simeon-m", name: "Simeon M" },
-  }));
-  const catalog = { games: (authorId: string) => (authorId === "fx-simeon-m" ? items : []) };
   const stats = (account: (typeof FixtureAccount)[keyof typeof FixtureAccount], days = 7) =>
     toStats(
       fixtureCreatorAnswer(`${CreatorRoute.Stats}?days=${days}`, { token: fixtureAccountToken(account) }, catalog)
@@ -251,7 +257,11 @@ describe("the fixture account's numbers", () => {
     const fresh = stats(FixtureAccount.Fresh) ?? assert.fail();
     assert.equal(fresh.games.length, 1);
     assert.equal(fresh.games[0]?.playsBefore, 0, "nothing before a new game");
-    assert.deepEqual(fresh.games[0]?.plays.slice(0, 5), [0, 0, 0, 0, 0]);
+    assert.deepEqual(fresh.games[0]?.plays.slice(0, 4), [0, 0, 0, 0], "nothing before it was published, two days ago");
+    assert.ok(
+      fresh.games[0]?.plays.slice(4).every((plays) => plays > 0),
+      "plays on the day it was published and since",
+    );
     assert.equal(stats(FixtureAccount.New)?.games.length, 0);
     assert.equal(stats(FixtureAccount.Full, 90)?.games[0]?.plays.length, 90);
   });
@@ -270,6 +280,87 @@ describe("the fixture account's numbers", () => {
     assert.equal(fixtureCreatorAnswer(CreatorRoute.TopCreators, {}, catalog)?.status, 200);
     assert.equal(fixtureCreatorAnswer(CreditsRoute.Prices, {}, catalog)?.status, 200);
     assert.equal(fixtureCreatorAnswer(PlayRoute.Feed, {}, catalog), null, "the gallery's routes are not its");
+  });
+});
+
+describe("the fixture account's stats beside its games' analytics", () => {
+  /** The fixture's Overview of a game, as its analytics page reads it: the real route, the real parser. */
+  function overviewOf(
+    analytics: ReturnType<typeof createFixtureGameAnalytics>,
+    token: string,
+    query: { slug: string; report: typeof GameReport.Overview; days: StatsPeriod },
+  ) {
+    const answered = analytics.answer(reportRoute(query), { method: "GET", token }, catalog);
+    const overview = toReportAnswer(answered?.body, query, true);
+    return overview?.report === GameReport.Overview ? overview : assert.fail(`${query.slug}: no Overview`);
+  }
+
+  it("gives a game's row on the Stats page the numbers its analytics page shows, for every account and period", () => {
+    const now = Date.parse("2026-11-17T12:04:00.000Z");
+    const analytics = createFixtureGameAnalytics({ now: () => now });
+    const accounts = [FixtureAccount.Full, FixtureAccount.Quiet, FixtureAccount.Fresh];
+    const asked = accounts.flatMap((account) => STATS_PERIODS.map((days) => ({ account, days })));
+    for (const { account, days } of asked) {
+      const token = fixtureAccountToken(account);
+      const body = fixtureCreatorAnswer(`${CreatorRoute.Stats}?days=${days}`, { token }, catalog, () => now)?.body;
+      const read = toStats(body, days) ?? assert.fail(`${account} over ${days} days is not stats`);
+      assert.equal(read.endsOn, "2026-11-17", "the period ends today, in UTC");
+      assert.equal(read.games.length, account === FixtureAccount.Fresh ? 1 : 2);
+      for (const game of read.games) {
+        const about = `${account}: ${game.slug} over ${days} days`;
+        const overview = overviewOf(analytics, token, { slug: game.slug, report: GameReport.Overview, days });
+        const plays = overview.data.series[OverviewMetric.Plays] ?? assert.fail(`${about}: no plays`);
+        const players = overview.data.series[OverviewMetric.Players] ?? assert.fail(`${about}: no players`);
+        assert.deepEqual(game.plays, plays.daily, `${about}: plays per day`);
+        assert.deepEqual(game.players, players.daily, `${about}: players per day`);
+        assert.equal(game.playsBefore, plays.before, `${about}: plays before`);
+        assert.equal(game.playersTotal, players.now, `${about}: players`);
+        assert.equal(game.playersBefore, players.before, `${about}: players before`);
+        assert.equal(game.playingNow, overview.game.playingNow, `${about}: playing now`);
+        assert.equal(game.title, overview.game.title, about);
+      }
+    }
+  });
+
+  it("keeps the stats answer's own shape, and counts a person who plays two games once", () => {
+    const token = fixtureAccountToken(FixtureAccount.Full);
+    const body = fixtureCreatorAnswer(`${CreatorRoute.Stats}?days=30`, { token }, catalog)?.body as {
+      games: Record<string, unknown>[];
+      players: number;
+      playersBefore: number;
+      published: number;
+      publishedThisMonth: number;
+    };
+    assert.deepEqual(Object.keys(body).sort(), [
+      "days",
+      "endsOn",
+      "games",
+      "players",
+      "playersBefore",
+      "published",
+      "publishedThisMonth",
+    ]);
+    assert.deepEqual(Object.keys(body.games[0] ?? {}).sort(), [
+      "online",
+      "players",
+      "playersBefore",
+      "playersTotal",
+      "plays",
+      "playsBefore",
+      "slug",
+      "thumbnailUrl",
+      "title",
+    ]);
+    const total = (key: string) => body.games.reduce((sum, game) => sum + Number(game[key]), 0);
+    assert.ok(body.players > 0 && body.players < total("playersTotal"), "fewer people than the games' players summed");
+    assert.ok(body.playersBefore > 0 && body.playersBefore < total("playersBefore"));
+    assert.deepEqual([body.published, body.publishedThisMonth], [2, 2]);
+  });
+
+  it("refuses a period the Stats page does not offer", () => {
+    const token = fixtureAccountToken(FixtureAccount.Full);
+    assert.equal(fixtureCreatorAnswer(`${CreatorRoute.Stats}?days=14`, { token }, catalog)?.status, 400);
+    assert.equal(fixtureCreatorAnswer(CreatorRoute.Stats, { token }, catalog)?.status, 400);
   });
 });
 

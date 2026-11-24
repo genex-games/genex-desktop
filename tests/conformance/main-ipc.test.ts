@@ -21,6 +21,9 @@ import { registerJobsIpc } from "../../src/main/ipc/jobs.ts";
 import { type PlayIpcDeps, registerPlayIpc } from "../../src/main/ipc/play.ts";
 import { NativeArch, type NativeHost, NativePlatform } from "../../src/shared/play-native.ts";
 import { gameLinks } from "../../src/main/play/game-links.ts";
+import type { PlayViewer } from "../../src/main/play/viewer.ts";
+import { GenexSurface } from "../../src/shared/game-analytics.ts";
+import type { PlayGameDetail } from "../../src/shared/play.ts";
 import type { TerminalSession } from "../../src/shared/terminal.ts";
 import { createLoginControllers, settleSignIn, type SubscriptionEngine } from "../../src/main/login-controllers.ts";
 import { AccountId, SubscriptionAccounts } from "../../src/substrate/engines/subscription-accounts.ts";
@@ -1591,6 +1594,92 @@ describe("the in-window update prompt", () => {
   });
 });
 
+describe("Play opening a game, and a game's page", () => {
+  /** Play's channels with only the viewer and a game's page live: every open and page read is kept. */
+  function openRig(pageRead: PlayIpcDeps["pageRead"] = () => {}) {
+    const { handle, invoke } = registrar();
+    const opened: unknown[][] = [];
+    const unused = {} as unknown;
+    const viewer = { open: (...args: unknown[]) => void opened.push(args) } as unknown as PlayViewer;
+    const page = { slug: "iron-tide", title: "Iron Tide" } as unknown as PlayGameDetail;
+    registerPlayIpc(handle, {
+      gallery: { game: async () => page } as unknown as PlayIpcDeps["gallery"],
+      gameLinks: gameLinks(),
+      localGame: async () => null,
+      remix: async () => "",
+      remixReady: async () => ({}),
+      viewer: () => viewer,
+      installs: () => null,
+      here: () => null,
+      sessions: () => null,
+      reveal: () => {},
+      people: unused as PlayIpcDeps["people"],
+      creators: unused as PlayIpcDeps["creators"],
+      gameAnalytics: unused as PlayIpcDeps["gameAnalytics"],
+      credits: unused as PlayIpcDeps["credits"],
+      manage: unused as PlayIpcDeps["manage"],
+      web: "https://genex.games",
+      share: () => {},
+      pageRead,
+    });
+    return { invoke, opened, page };
+  }
+
+  it("opens a game in the viewer with the place in Genex that led to it, Other when none is named", async () => {
+    const { invoke, opened } = openRig();
+    for (const surface of Object.values(GenexSurface)) {
+      const answer = await invoke("studio:play.open", { slug: "iron-tide", title: "Iron Tide", surface });
+      assert.equal(answer.ok, true, surface);
+    }
+    assert.equal((await invoke("studio:play.open", { slug: "iron-tide", title: "Iron Tide" })).ok, true);
+    assert.deepEqual(opened, [
+      ...Object.values(GenexSurface).map((surface) => ["iron-tide", "Iron Tide", surface]),
+      ["iron-tide", "Iron Tide", GenexSurface.Other],
+    ]);
+  });
+
+  it("refuses a surface that is not one of Genex's places, and opens nothing", async () => {
+    const { invoke, opened } = openRig();
+    for (const surface of ["", "Feed", "feed&genex_place=browser", "recent", null, 7, {}, ["feed"]]) {
+      const answer = await invoke("studio:play.open", { slug: "iron-tide", title: "Iron Tide", surface });
+      assert.equal(answer.ok, false, String(surface));
+      if (!answer.ok) assert.match(answer.error, /place in Genex/, String(surface));
+    }
+    assert.deepEqual(opened, []);
+  });
+
+  it("tells a game's page read only while the page is shown, and answers the page either way", async () => {
+    const read: string[] = [];
+    const told = openRig((game) => void read.push(game.slug));
+    for (const payload of [{ slug: "iron-tide" }, { slug: "iron-tide", shown: false }]) {
+      assert.deepEqual(await told.invoke("studio:play.game", payload), { ok: true, value: told.page });
+    }
+    assert.deepEqual(read, [], "a read for a Recent cover is no page on screen");
+    const answer = await told.invoke("studio:play.game", { slug: "iron-tide", shown: true });
+    assert.deepEqual(answer, { ok: true, value: told.page });
+    assert.deepEqual(read, ["iron-tide"]);
+  });
+
+  it("answers a shown page even when telling its read throws", async () => {
+    const broken = openRig(() => {
+      throw new Error("the reporter broke");
+    });
+    const answer = await broken.invoke("studio:play.game", { slug: "iron-tide", shown: true });
+    assert.deepEqual(answer, { ok: true, value: broken.page });
+  });
+
+  it("refuses a page read whose word on being shown is not true or false, and tells nothing", async () => {
+    const read: string[] = [];
+    const { invoke } = openRig((game) => void read.push(game.slug));
+    for (const shown of ["true", 1, 0, null, {}, [true]]) {
+      const answer = await invoke("studio:play.game", { slug: "iron-tide", shown });
+      assert.equal(answer.ok, false, String(shown));
+      if (!answer.ok) assert.match(answer.error, /page is shown/, String(shown));
+    }
+    assert.deepEqual(read, []);
+  });
+});
+
 describe("Play's share menu", () => {
   /** Play's channels with only Share… and game links live: every menu it pops is kept. */
   function shareRig(web: string, links = gameLinks(), here: NativeHost | null = null) {
@@ -1610,6 +1699,7 @@ describe("Play's share menu", () => {
       reveal: () => {},
       people: unused as PlayIpcDeps["people"],
       creators: unused as PlayIpcDeps["creators"],
+      gameAnalytics: unused as PlayIpcDeps["gameAnalytics"],
       credits: unused as PlayIpcDeps["credits"],
       manage: unused as PlayIpcDeps["manage"],
       web,
@@ -1646,6 +1736,23 @@ describe("Play's share menu", () => {
       ok: true,
       value: { installed: [], progress: [], host: windows },
     });
+  });
+
+  it("registers a game's analytics among Play's channels, each refusing a malformed question", async () => {
+    const { invoke } = shareRig("https://genex.games");
+    for (const channel of [
+      "studio:play.game-report",
+      "studio:play.game-events",
+      "studio:play.campaign-links",
+      "studio:play.campaign-link-save",
+      "studio:play.campaign-link-remove",
+      "studio:play.funnel-save",
+      "studio:play.funnel-remove",
+    ]) {
+      const answer = await invoke(channel, { slug: "Not A Slug" });
+      assert.equal(answer.ok, false, channel);
+      if (!answer.ok) assert.match(answer.error, /game address/, channel);
+    }
   });
 
   it("pops for a page of the website Play links to, by the button that asked", async () => {

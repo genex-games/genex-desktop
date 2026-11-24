@@ -16,6 +16,7 @@ import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { t, tc } from "../../shared/i18n.ts";
 import { isJsonObject, writeFileNoFollow } from "../../substrate/fsx.ts";
+import { isInside } from "../../substrate/paths.ts";
 import { type HookAnswer, HookEvent, HOOK_RECORDING_MAX } from "../../shared/plugin-hooks.ts";
 import { OBSERVE_CALL_MS } from "../../shared/observers.ts";
 import type { Activate, PluginActivation, PluginContext, PluginReview } from "../../plugin-sdk/index.d.ts";
@@ -53,10 +54,23 @@ import {
 } from "./export-templates.ts";
 import { checkedCount, dataCopied, isError, MAX_PROBLEMS, problemLines, readProblems } from "./godot-output.ts";
 import {
+  APP_PRESET,
+  type AppPlatform,
+  appBytes,
+  appExportCall,
+  appWrittenAt,
+  exportFailed,
+  isAppPlatform,
+  macSignedAt,
+  prepareAppExport,
+} from "./app-export.ts";
+import {
   checkCall,
   confinedRunner,
   DEFAULT_RUN_SECONDS,
+  type GodotCall,
   type GodotJobScope,
+  type GodotResult,
   type GodotRunner,
   importCall,
   MAX_RUN_SECONDS,
@@ -147,6 +161,7 @@ export const GodotTool = {
   ShowSteps: "show-steps",
   Multiplayer: "multiplayer",
   ExportTemplates: "export-templates",
+  AppExport: "app-export",
 } as const;
 type GodotTool = (typeof GodotTool)[keyof typeof GodotTool];
 const TOOL_NAMES: ReadonlySet<string> = new Set(Object.values(GodotTool));
@@ -176,10 +191,11 @@ const HERO_RECORDING_SECONDS = 6;
 /** How far a file system's clock may lag Genex's when it tells a fresh export from an old one. */
 const EXPORT_CLOCK_SLACK_MS = 2 * SECOND_MS;
 /**
- * `web-export`'s whole call (plugin.json's `timeoutMs`, nine minutes) less the time its answer
- * takes: the template's fetch, its copy on Windows and Godot's export all fit in it.
+ * An export's whole call (`web-export`'s and `app-export`'s: plugin.json's `timeoutMs`, nine
+ * minutes) less the time its answer takes: the template's fetch, its copy on Windows and Godot's
+ * export all fit in it.
  */
-const WEB_EXPORT_BUDGET_MS = 9 * MINUTE_MS - 15 * SECOND_MS;
+const EXPORT_BUDGET_MS = 9 * MINUTE_MS - 15 * SECOND_MS;
 /** The least of that budget Godot's export is left: a template that took longer to fetch stops the call before Godot runs. */
 const MIN_EXPORT_MS = MINUTE_MS;
 /** How many problems a checkpoint's note names. */
@@ -236,6 +252,27 @@ const MESSAGE = {
     NotKept: (why: string) => `Godot's web build in web/ wasn't refreshed (${why}); it plays the game as it was.`,
     Done: (files: number) =>
       `Exported the game for the web into ${WEB_EXPORT_FOLDER}/ (${files} files): Live's Web game tab plays it and Publish puts it online. It is Godot's build: never edit its files; export again after changing the project.`,
+  },
+  App: {
+    BadPlatform: "platform is mac, windows or linux: one app a call.",
+    MacOnWindows:
+      "A Mac app is exported on a Mac: on Windows Godot makes only a .zip of one, which Publish doesn't send. Export the Windows and Linux apps here.",
+    NoTemplates: (version: string, platform: string, why: string) =>
+      `Godot ${version}'s export template for ${platform} isn't on this computer and Genex couldn't fetch it: ${why} If it keeps failing, tell the person to open the project in Godot (the Godot button above the game), choose Editor → Manage Export Templates and press Download and Install, then export again.`,
+    Link: "The app's folder in Builds/ or the project's export_presets.cfg is a link, so Genex won't write through it.",
+    Failed: (platform: string, lines: readonly string[]) =>
+      `Godot's ${platform} export didn't finish${lines.length ? `: ${lines.join(" | ")}` : ""}. Fix what it names (godot__check helps), then export again.`,
+    TimedOut: (platform: string) => `Godot's ${platform} export didn't finish in time and was stopped.`,
+    NoTimeLeft:
+      "Getting Godot's export template took most of this call's time, so Genex didn't start the export. It's in place now: export again.",
+    Done: (platform: string, where: string, megabytes: number, preset: string, published: boolean) =>
+      [
+        `Exported the ${platform} app to ${where} (${megabytes} MB).`,
+        published
+          ? "Publish's row for it reads it from there: tell the person to press Publish."
+          : "This project is outside the game's folder, where Publish doesn't look: move it into the game first.",
+        `It is Godot's build: never edit its files; export again after changing the project. Its version, icon and other options are the "${preset}" preset's in export_presets.cfg.`,
+      ].join(" "),
   },
   Editor: {
     NoAnswer:
@@ -532,13 +569,13 @@ async function reloadEditor(deps: GodotBackendDeps, context: PluginContext): Pro
  */
 async function webExport(deps: GodotBackendDeps, context: PluginContext): Promise<number> {
   const now = deps.now ?? Date.now;
-  const deadline = now() + WEB_EXPORT_BUDGET_MS;
+  const deadline = now() + EXPORT_BUDGET_MS;
   const game = gameFolderOf(context);
   if (!game) throw new Error(MESSAGE.NoGameOpen);
   const project = await requireProject(context);
   const install = await requireGodot(deps, context);
   // The fetch leaves the export its least: a slower one is stopped, never Godot's export cut short.
-  const fetching = AbortSignal.any([context.signal, AbortSignal.timeout(WEB_EXPORT_BUDGET_MS - MIN_EXPORT_MS)]);
+  const fetching = AbortSignal.any([context.signal, AbortSignal.timeout(EXPORT_BUDGET_MS - MIN_EXPORT_MS)]);
   await ensureTemplates(deps, install, [ExportTemplate.Web], fetching).catch((error: unknown) => {
     context.signal.throwIfAborted();
     throw new Error(MESSAGE.Web.NoTemplates(versionName(install.version), errorMessage(error)));
@@ -556,20 +593,104 @@ async function webExport(deps: GodotBackendDeps, context: PluginContext): Promis
   const job = jobOf(context, project);
   // Windows: the sandbox user's Godot reads templates in its own data folder, so the person's goes there first.
   if (deps.env.platform === "win32") await placeTemplate(deps, install, project, job);
-  const left = deadline - now();
-  if (left < MIN_EXPORT_MS) throw new Error(MESSAGE.Web.NoTimeLeft);
-  const started = Date.now();
-  // A Windows job may wait its turn first: the runner reads the budget again when it starts.
-  const budget = { until: deadline, now, least: MIN_EXPORT_MS, refusal: MESSAGE.Web.NoTimeLeft };
-  const exporting = { ...call, timeoutMs: Math.min(call.timeoutMs, left) };
-  const result = await deps.run(install.binary, exporting, { ...job, budget });
-  if (result.timedOut) throw new Error(MESSAGE.Web.TimedOut);
+  const words = { noTimeLeft: MESSAGE.Web.NoTimeLeft, timedOut: MESSAGE.Web.TimedOut };
+  const { result, started } = await runExport(deps, install, call, job, { until: deadline, now }, words);
   const pack = await stat(path.join(folder, WEB_PACK)).catch(() => null);
   const written = pack !== null && pack.mtimeMs >= started - EXPORT_CLOCK_SLACK_MS;
   const errors = readProblems(result.output).filter(isError);
   if (!written) throw new Error(MESSAGE.Web.Failed(problemLines(errors.slice(0, NOTED_PROBLEMS))));
   if (multiplayer) await copyBridge(folder, deps.multiplayer, MESSAGE.Web.Link);
   return (await readdir(folder)).filter((name) => !name.startsWith(".")).length;
+}
+
+/**
+ * Godot's export job, in what its call's budget leaves: refused with less than a minute left, cut at
+ * the deadline, and stopped with `words.timedOut` when Godot didn't finish. Answers what Godot
+ * printed and when the job was started, which tells a fresh export from an old one.
+ */
+async function runExport(
+  deps: GodotBackendDeps,
+  install: GodotInstall,
+  call: GodotCall,
+  job: GodotJobScope,
+  time: { until: number; now: () => number },
+  words: { noTimeLeft: string; timedOut: string },
+): Promise<{ result: GodotResult; started: number }> {
+  const left = time.until - time.now();
+  if (left < MIN_EXPORT_MS) throw new Error(words.noTimeLeft);
+  const started = Date.now();
+  // A Windows job may wait its turn first: the runner reads the budget again when it starts.
+  const budget = { ...time, least: MIN_EXPORT_MS, refusal: words.noTimeLeft };
+  const exporting = { ...call, timeoutMs: Math.min(call.timeoutMs, left) };
+  const result = await deps.run(install.binary, exporting, { ...job, budget });
+  if (result.timedOut) throw new Error(words.timedOut);
+  return { result, started };
+}
+
+/**
+ * Refuses an export that left no app to publish: no program newer than the job's start, Godot's own
+ * word that the export failed, or a Mac app Godot didn't sign. An app written and then given up on
+ * is removed, so Publish never finds it.
+ */
+async function assertExported(platform: AppPlatform, entry: string, started: number, output: string) {
+  const fresh = (at: number | null) => at !== null && at >= started - EXPORT_CLOCK_SLACK_MS;
+  const written = fresh(await appWrittenAt(platform, entry));
+  const signed = platform !== ExportPlatform.Mac || fresh(await macSignedAt(entry));
+  if (written && signed && !exportFailed(output, platform)) return;
+  if (written) await rm(entry, { recursive: true, force: true });
+  const errors = readProblems(output).filter(isError);
+  throw new Error(MESSAGE.App.Failed(APP_WORD[platform], problemLines(errors.slice(-NOTED_PROBLEMS))));
+}
+
+/** How the agent's words name an app's platform. */
+const APP_WORD: Readonly<Record<AppPlatform, string>> = {
+  [ExportPlatform.Mac]: "Mac",
+  [ExportPlatform.Windows]: "Windows",
+  [ExportPlatform.Linux]: "Linux",
+};
+const MEGABYTE = 1024 * 1024;
+
+/**
+ * `app-export`: Godot's export of the game's project as one platform's app into the project's
+ * `Builds/<Platform>/`, as a Godot job of Genex's (`app-export.ts`), so it works from a session
+ * whose own shell can't reach Godot's settings and macOS's temporary folder. A missing template is
+ * fetched first; a Mac app is made on a Mac only. Answers where the app is.
+ */
+async function appExport(deps: GodotBackendDeps, args: Record<string, unknown>, context: PluginContext) {
+  const now = deps.now ?? Date.now;
+  const deadline = now() + EXPORT_BUDGET_MS;
+  const { platform } = args;
+  if (!isAppPlatform(platform)) throw new Error(MESSAGE.App.BadPlatform);
+  const windows = deps.env.platform === "win32";
+  if (windows && platform === ExportPlatform.Mac) throw new Error(MESSAGE.App.MacOnWindows);
+  const game = gameFolderOf(context);
+  if (!game) throw new Error(MESSAGE.NoGameOpen);
+  const project = await requireProject(context);
+  const install = await requireGodot(deps, context);
+  const names = PLATFORM_TEMPLATES[platform];
+  // The fetch leaves the export its least: a slower one is stopped, never Godot's export cut short.
+  const fetching = AbortSignal.any([context.signal, AbortSignal.timeout(EXPORT_BUDGET_MS - MIN_EXPORT_MS)]);
+  await ensureTemplates(deps, install, names, fetching).catch((error: unknown) => {
+    context.signal.throwIfAborted();
+    throw new Error(MESSAGE.App.NoTemplates(versionName(install.version), platform, errorMessage(error)));
+  });
+  const target = await prepareAppExport(project, platform, MESSAGE.App.Link);
+  if (platform === ExportPlatform.Mac) await importMacTextures(project);
+  const call = appExportCall(project, platform, target.entry, {
+    folder: webTemplates(deps.env.dataHome, install).folder,
+    version: templateVersion(install.version),
+    userTemp: await deps.env.userTemp(),
+  });
+  const job = jobOf(context, project);
+  // Windows: the sandbox user's Godot reads templates in its own data folder, so the person's go there first.
+  if (windows) for (const name of names) await placeTemplate(deps, install, project, job, name);
+  const word = APP_WORD[platform];
+  const words = { noTimeLeft: MESSAGE.App.NoTimeLeft, timedOut: MESSAGE.App.TimedOut(word) };
+  const { result, started } = await runExport(deps, install, call, job, { until: deadline, now }, words);
+  await assertExported(platform, target.entry, started, result.output);
+  const megabytes = Math.max(1, Math.round((await appBytes(platform, target)) / MEGABYTE));
+  const where = path.relative(game, target.entry).split(path.sep).join("/");
+  return MESSAGE.App.Done(word, where, megabytes, APP_PRESET[platform], isInside(game, target.entry));
 }
 
 /** Windows: the person's Web template put in the sandbox user's own data folder, or why it couldn't be, before Godot exports. */
@@ -1279,6 +1400,7 @@ export function createGodotBackend(deps: GodotBackendDeps): PluginActivation {
     [GodotTool.EngineStatus]: (_args, context) => engineStatus(deps, context),
     [GodotTool.CheckpointCheck]: (_args, context) => checkAtMoment(deps, context),
     [GodotTool.WebExport]: async (_args, context) => MESSAGE.Web.Done(await webExport(deps, context)),
+    [GodotTool.AppExport]: (args, context) => appExport(deps, args, context),
     [GodotTool.SaveAll]: (_args, context) => saveAll(deps, context),
     [GodotTool.KeepWebBuild]: (_args, context) => keepWebBuild(deps, context),
     [GodotTool.ReloadEditor]: (_args, context) => reloadEditor(deps, context),

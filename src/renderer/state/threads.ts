@@ -211,6 +211,16 @@ export function projectWorking(state: Pick<ThreadsState, "records" | "status">, 
   );
 }
 
+/** The games with a chat working right now, by name, in order and joined by a line break: one value a selector can compare. */
+export function gamesWorking(state: Pick<ThreadsState, "records" | "status">): string {
+  const games = new Set<string>();
+  for (const record of state.records) {
+    const { project } = threadMeta(record);
+    if (project && isWorkingStatus(state.status[record.id]?.status)) games.add(project);
+  }
+  return [...games].sort().join("\n");
+}
+
 /** Threads with a working status line (anything but idle). */
 export function busyThreadIds(status: ThreadStatusMap): Set<string> {
   return new Set(

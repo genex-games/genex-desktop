@@ -1,8 +1,17 @@
 /**
  * Where Play's viewer takes a game's page: its own address carrying the sign-in ticket (or the
- * guest marker) in the fragment, and which addresses the page may move to afterwards.
+ * guest marker) in the fragment and, in its query, that the play runs in the Genex app and which
+ * place in the app led to it (`PLAY_PLACE_PARAM`, `PLAY_SURFACE_PARAM`: `genex_` keys, which the
+ * embed SDK never shows the game); and which addresses the page may move to afterwards.
  */
 import { SECOND_MS } from "../../shared/duration.ts";
+import {
+  GenexSurface,
+  isGenexSurface,
+  PLAY_PLACE_PARAM,
+  PLAY_SURFACE_PARAM,
+  PlayPlace,
+} from "../../shared/game-analytics.ts";
 import { PLAY_ORIGIN, type PlayOrigins, playGameUrl } from "../../shared/play.ts";
 import { onWebsite } from "./origins.ts";
 
@@ -18,11 +27,19 @@ const AUTHORIZE = { path: "/play/authorize", guest: { name: "guest", value: "ok"
 
 /**
  * The page address that plays `slug` from the game host `games` (genex.games' unless a development
- * profile's stand serves its own): signed in with `ticket`, else as a guest.
+ * profile's stand serves its own): signed in with `ticket`, else as a guest, marked as a play in the
+ * Genex app that `surface` led to (any value that names no place reads as Other).
  */
-export function playAddress(slug: string, ticket: string | undefined, games: string = PLAY_ORIGIN.games): string {
+export function playAddress(
+  slug: string,
+  ticket: string | undefined,
+  games: string = PLAY_ORIGIN.games,
+  surface: unknown = GenexSurface.Other,
+): string {
   const fragment = ticket ? `genex_ticket=${encodeURIComponent(ticket)}` : "genex_guest=1";
-  return `${playGameUrl(slug, games)}?genex_r=1#${fragment}`;
+  const place = isGenexSurface(surface) ? surface : GenexSurface.Other;
+  const marks = `${PLAY_PLACE_PARAM}=${PlayPlace.GenexApp}&${PLAY_SURFACE_PARAM}=${encodeURIComponent(place)}`;
+  return `${playGameUrl(slug, games)}?genex_r=1&${marks}#${fragment}`;
 }
 
 /** Whether `url` is a game's own address under the game host `games`: its scheme and port, any subdomain. */

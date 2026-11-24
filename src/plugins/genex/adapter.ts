@@ -372,6 +372,11 @@ const MIN_ASSET_SUBMIT_MS = 30 * SECOND_MS;
 const TERMS_WAIT_MS = 100 * SECOND_MS;
 /** How often a generation waiting on the terms asks Genex again. */
 const TERMS_POLL_MS = 3 * SECOND_MS;
+/**
+ * How often a publish record that says the terms wait asks Genex again when it is read: the person
+ * accepts them in the browser, and the dialog reads the record on opening and every few seconds.
+ */
+export const TERMS_RECHECK_MS = 5 * SECOND_MS;
 /** The workspace folder name: letters, digits, `_` and `-` only, so it can never be a path. */
 const PROJECT_NAME = /^[a-zA-Z0-9_-]+$/;
 const DEVICE_LABEL = "AI Game Studio";
@@ -724,6 +729,8 @@ export class GenexTools {
   /** The folder of the browser SDK a published game that brings none of its own is connected with. */
   readonly #embedSdk: string | undefined;
   readonly #termsWait: { waitMs: number; pollMs: number };
+  /** When each game's publish record last asked Genex whether its waiting terms were accepted. */
+  readonly #termsRechecks = new Map<string, number>();
   constructor(
     root: string,
     api = "https://api.genex.games",
@@ -982,7 +989,26 @@ export class GenexTools {
     // "Check again" on an upload with no recorded outcome asks Genex what it holds.
     if (canForceSettle(state.job, Boolean(live), force)) await this.#settleUnknownUpload(project, state);
     if (deploymentCheckDue(state.job, Boolean(live), force)) await this.#checkDeployment(project, state);
+    await this.#recheckTerms(project, state);
     return state;
+  }
+  /**
+   * A record that says Genex's terms wait is only as true as its last question: the person accepts
+   * them in the browser, where nothing tells Studio. So a read of such a record asks Genex again, at
+   * most every {@link TERMS_RECHECK_MS}, and keeps the answer once they are accepted. An account
+   * Genex cannot be asked about keeps what the record says.
+   */
+  async #recheckTerms(project: string, state: GenexPublishState): Promise<void> {
+    if (state.terms?.accepted !== false || !state.connected) return;
+    const now = this.#now();
+    const askedAt = this.#termsRechecks.get(project);
+    if (askedAt !== undefined && now - askedAt < TERMS_RECHECK_MS) return;
+    this.#termsRechecks.set(project, now);
+    const legal = await this.#fetch(GenexRoute.LegalStatus).catch(() => null);
+    if (legal?.accepted !== true) return;
+    this.#termsRechecks.delete(project);
+    state.terms = { ...state.terms, accepted: true };
+    await this.#savePublishState(project, state);
   }
   /**
    * What Genex holds for this slug: the staging revision (null when there is none, or no hosted

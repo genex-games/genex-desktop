@@ -1,0 +1,10 @@
+/* ── A game's analytics: Revenue ── */
+/* This report's own layout. The blocks it is built from (tiles, sections, charts, tables) are the
+   kit's, in game-analytics.css; colours are the stats tokens of people.css. */
+
+/* What players buy has six columns that must not be squeezed to the width of the curve beside it:
+   it asks for the room its columns need (their narrowest tracks, gaps and the section's padding),
+   and the curve takes the rest or drops under it. */
+[data-game-analytics-report="revenue"] .game-analytics-columns > :first-child {
+  flex-basis: 560px;
+}

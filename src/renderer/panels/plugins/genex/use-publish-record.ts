@@ -57,7 +57,13 @@ export function usePublishRecord(plugin: PluginInfo, project: string | null) {
   useEffect(() => {
     void refresh();
     const timer = window.setInterval(() => void refresh(), busy ? RUNNING_POLL_MS : IDLE_POLL_MS);
-    return () => window.clearInterval(timer);
+    // Back from the browser (Genex's terms accepted there, a sign-in finished): the record is read at once.
+    const onFocus = (): void => void refresh();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
   }, [refresh, busy]);
   const run = async (press: Pressing, step: () => Promise<unknown>): Promise<void> => {
     setError("");

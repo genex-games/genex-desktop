@@ -92,6 +92,7 @@ export function eventsRpc(core: StudioCore, x: CoreInternals) {
       };
       const head = await turn.end(p.status ?? "ok", Object.keys(metadata).length ? metadata : undefined);
       x.openTurns.delete(p.turnId);
+      x.afterTurnEnds(turn.threadId);
       return head;
     },
   } satisfies Partial<HarnessHostHandlers>;

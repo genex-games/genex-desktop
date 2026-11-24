@@ -7,7 +7,7 @@
  * a fix Studio quit in the middle of is said to have stopped. A second turn-down never sends again.
  */
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { after, before, describe, it } from "node:test";
 import {
   afterFixRunEnds,
   fixReviewFromDialog,
@@ -27,6 +27,9 @@ import {
   type GenexReviewStatus,
   gameReviewOf,
 } from "../../src/shared/genex-review.ts";
+import { HostMethod } from "../../src/shared/harness-api.ts";
+import { Changes, until } from "../helpers/changes.ts";
+import { type CoreLite, coreLite } from "../helpers/core-lite.ts";
 
 const START = Date.parse("2026-10-27T14:20:00.000Z");
 const THINGS = [
@@ -433,19 +436,56 @@ describe("Request human review", () => {
   });
 });
 
-describe("the core's review presses, as the IPC hands them over", () => {
-  it("refuse a payload that is not a game or a note over 500 characters, asking Genex nothing", async () => {
-    const { coreLite } = await import("../helpers/core-lite.ts");
-    const lite = await coreLite();
-    try {
-      await assert.rejects(lite.core.genexFixReview(undefined, true));
-      await assert.rejects(lite.core.genexFixReview({ project: "x" }, true));
-      await assert.rejects(lite.core.genexRequestReview("", {}));
-      await assert.rejects(lite.core.genexRequestReview("dust", { note: "x".repeat(501) }), /500/);
-      await assert.rejects(lite.core.genexRequestReview("dust", { note: 42 }));
-      await assert.rejects(lite.core.genexReviewStatus(null, true));
-    } finally {
-      await lite.close();
-    }
+describe("the core itself", () => {
+  const changed = new Changes();
+  let lite: CoreLite;
+
+  before(async () => {
+    lite = await coreLite({ onUiEvent: () => changed.notify() });
+  });
+  after(() => lite.close());
+
+  it("takes its step after a fix once the harness ends the agent's chat turn, with no build in between", {
+    timeout: 20_000,
+  }, async () => {
+    const { core } = lite;
+    const api = lite.api() as unknown as Record<string, (input: unknown) => Promise<unknown>>;
+    const call = (method: string, params: unknown) => {
+      const handler = api[method];
+      assert.ok(handler, method);
+      return handler(params);
+    };
+    await core.games.scaffold("dust");
+    const threadId = await core.threadForGame("dust");
+    await core.append(
+      [
+        customEventData(CustomEvent.GenexReviewFix, {
+          project: "dust",
+          fixId: "fix-1",
+          kind: GenexFixKind.Web,
+          count: 1,
+          autoPublish: true,
+          at: new Date(START).toISOString(),
+        }),
+      ],
+      threadId,
+    );
+    const { turnId } = (await call(HostMethod.TurnBegin, { threadId })) as { turnId: string };
+    await call(HostMethod.TurnEnd, { turnId });
+    const outcomes = async () =>
+      (await core.store.listEvents(threadId))
+        .map((event) => customPayload(event.data, CustomEvent.GenexReview)?.change)
+        .filter((change) => change !== undefined);
+    await until(changed, async () => (await outcomes()).length > 0);
+    assert.deepEqual(await outcomes(), [GenexReviewChange.FixedWeb]);
+  });
+
+  it("refuses a review press whose payload is not a game or whose note is over 500 characters, asking Genex nothing", async () => {
+    await assert.rejects(lite.core.genexFixReview(undefined, true));
+    await assert.rejects(lite.core.genexFixReview({ project: "x" }, true));
+    await assert.rejects(lite.core.genexRequestReview("", {}));
+    await assert.rejects(lite.core.genexRequestReview("dust", { note: "x".repeat(501) }), /500/);
+    await assert.rejects(lite.core.genexRequestReview("dust", { note: 42 }));
+    await assert.rejects(lite.core.genexReviewStatus(null, true));
   });
 });

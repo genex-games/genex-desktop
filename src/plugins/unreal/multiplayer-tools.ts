@@ -26,13 +26,19 @@ import { createReadStream } from "node:fs";
 import { chmod, lstat, mkdir, readdir, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
-import { promisify } from "node:util";
+import { isDeepStrictEqual, promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { downloadFile } from "../../substrate/app-install.ts";
-import { ensureDirBelow, isJsonObject, writeFileNoFollow } from "../../substrate/fsx.ts";
-import { enableProjectPlugin } from "./cpp-module.ts";
+import {
+  atomicWriteText,
+  ensureDirBelow,
+  isJsonObject,
+  readRegularFile,
+  writeFileNoFollow,
+} from "../../substrate/fsx.ts";
+import { enableProjectPlugin, formatOf, parseDescriptor, writtenLike } from "./cpp-module.ts";
 
 /** The tool, by its name after `unreal__`. */
 export const MultiplayerToolName = { Multiplayer: "multiplayer" } as const;
@@ -95,6 +101,18 @@ const MAC_HEADERS = "Headers";
 const STORAGE_FOLDER = "multiplayer";
 const UNZIP = "/usr/bin/unzip";
 const UNZIP_MS = 2 * MINUTE_MS;
+/** The plugin's descriptor in a project, parts below the project's folder. */
+const PROJECT_DESCRIPTOR = ["Plugins", MULTIPLAYER_PLUGIN, `${MULTIPLAYER_PLUGIN}.uplugin`] as const;
+/** A descriptor is a few hundred bytes; one past this is not read. */
+const DESCRIPTOR_MAX_BYTES = 64 * 1024;
+/** The descriptor's field naming the one Unreal a plugin is for, and the one marking a prebuilt plugin. */
+const ENGINE_VERSION_FIELD = "EngineVersion";
+const INSTALLED_FIELD = "Installed";
+/** The engine version as a member on a line of its own with a member after it: the layout Unreal and Genex write. */
+const ENGINE_VERSION_LINE = new RegExp(
+  `^[ \\t]*"${ENGINE_VERSION_FIELD}"[ \\t]*:[ \\t]*"[^"\\\\\\r\\n]*"[ \\t]*,[ \\t]*\\r?\\n`,
+  "m",
+);
 
 const MESSAGE = {
   Checksum: "The Colyseus core Genex downloaded isn't the one it pins, so it was not used.",
@@ -346,4 +364,58 @@ export async function addMultiplayer(
       ? "Read the unreal-multiplayer skill (unreal__skill), then: cpp-status (add-cpp-module if the game has none), write server/room.ts and genex.json's authority block, genex__room validate, the client on the Genex Authority Subsystem, a rebuild with Unreal closed so it builds the plugin, then genex__room start and Play."
       : "The plugin is in the project, but Unreal can't build it without the Colyseus core (see core.why); call unreal__multiplayer again to retry.",
   };
+}
+
+/** Whether `text` is JSON that holds exactly `json`. */
+function holds(text: string, json: Record<string, unknown>): boolean {
+  try {
+    return isDeepStrictEqual(parseDescriptor(text), json);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A descriptor's text without its engine version: that one line cut out and every other byte kept
+ * when the file is laid out the usual way, else the same JSON written again the way the file was.
+ */
+function withoutEngineVersion(text: string, json: Record<string, unknown>): string {
+  const { [ENGINE_VERSION_FIELD]: _engine, ...rest } = json;
+  const cut = text.replace(ENGINE_VERSION_LINE, "");
+  return holds(cut, rest) ? cut : writtenLike(formatOf(text), rest);
+}
+
+/** The descriptor of the game's own copy of the plugin, read by no link; undefined without one that reads. */
+async function projectDescriptor(projectFile: string): Promise<{ file: string; text: string } | undefined> {
+  let at = path.dirname(projectFile);
+  for (const part of PROJECT_DESCRIPTOR) {
+    at = path.join(at, part);
+    if ((await lstat(at).catch(() => null))?.isSymbolicLink() !== false) return undefined;
+  }
+  const bytes = await readRegularFile(at, DESCRIPTOR_MAX_BYTES).catch(() => null);
+  return bytes ? { file: at, text: bytes.toString("utf8") } : undefined;
+}
+
+/**
+ * Takes the engine version out of the descriptor of the game's own copy of the plugin, in the
+ * project `projectFile`. A copy an older Genex put there names the Unreal it was written for, and
+ * any other Unreal then asks "Attempt to load it anyway?" before it loads the plugin (with nobody
+ * to ask, it skips it). The plugin is source that compiles with the game, so it names no engine.
+ * Every other field and byte stays. A prebuilt plugin (`Installed`) keeps its engine: its binaries
+ * are for that one. Answers whether the file changed; a descriptor that is missing, doesn't read
+ * as a JSON object or is reached through a link is left as it is.
+ */
+export async function unpinMultiplayerEngine(projectFile: string): Promise<boolean> {
+  const descriptor = await projectDescriptor(projectFile);
+  if (!descriptor) return false;
+  let json: unknown;
+  try {
+    json = parseDescriptor(descriptor.text);
+  } catch {
+    return false;
+  }
+  if (!isJsonObject(json) || !(ENGINE_VERSION_FIELD in json)) return false;
+  if (json[INSTALLED_FIELD] === true) return false;
+  await atomicWriteText(descriptor.file, withoutEngineVersion(descriptor.text, json));
+  return true;
 }

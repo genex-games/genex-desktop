@@ -21,7 +21,9 @@ import {
   playAddress,
   playNavigationAllowed,
 } from "../../src/main/play/game-address.ts";
+import { micGateFor } from "../../src/main/play/mic.ts";
 import { closePage, closeWithWindow, dropGameView } from "../../src/main/play/view-drop.ts";
+import { GenexSurface, PLAY_PLACE_PARAM, PLAY_SURFACE_PARAM, PlayPlace } from "../../src/shared/game-analytics.ts";
 import { NOTE_MS, SHOW_GAME_AFTER_MS } from "../../src/main/play/viewer.ts";
 import type { PlayComment } from "../../src/shared/play-comments.ts";
 import { NativeAppOffer, NativePlatform, type PlayBarNative } from "../../src/shared/play-native.ts";
@@ -820,12 +822,74 @@ describe("Play addresses", () => {
   it("carries the ticket, or the guest marker, in the fragment", () => {
     assert.equal(
       playAddress("lost-cathedral", "a.b+c"),
-      "https://lost-cathedral.genex.technology/?genex_r=1#genex_ticket=a.b%2Bc",
+      "https://lost-cathedral.genex.technology/?genex_r=1&genex_place=genex_app&genex_surface=other#genex_ticket=a.b%2Bc",
     );
     assert.equal(
       playAddress("lost-cathedral", undefined),
-      "https://lost-cathedral.genex.technology/?genex_r=1#genex_guest=1",
+      "https://lost-cathedral.genex.technology/?genex_r=1&genex_place=genex_app&genex_surface=other#genex_guest=1",
     );
+  });
+
+  it("tells genex.games the play runs in the Genex app, and which place in it led there", () => {
+    for (const surface of Object.values(GenexSurface)) {
+      const url = new URL(playAddress("lost-cathedral", "t", PLAY_ORIGIN.games, surface));
+      assert.equal(url.searchParams.get(PLAY_PLACE_PARAM), PlayPlace.GenexApp, surface);
+      assert.equal(url.searchParams.get(PLAY_SURFACE_PARAM), surface);
+      assert.equal(url.searchParams.get("genex_r"), "1", "the SDK's sign-in return marker stays");
+      assert.equal(url.hash, "#genex_ticket=t");
+      assert.ok(
+        [...url.searchParams.keys()].every((key) => key.startsWith("genex_")),
+        "only genex_ keys, which the SDK never shows the game",
+      );
+    }
+  });
+
+  it("names any surface it does not know as Other, and lets nothing else into the address", () => {
+    const hostile: unknown[] = [
+      "",
+      "Feed",
+      "feed&genex_place=browser",
+      "feed#genex_ticket=stolen",
+      "../feed",
+      " feed",
+      "recent",
+      null,
+      7,
+      {},
+      ["feed"],
+    ];
+    for (const surface of hostile) {
+      const address = playAddress("lost-cathedral", undefined, PLAY_ORIGIN.games, surface);
+      assert.equal(
+        address,
+        "https://lost-cathedral.genex.technology/?genex_r=1&genex_place=genex_app&genex_surface=other#genex_guest=1",
+        String(surface),
+      );
+    }
+  });
+
+  it("builds the game's address with the place the viewer was opened from", async () => {
+    const { viewer, surfaces } = rig();
+    viewer.open("lost-cathedral", "Lost Cathedral", GenexSurface.Featured);
+    await settle();
+    viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    viewer.open("lost-cathedral", "Lost Cathedral", "not-a-surface");
+    await settle();
+    assert.deepEqual(surfaces, [GenexSurface.Featured, GenexSurface.Other, GenexSurface.Other]);
+  });
+
+  it("leaves a game's own address, with the play's keys on it, to its page and its microphone", () => {
+    const home = playAddress("lost-cathedral", "t", PLAY_ORIGIN.games, GenexSurface.Search);
+    assert.equal(playNavigationAllowed(home, false), true);
+    const gate = micGateFor("https://lost-cathedral.genex.technology/level-2", home);
+    gate.allow(0);
+    assert.equal(
+      gate.take({ mediaTypes: ["audio"], isMainFrame: true }, 1),
+      true,
+      "the game's own page keeps its gate",
+    );
+    assert.equal(externalAddress(home), home.replace("#genex_ticket=t", ""));
   });
 
   it("lets a game's page move only within Genex games and the sign-in hop", () => {
@@ -855,7 +919,7 @@ describe("Play addresses", () => {
     const stand = { api: "http://localhost:3000", web: "http://localhost:5173", games: "https://localhost:8443" };
     assert.equal(
       playAddress("stick-steel", "t.k", stand.games),
-      "https://stick-steel.localhost:8443/?genex_r=1#genex_ticket=t.k",
+      "https://stick-steel.localhost:8443/?genex_r=1&genex_place=genex_app&genex_surface=other#genex_ticket=t.k",
     );
     const cases: Array<[string, boolean]> = [
       ["https://stick-steel.localhost:8443/", true],

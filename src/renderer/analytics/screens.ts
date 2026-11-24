@@ -5,6 +5,7 @@
  * URL PostHog would send becomes this screen under https://studio.invalid.
  */
 import { WelcomeScreen } from "../onboarding/state.ts";
+import { AnalyticsTab } from "../play/game-analytics/tabs.ts";
 import { SettingsSection } from "../settings-navigation.ts";
 import { StageView } from "../stage.ts";
 import { PlayPage } from "../state/play.ts";
@@ -30,7 +31,12 @@ const welcomeScreen = (step: WelcomeScreen): string =>
   step === WelcomeScreen.Welcome ? AnalyticsScreen.Welcome : `${AnalyticsScreen.Welcome}/${step}`;
 const gameScreen = (view: StageView): string => `/game/${view}`;
 const settingsScreen = (section: SettingsSection): string => `/settings/${section}`;
-const playScreen = (page: PlayPage): string => `/play/${page}`;
+/**
+ * Play's page, and for a game's analytics page its tab: both closed vocabularies. Never the game:
+ * its link, its title and its numbers stay out of the screen.
+ */
+const playScreen = (page: PlayPage, tab: AnalyticsTab | null = null): string =>
+  page === PlayPage.GameAnalytics && tab ? `/play/${page}/${tab}` : `/play/${page}`;
 
 /** Where the person is, from the shell's own state. */
 export interface ScreenPlace {
@@ -49,6 +55,8 @@ export interface ScreenPlace {
   items: boolean;
   /** Play's page while Play covers the workspace, else null. */
   play: PlayPage | null;
+  /** The tab of a game's analytics page while that is Play's page, else null. */
+  playTab: AnalyticsTab | null;
   room: Room;
   /** Home's first message is starting a game. */
   launching: boolean;
@@ -65,7 +73,7 @@ const COVERS: ReadonlyArray<[(place: ScreenPlace) => boolean, (place: ScreenPlac
   [(p) => p.openFolder, () => AnalyticsScreen.OpenFolder],
   [(p) => p.plugins, () => AnalyticsScreen.Plugins],
   [(p) => p.items, () => AnalyticsScreen.Items],
-  [(p) => p.play !== null, (p) => playScreen(p.play ?? PlayPage.Shelf)],
+  [(p) => p.play !== null, (p) => playScreen(p.play ?? PlayPage.Shelf, p.playTab)],
 ];
 
 /** The room under every cover. */
@@ -87,7 +95,8 @@ export const SCREENS: ReadonlySet<string> = new Set([
   ...Object.values(WelcomeScreen).map(welcomeScreen),
   ...Object.values(StageView).map(gameScreen),
   ...Object.values(SettingsSection).map(settingsScreen),
-  ...Object.values(PlayPage).map(playScreen),
+  ...Object.values(PlayPage).map((page) => playScreen(page)),
+  ...Object.values(AnalyticsTab).map((tab) => playScreen(PlayPage.GameAnalytics, tab)),
 ]);
 
 /** Screens are paths under a name that never resolves. */

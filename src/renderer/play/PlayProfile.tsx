@@ -9,6 +9,7 @@
  */
 import type { JSX } from "react";
 import { useEffect } from "react";
+import { GenexSurface } from "../../shared/game-analytics.ts";
 import { intlLocale } from "../../shared/i18n.ts";
 import {
   FriendStatus,
@@ -153,7 +154,7 @@ function ProfileGames({ profile, own }: { profile: Profile; own: boolean }) {
         {profile.games.length > 0 && <span className="profile-section-count">{profile.games.length}</span>}
       </div>
       {profile.games.length > 0 ? (
-        <Grid games={profile.games} placeholders={0} onRemix={remix} marquee />
+        <Grid games={profile.games} placeholders={0} surface={GenexSurface.Profile} onRemix={remix} marquee />
       ) : (
         <p className="people-note">{own ? WORDS.noGamesOwn : WORDS.noGames}</p>
       )}
