@@ -78,7 +78,8 @@ GENEX_DEV_PLAY_GAMES_ORIGIN=https://localhost:8443 GENEX_DEV_PLAY_GAMES_CA=/abs/
 ```
 
 Origins are bare (https, or http on this Mac); the CA is an absolute path to a PEM file. With the stand's
-API the account signs in on the stand's device sign-in, for the launch only; Play, the store,
+API the account signs in on the stand's device sign-in, under the app's own name ("AI Game Studio",
+which a stand reads to know the desktop app, as genex.games does), for the launch only; Play, the store,
 `genex__cli`/`genex__cli-paid` (the CLI's `--api-url` and token) and the Genex plugin's backend (Publish,
 its asset tools and its account page) use the stand and that account, never genex.games or the Genex
 plugin's saved account. With a games origin too, the Play viewer plays
