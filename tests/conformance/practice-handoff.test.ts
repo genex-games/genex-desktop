@@ -16,8 +16,8 @@ import { EditorPractice, handoffKey, namePractice, unnamePractice } from "../../
 import { PreviewAiService } from "../../src/main/core/preview-ai.ts";
 import { serial } from "../../src/main/core/serial.ts";
 import { GenexHosting } from "../../src/shared/genex.ts";
-import { PreviewAiMode } from "../../src/shared/preview-ai.ts";
-import { HEX, listening, program } from "../helpers/practice-helper.ts";
+import { PreviewAiMode, type PreviewAiPlan } from "../../src/shared/preview-ai.ts";
+import { HEX, HOST_PORT, hostProgram, listening, program } from "../helpers/practice-helper.ts";
 import { running } from "../helpers/processes.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -25,6 +25,9 @@ const LIVE = "live";
 const HANDOFF = path.join(".studio", "llm-practice.json");
 const MOCK_KEY = `41000.${HEX}`;
 const LIVE_KEY = `41001.${HEX}`;
+const PLAN_KEY = `${HOST_PORT}.${HEX}`;
+/** The person's own plan in these tests. */
+const PLAN: PreviewAiPlan = { engine: "codex", label: "Codex" };
 
 /** A game folder as Genex keeps one: its `studio.json`, and nothing else. */
 async function gameFolder(): Promise<string> {
@@ -167,12 +170,14 @@ async function studio(options: { calls?: (dir: string) => boolean; mockExitsAfte
   const dying = `${mock}setTimeout(()=>process.exit(3),${options.mockExitsAfterMs ?? 0});`;
   const ai = new PreviewAiService(
     {
-      launch: async (_project, live) => {
+      launch: async (_project, live, host) => {
         launches += 1;
         // Only the first practice helper dies on its own: the one started in its place stays.
         const first = options.mockExitsAfterMs !== undefined && launches === 1;
+        const practice = first ? dying : mock;
+        const paid = live ? program({ first: listening(41001, "live") }) : practice;
         return {
-          command: live ? program({ first: listening(41001, "live") }) : first ? dying : mock,
+          command: host ? hostProgram([]) : paid,
           cwd: scratch,
           env: {},
           label: "test",
@@ -185,6 +190,9 @@ async function studio(options: { calls?: (dir: string) => boolean; mockExitsAfte
         if (child.pid) pids.push(child.pid);
         return { child, input: child.stdin };
       },
+      plans: async () => [PLAN],
+      planModels: async () => [{ id: "codex/gpt", label: "GPT", vendor: "openai" }],
+      answer: async (_engine, ask) => ({ id: ask.id, text: "said on the person's plan" }),
       signedIn: async () => true,
       hasDraft: async () => true,
       host: async () => GenexHosting.Hosted,
@@ -251,6 +259,21 @@ describe("Live's helper named to the Unreal editor", () => {
       assert.deepEqual(reloads, ["inn", "inn"]);
       await ai.startRealModels("quiet", 100);
       assert.equal(await handoff(inn), `{"key":"${MOCK_KEY}"}`, "another game's choice changes nothing here");
+    } finally {
+      await ai.stopAll();
+    }
+  });
+
+  it("names the helper the person's own plan answers through, and practice again after Stop", async () => {
+    const { ai, editor, add } = await studio();
+    try {
+      const inn = await add("inn");
+      await editor.show("inn");
+      await ai.startPlan("inn", PLAN.engine);
+      assert.equal(await handoff(inn), `{"key":"${PLAN_KEY}"}`, "the next Play in Unreal is answered on the plan");
+      assert.deepEqual([ai.state("inn").mode, ai.state("inn").plan], [PreviewAiMode.Plan, PLAN]);
+      await ai.backToPractice("inn");
+      assert.equal(await handoff(inn), `{"key":"${MOCK_KEY}"}`);
     } finally {
       await ai.stopAll();
     }

@@ -54,7 +54,8 @@ folder listing wins. Rules for tests are in [tests/AGENTS.md](../AGENTS.md).
   the lead's scripted turns, the pool's workers and the reviewer as three kinds of delegation, on
   the test's clock; `dispatch()` starts the run through the run's start instead, on the wall clock.
 - `practice-helper.ts`: a stand-in for the practice helper (`genex llm practice --json`): a Node
-  program printing the lines a test scripts until it is told to stop
+  program printing the lines a test scripts until it is told to stop, and one in host mode
+  (`hostProgram`) that listens once its host said who answers
   (`conformance/preview-ai.test.ts`, `conformance/practice-handoff.test.ts`).
 - `observe-windows.ts`: fake preview windows for a plugin's `observe` with a `still` or a `clip`
   (Live and the pooled windows, each logging what it was asked, over a page the test scripts), a

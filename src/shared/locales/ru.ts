@@ -6557,6 +6557,14 @@ export default {
   "The cap is used up": "Лимит исчерпан",
   "This game wants to hear you through your microphone.": "Эта игра хочет слышать тебя через микрофон.",
   "Use real AI": "Включить настоящий ИИ",
+  "Use my plan": "Мой тариф",
+  "Your own {plan} plan answers in this preview, on this computer. No Genex credits are spent; your plan's limits apply, answers come slower, and voices stay practice.":
+    "В этом превью отвечает твой собственный тариф {plan}, на этом компьютере. Кредиты Genex не тратятся; действуют лимиты твоего тарифа, ответы приходят медленнее, а голоса остаются пробными.",
+  "The plan that answers": "Тариф, который отвечает",
+  "Starting {plan}…": "Запускаем {plan}…",
+  "{plan} answers · your own plan, no credits": "Отвечает {plan} · твой тариф, без кредитов",
+  "That plan is not signed in or ready on this computer. Check it in Settings, then try again. Practice answers go on.":
+    "Этот тариф не подключён или не готов на этом компьютере. Проверь его в настройках и попробуй снова. Пробные ответы продолжаются.",
   "A local model is answering a chat or build. Delete the model when it finishes.":
     "Локальная модель сейчас отвечает в чате или сборке. Удали модель, когда ответ будет готов.",
   "Download Inkling 2 Mini in Settings › Local Models.":

@@ -269,10 +269,12 @@ const FIXTURE_SAFE = [
   "studio:preview.state",
   "studio:preview.live",
   // Live's play-time models: the state and practice answers reach only the app's own helper on this
-  // computer's loopback. Real models answer only where the core may spend (`previewAiLive`, never in
-  // a fixture launch): there the call answers the unavailable state and nothing starts.
+  // computer's loopback. Real models, and a plan of the person's own, answer only where the core may
+  // spend (`previewAiLive`, never in a fixture launch): there the call answers the unavailable state
+  // and nothing starts.
   "studio:preview-ai.state",
   "studio:preview-ai.real",
+  "studio:preview-ai.plan",
   "studio:preview-ai.practice",
   // Names the same loopback helper to the Unreal editor, in a file in the game's own folder.
   "studio:preview-ai.editor",

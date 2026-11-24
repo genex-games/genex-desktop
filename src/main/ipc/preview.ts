@@ -12,6 +12,7 @@ const MESSAGE = {
   noGameView: "the studio window has no game view",
   noProject: "a game name is required",
   noCap: "the cap is one Live offers",
+  noPlan: "a plan is required",
 } as const;
 
 /** The game a payload names, or a refusal. */
@@ -128,6 +129,10 @@ export function registerPreviewIpc(
     const cap = Number(payload?.capCredits);
     if (!isPreviewAiCap(cap)) throw new Error(MESSAGE.noCap);
     return core.previewAi.startRealModels(projectOf(payload), cap);
+  });
+  handle("studio:preview-ai.plan", async (payload) => {
+    if (typeof payload?.engine !== "string" || !payload.engine) throw new Error(MESSAGE.noPlan);
+    return core.previewAi.startPlan(projectOf(payload), payload.engine);
   });
   handle("studio:preview-ai.practice", async (payload) => core.previewAi.backToPractice(projectOf(payload)));
   // Live's view of the game is its Unreal card, or is so no longer: the core checks the game itself.

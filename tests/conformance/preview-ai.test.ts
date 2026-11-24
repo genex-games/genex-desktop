@@ -11,18 +11,28 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { PreviewAiService, withPracticeKey } from "../../src/main/core/preview-ai.ts";
+import { type HostAnswer, type HostAsk, HostError } from "../../src/main/core/preview-ai-plans.ts";
 import type { PracticeLaunch } from "../../src/main/core/genex-cli.ts";
 import { GenexHosting } from "../../src/shared/genex.ts";
-import { PreviewAiMode, type PreviewAiState, PreviewAiUnavailable } from "../../src/shared/preview-ai.ts";
+import {
+  PreviewAiMode,
+  type PreviewAiPlan,
+  type PreviewAiState,
+  PreviewAiUnavailable,
+} from "../../src/shared/preview-ai.ts";
 import { withGenexSdkImport } from "../../src/shared/genex-page.ts";
 import { codeCallsPlayTimeModels, gameCallsPlayTimeModels } from "../../src/substrate/project-shape.ts";
-import { HEX, listening, program, type Script } from "../helpers/practice-helper.ts";
+import { HEX, hostProgram, listening, program, type Script } from "../helpers/practice-helper.ts";
 import { running } from "../helpers/processes.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const LIVE = "live";
 const TEMPLATE_PAGE = path.resolve(import.meta.dirname, "../../src/game-template/index.html");
 const AGENT = "game-preview-facet-1";
+
+/** The person's plan in these tests, and the models it answers as. */
+const CLAUDE: PreviewAiPlan = { engine: "claude-code", label: "Claude Code" };
+const PLAN_MODELS = [{ id: "claude-code/sonnet", label: "Sonnet", vendor: "anthropic" }];
 
 /** What the service is told when it asks Genex for a game's project: an outcome, or the error thrown. */
 type Hosting = GenexHosting | Error;
@@ -36,10 +46,21 @@ async function service(
     signedIn?: boolean;
     draft?: boolean;
     hosting?: Hosting;
+    /** The person's plans that are ready (default: none). */
+    plans?: PreviewAiPlan[];
+    /** What a host helper asks for once it listens. */
+    asks?: HostAsk[];
+    /** A host helper that prints this instead of behaving as one. */
+    hostHelper?: Script;
+    /** What the plan answers a call with (default: the call's own text back). */
+    answer?: (ask: HostAsk) => HostAnswer | Promise<HostAnswer>;
   } = {},
 ) {
   const scratch = await tmpDir("studio-preview-ai-");
-  const launches: Array<{ project: string; live: { maxCredits: number } | null }> = [];
+  const launches: Array<{ project: string; live: { maxCredits: number } | null; host?: true }> = [];
+  /** Every line a host helper printed, parsed: its hello, and the answers it was given. */
+  const heard: Array<Record<string, unknown>> = [];
+  const answered: Array<{ engine: string; ask: HostAsk }> = [];
   const states: PreviewAiState[] = [];
   const reloads: string[] = [];
   const pids: number[] = [];
@@ -47,13 +68,13 @@ async function service(
   let onGenex = options.draft ?? true;
   const ai = new PreviewAiService(
     {
-      launch: async (project, live) => {
-        launches.push({ project, live });
+      launch: async (project, live, host) => {
+        launches.push({ project, live, ...(host ? { host: true as const } : {}) });
         const script = live
           ? (options.live ?? { first: listening(41001, "live") })
           : (options.mock ?? { first: listening(41000, "mock") });
         return {
-          command: program(script),
+          command: host ? hostHelper(options) : program(script),
           cwd: scratch,
           env: {},
           label: "test",
@@ -64,7 +85,14 @@ async function service(
       spawn: async (request) => {
         const child = spawn(process.execPath, ["-e", request.command], { stdio: ["pipe", "pipe", "pipe"] });
         if (child.pid) pids.push(child.pid);
+        if (request.liveInput) hear(child.stdout, heard);
         return { child, input: child.stdin };
+      },
+      plans: async () => options.plans ?? [],
+      planModels: async () => PLAN_MODELS,
+      answer: async (engine, ask) => {
+        answered.push({ engine, ask });
+        return (await options.answer?.(ask)) ?? { id: ask.id, text: `${engine} heard: ${ask.user}` };
       },
       signedIn: async () => options.signedIn ?? true,
       hasDraft: async () => onGenex,
@@ -84,7 +112,28 @@ async function service(
     },
     LIVE,
   );
-  return { ai, launches, states, reloads, pids, hosted };
+  return { ai, launches, states, reloads, pids, hosted, heard, answered };
+}
+
+/** The program a host launch runs: the scripted one when the test names it, else a helper in host mode. */
+const hostHelper = (options: { asks?: HostAsk[]; hostHelper?: Script }): string =>
+  options.hostHelper ? program(options.hostHelper) : hostProgram(options.asks ?? []);
+
+/** Keep every JSON line a child prints. */
+function hear(output: NodeJS.ReadableStream, lines: Array<Record<string, unknown>>): void {
+  let pending = "";
+  output.on("data", (chunk: Buffer) => {
+    pending += chunk.toString("utf8");
+    const parts = pending.split("\n");
+    pending = parts.pop() ?? "";
+    for (const text of parts) if (text.trim()) lines.push(JSON.parse(text) as Record<string, unknown>);
+  });
+}
+
+/** Wait until `seen` says so: for what a helper prints behind a call. */
+async function until(seen: () => boolean): Promise<void> {
+  for (let waited = 0; waited < 5000 && !seen(); waited += 10) await sleep(10);
+  assert.ok(seen(), "what the test waited for never happened");
 }
 
 describe("practice answers in every preview", () => {
@@ -363,6 +412,154 @@ describe("real models in Live, approved once with a cap", () => {
       await ai.startRealModels("inn", 300);
       await ai.keyFor(LIVE, "inn");
       assert.deepEqual(paid(), [100, 40, 300], "a new Start is a new cap, counted from nothing");
+    } finally {
+      await ai.stopAll();
+    }
+  });
+});
+
+describe("a plan of the person's own in Live, at no credits", () => {
+  const ask = (id: string, user: string): HostAsk => ({
+    id,
+    modelId: "claude-code/sonnet",
+    system: "frame",
+    user,
+    maxOutputTokens: 300,
+  });
+
+  it("offers the plans that are ready, and never starts one without the person's Start for it", async () => {
+    const { ai, launches } = await service({ plans: [CLAUDE] });
+    try {
+      await ai.keyFor(LIVE, "inn");
+      assert.deepEqual(ai.state("inn").plans, [CLAUDE], "the bar can offer it");
+      assert.equal(ai.state("inn").mode, PreviewAiMode.Practice);
+      assert.deepEqual(launches, [{ project: "inn", live: null }], "only made-up answers so far");
+    } finally {
+      await ai.stopAll();
+    }
+  });
+
+  it("starts the helper in host mode, tells it who answers, and answers its questions on that plan", async () => {
+    const asks = [ask("c1", "Got any answers in stock?"), ask("c2", "Is she looking?")];
+    const { ai, launches, reloads, heard, answered } = await service({ plans: [CLAUDE], asks });
+    try {
+      const state = await ai.startPlan("inn", CLAUDE.engine);
+      assert.deepEqual([state.mode, state.plan], [PreviewAiMode.Starting, CLAUDE]);
+      assert.deepEqual(reloads, ["inn"]);
+      assert.equal(await ai.keyFor(LIVE, "inn"), `genex_llm_practice=41002.${HEX}`, "Live plays on the plan's helper");
+      assert.deepEqual([ai.state("inn").mode, ai.state("inn").plan], [PreviewAiMode.Plan, CLAUDE]);
+      assert.deepEqual(launches.at(-1), { project: "inn", live: null, host: true });
+      assert.deepEqual(heard[0], { event: "hello", host: { name: "Claude Code", models: PLAN_MODELS } });
+      await until(() => heard.filter((line) => line.event === "answered").length === 2);
+      assert.deepEqual(
+        answered.map(({ engine, ask: one }) => [engine, one.id, one.user]),
+        [
+          ["claude-code", "c1", "Got any answers in stock?"],
+          ["claude-code", "c2", "Is she looking?"],
+        ],
+      );
+      assert.deepEqual(
+        heard.filter((line) => line.event === "answered").map((line) => line.answer),
+        [
+          { id: "c1", text: "claude-code heard: Got any answers in stock?" },
+          { id: "c2", text: "claude-code heard: Is she looking?" },
+        ],
+      );
+      assert.equal(
+        await ai.keyFor(AGENT, "inn"),
+        `genex_llm_practice=41000.${HEX}`,
+        "an agent's window keeps made-up answers",
+      );
+    } finally {
+      await ai.stopAll();
+    }
+  });
+
+  it("passes on why the plan has no answer, and a plan that throws answers failed", async () => {
+    const asks = [ask("c1", "limit"), ask("c2", "boom")];
+    const answer = (one: HostAsk): HostAnswer => {
+      if (one.user === "boom") throw new Error("the engine broke");
+      return { id: one.id, error: HostError.RateLimited };
+    };
+    const { ai, heard } = await service({ plans: [CLAUDE], asks, answer });
+    try {
+      await ai.startPlan("inn", CLAUDE.engine);
+      await ai.keyFor(LIVE, "inn");
+      await until(() => heard.filter((line) => line.event === "answered").length === 2);
+      const answers = heard.filter((line) => line.event === "answered").map((line) => JSON.stringify(line.answer));
+      assert.deepEqual(answers.sort(), ['{"id":"c1","error":"rate_limited"}', '{"id":"c2","error":"failed"}']);
+    } finally {
+      await ai.stopAll();
+    }
+  });
+
+  it("refuses a plan that is not ready here, and starts nothing", async () => {
+    const { ai, launches, reloads } = await service({ plans: [CLAUDE] });
+    try {
+      const state = await ai.startPlan("inn", "codex");
+      assert.deepEqual(
+        [state.mode, state.reason, state.plan],
+        [PreviewAiMode.Unavailable, PreviewAiUnavailable.PlanNotReady, null],
+      );
+      await ai.keyFor(LIVE, "inn");
+      assert.ok(
+        launches.every((launch) => !launch.host),
+        "no helper in host mode",
+      );
+      assert.deepEqual(reloads, []);
+    } finally {
+      await ai.stopAll();
+    }
+  });
+
+  it("ends the plan on Stop and when real models take over, and leaves no helper behind", async () => {
+    const { ai, pids, launches } = await service({ plans: [CLAUDE] });
+    try {
+      await ai.startPlan("inn", CLAUDE.engine);
+      await ai.keyFor(LIVE, "inn");
+      const back = await ai.backToPractice("inn");
+      assert.deepEqual([back.mode, back.plan], [PreviewAiMode.Practice, null]);
+      assert.equal(await ai.keyFor(LIVE, "inn"), `genex_llm_practice=41000.${HEX}`, "made-up answers again");
+
+      await ai.startPlan("inn", CLAUDE.engine);
+      await ai.keyFor(LIVE, "inn");
+      await ai.startRealModels("inn", 100);
+      assert.equal(await ai.keyFor(LIVE, "inn"), `genex_llm_practice=41001.${HEX}`, "real models answer now");
+      assert.deepEqual([ai.state("inn").mode, ai.state("inn").plan], [PreviewAiMode.Live, null]);
+
+      await ai.startPlan("inn", CLAUDE.engine);
+      assert.equal(
+        await ai.keyFor(LIVE, "inn"),
+        `genex_llm_practice=41002.${HEX}`,
+        "and the plan again, with no credits approved",
+      );
+      assert.equal(launches.filter((launch) => launch.live !== null).length, 1, "the paid run was not started again");
+    } finally {
+      await ai.stopAll();
+    }
+    for (const pid of pids) assert.equal(running(pid), false, `helper ${pid} is gone`);
+  });
+
+  it("falls back to practice, saying why, when the plan's helper cannot start", async () => {
+    const failing = {
+      first: { command: "llm practice", status: "failed", code: "host_silent", error: "nobody answers" },
+    };
+    const { ai, launches } = await service({ plans: [CLAUDE], hostHelper: failing });
+    try {
+      await ai.startPlan("inn", CLAUDE.engine);
+      assert.equal(await ai.keyFor(LIVE, "inn"), `genex_llm_practice=41000.${HEX}`, "made-up answers go on");
+      const state = ai.state("inn");
+      assert.deepEqual(
+        [state.mode, state.reason, state.plan],
+        [PreviewAiMode.Unavailable, PreviewAiUnavailable.HelperFailed, null],
+      );
+      assert.match(state.error ?? "", /host_silent: nobody answers/);
+      await ai.keyFor(LIVE, "inn");
+      assert.equal(
+        launches.filter((launch) => launch.host).length,
+        1,
+        "the plan is not tried again without a new Start",
+      );
     } finally {
       await ai.stopAll();
     }

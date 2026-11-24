@@ -3,7 +3,9 @@
  * a practice helper beside its preview (`genex llm practice`), which answers every call with made-up
  * text for free. In Live only, the person can switch that game to real models, paid from their own
  * Genex credits up to a cap they chose; a game that is not on their Genex account yet is put there
- * on that Start, as a draft nobody sees. The microphone is asked for in the same bar.
+ * on that Start, as a draft nobody sees. Or they can let an AI plan of their own that the app is
+ * signed in to (Claude Code, Codex) answer in Live, at no credits. The microphone is asked for in
+ * the same bar.
  */
 
 /** How Live's model calls are answered now. Wire values: never rename one. */
@@ -16,6 +18,8 @@ export const PreviewAiMode = {
   Starting: "starting",
   /** Real models answer, paid from the person's credits up to the cap. */
   Live: "live",
+  /** The person's own AI plan answers in Live, at no credits (`plan` names it). */
+  Plan: "plan",
   /** The cap is used up: calls are refused until the person adds more. */
   CapReached: "cap_reached",
   /** Real models cannot answer here; `reason` says why, and practice answers go on. */
@@ -37,6 +41,8 @@ export const PreviewAiUnavailable = {
   HelperFailed: "helper_failed",
   /** This profile never spends (a test profile). */
   NotHere: "not_here",
+  /** The plan the person chose is not signed in or not ready on this computer any more. */
+  PlanNotReady: "plan_not_ready",
 } as const;
 export type PreviewAiUnavailable = (typeof PreviewAiUnavailable)[keyof typeof PreviewAiUnavailable];
 
@@ -64,6 +70,14 @@ export const PreviewMicAsk = {
 } as const;
 export type PreviewMicAsk = (typeof PreviewMicAsk)[keyof typeof PreviewMicAsk];
 
+/** An AI plan of the person's own that can answer a game's calls in Live. */
+export interface PreviewAiPlan {
+  /** The engine that answers (`EngineId`). */
+  engine: string;
+  /** Its name as the person knows it: "Claude Code". */
+  label: string;
+}
+
 /** Live's play-time model state for one game: the `preview.ai` UI event, and what the bar reads on mount. */
 export interface PreviewAiState {
   project: string;
@@ -82,6 +96,10 @@ export interface PreviewAiState {
   mic: PreviewMicAsk;
   /** Whether the game is on the person's Genex account. False: their Start for real models puts it there. */
   onGenex: boolean;
+  /** The person's own plans that can answer in Live now: the bar offers each. */
+  plans: readonly PreviewAiPlan[];
+  /** The plan that answers, while `mode` is plan or it is starting; else null. */
+  plan: PreviewAiPlan | null;
 }
 
 /** A game's state before anything is known: no bar. */
@@ -95,4 +113,6 @@ export const noPreviewAi = (project: string): PreviewAiState => ({
   heldCredits: 0,
   mic: PreviewMicAsk.None,
   onGenex: true,
+  plans: [],
+  plan: null,
 });

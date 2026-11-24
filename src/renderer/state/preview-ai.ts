@@ -27,6 +27,8 @@ export interface PreviewAiStore extends StoreApi<PreviewAiStoreState> {
   read(project: string): Promise<void>;
   /** The person's Start for a cap: real models in Live, paid from their credits. */
   startReal(project: string, capCredits: number): Promise<void>;
+  /** The person's Start for a plan of their own: it answers in Live, at no credits. */
+  startPlan(project: string, engine: string): Promise<void>;
   /** The person's Stop: practice answers again. */
   backToPractice(project: string): Promise<void>;
   /** The person's answer to the game's microphone ask. */
@@ -37,7 +39,7 @@ export interface PreviewAiStore extends StoreApi<PreviewAiStoreState> {
 
 /** The store over `api`. */
 export function createPreviewAiStore(
-  api: Pick<StudioApi, "previewAi" | "previewAiReal" | "previewAiPractice" | "previewMicAnswer">,
+  api: Pick<StudioApi, "previewAi" | "previewAiReal" | "previewAiPlan" | "previewAiPractice" | "previewMicAnswer">,
 ): PreviewAiStore {
   const store = createStore<PreviewAiStoreState>()(() => EMPTY_PREVIEW_AI);
   const take = async (answer: Promise<PreviewAiState>): Promise<void> => {
@@ -47,6 +49,7 @@ export function createPreviewAiStore(
   return Object.assign(store, {
     read: (project: string) => take(api.previewAi(project)),
     startReal: (project: string, capCredits: number) => take(api.previewAiReal(project, capCredits)),
+    startPlan: (project: string, engine: string) => take(api.previewAiPlan(project, engine)),
     backToPractice: (project: string) => take(api.previewAiPractice(project)),
     answerMic: (project: string, allow: boolean) => take(api.previewMicAnswer(project, allow)),
     heard: (next: PreviewAiState) => store.setState((state) => previewAiArrived(state, next), true),

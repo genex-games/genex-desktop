@@ -4218,7 +4218,7 @@ working dot; none for a game Genex doesn't know) comes from
   (a call starts at `maxCredits` 4, a budget's `perCallMaxCredits` is 16 so a call cut off as `provider_token_limit` can double its `maxCredits` up to 16, and `perCallEstimateCredits` stays 1, marked in the
   code) until a bench replaces them, a bench card left unapproved is asked once; Studio's previews
   answer with practice answers (`source: 'practice'`), which the game wires as real answers, and the
-  person can switch Live to real models ([Builds and Live](product/builds-live.md#the-two-views)), so
+  person can switch Live to real models, or to an AI plan of their own at no credits ([Builds and Live](product/builds-live.md#the-two-views)), so
   the final message says so and gives the draft's link; the game labels its written lines whenever
   they play instead; and a game that listens or speaks is built on Genex voice (the card's
   `references/voice.md`: `getVoiceCatalog`, `voice` on

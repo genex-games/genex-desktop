@@ -10,7 +10,9 @@ import {
   offersRetry,
   PREVIEW_AI_WORDS,
   PreviewAiBarKind,
+  PreviewAiConfirm,
   previewAiBarKind,
+  retryConfirms,
   unavailableWords,
 } from "../../src/renderer/panels/stage/preview-ai-bar.ts";
 import { createPreviewAiStore } from "../../src/renderer/state/preview-ai.ts";
@@ -26,18 +28,48 @@ const state = (change: Partial<PreviewAiState>): PreviewAiState => ({ ...noPrevi
 
 describe("Live's AI bar", () => {
   it("shows nothing for a game that calls no model, and each state for one that does", () => {
-    assert.equal(previewAiBarKind(undefined, false), PreviewAiBarKind.Hidden);
-    assert.equal(previewAiBarKind(state({}), false), PreviewAiBarKind.Hidden);
-    assert.equal(previewAiBarKind(state({ mode: PreviewAiMode.Practice }), false), PreviewAiBarKind.Practice);
-    assert.equal(previewAiBarKind(state({ mode: PreviewAiMode.Practice }), true), PreviewAiBarKind.Confirm);
-    assert.equal(previewAiBarKind(state({ mode: PreviewAiMode.Live }), false), PreviewAiBarKind.Live);
-    assert.equal(previewAiBarKind(state({ mode: PreviewAiMode.CapReached }), false), PreviewAiBarKind.CapReached);
-    assert.equal(previewAiBarKind(state({ mode: PreviewAiMode.Unavailable }), false), PreviewAiBarKind.Unavailable);
+    assert.equal(previewAiBarKind(undefined, null), PreviewAiBarKind.Hidden);
+    assert.equal(previewAiBarKind(state({}), null), PreviewAiBarKind.Hidden);
+    assert.equal(previewAiBarKind(state({ mode: PreviewAiMode.Practice }), null), PreviewAiBarKind.Practice);
+    assert.equal(
+      previewAiBarKind(state({ mode: PreviewAiMode.Practice }), PreviewAiConfirm.Real),
+      PreviewAiBarKind.Confirm,
+    );
+    assert.equal(previewAiBarKind(state({ mode: PreviewAiMode.Live }), null), PreviewAiBarKind.Live);
+    assert.equal(previewAiBarKind(state({ mode: PreviewAiMode.CapReached }), null), PreviewAiBarKind.CapReached);
+    assert.equal(previewAiBarKind(state({ mode: PreviewAiMode.Unavailable }), null), PreviewAiBarKind.Unavailable);
+  });
+
+  it("offers a plan of the person's own beside real AI, confirms it, and says which plan answers", () => {
+    const claude = { engine: "claude-code", label: "Claude Code" };
+    const offered = state({ mode: PreviewAiMode.Practice, plans: [claude] });
+    assert.equal(previewAiBarKind(offered, PreviewAiConfirm.Plan), PreviewAiBarKind.PlanConfirm);
+    assert.equal(
+      previewAiBarKind(state({ mode: PreviewAiMode.Practice }), PreviewAiConfirm.Plan),
+      PreviewAiBarKind.Practice,
+      "no plan is ready any more: nothing is left to confirm",
+    );
+    assert.equal(previewAiBarKind(state({ mode: PreviewAiMode.Plan, plan: claude }), null), PreviewAiBarKind.Plan);
+    assert.match(
+      PREVIEW_AI_WORDS.planConfirm("Claude Code"),
+      /Your own Claude Code plan answers.*No Genex credits are spent/,
+    );
+    assert.match(PREVIEW_AI_WORDS.planConfirm("Claude Code"), /voices stay practice/);
+    assert.equal(PREVIEW_AI_WORDS.plan("Claude Code"), "Claude Code answers · your own plan, no credits");
+    assert.equal(PREVIEW_AI_WORDS.startingPlan("Codex"), "Starting Codex…");
+    assert.match(unavailableWords(PreviewAiUnavailable.PlanNotReady, null), /not signed in or ready/);
+    assert.equal(offersRetry(PreviewAiUnavailable.PlanNotReady), true);
+    assert.equal(
+      retryConfirms(PreviewAiUnavailable.PlanNotReady),
+      PreviewAiConfirm.Plan,
+      "Try again asks about the plan again",
+    );
+    assert.equal(retryConfirms(PreviewAiUnavailable.SignedOut), PreviewAiConfirm.Real);
   });
 
   it("asks for the microphone first, even in a game that calls no model", () => {
-    assert.equal(previewAiBarKind(state({ mic: PreviewMicAsk.Asking }), false), PreviewAiBarKind.Mic);
-    assert.equal(previewAiBarKind(state({ mic: PreviewMicAsk.Allowed }), false), PreviewAiBarKind.Hidden);
+    assert.equal(previewAiBarKind(state({ mic: PreviewMicAsk.Asking }), null), PreviewAiBarKind.Mic);
+    assert.equal(previewAiBarKind(state({ mic: PreviewMicAsk.Allowed }), null), PreviewAiBarKind.Hidden);
   });
 
   it("names the cap in credits and dollars, and what was spent of it", () => {
@@ -79,6 +111,10 @@ describe("the preview AI store", () => {
         calls.push(`real ${project} ${cap}`);
         return { ...noPreviewAi(project), mode: PreviewAiMode.Starting, capCredits: cap };
       },
+      previewAiPlan: async (project, engine) => {
+        calls.push(`plan ${project} ${engine}`);
+        return { ...noPreviewAi(project), mode: PreviewAiMode.Starting, plan: { engine, label: "Claude Code" } };
+      },
       previewAiPractice: answer(PreviewAiMode.Practice),
       previewMicAnswer: async (project, allow) => ({
         ...noPreviewAi(project),
@@ -92,6 +128,10 @@ describe("the preview AI store", () => {
     assert.equal(store.getState().games.inn?.capCredits, 300);
     store.heard(state({ mode: PreviewAiMode.Live, capCredits: 300, chargedCredits: 4 }));
     assert.equal(store.getState().games.inn?.chargedCredits, 4);
+    await store.startPlan("inn", "claude-code");
+    assert.deepEqual(calls.at(-1), "plan inn claude-code");
+    assert.equal(store.getState().games.inn?.plan?.label, "Claude Code");
+    store.heard(state({ mode: PreviewAiMode.Live, capCredits: 300, chargedCredits: 4 }));
     const before = store.getState();
     store.heard(state({ mode: PreviewAiMode.Live, capCredits: 300, chargedCredits: 4 }));
     assert.equal(store.getState(), before, "the same state twice changes nothing");
