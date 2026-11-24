@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "genex",
-  "version": "1.16.34",
+  "version": "1.16.37",
   "name": "Genex plugin",
   "publisher": "Genex",
   "description": "3D models, characters, sound and art for your games, made in chat with Genex credits. Coding stays on your own provider.",
@@ -403,6 +403,11 @@
       "name": "cloud-build",
       "label": "Build an app on Genex",
       "confirmation": "Upload this game's project privately to Genex, which builds an app of it for another system (a Windows app of an Unreal game made on a Mac) on its own computers and adds it to the game's Genex page. Only you and Genex can see the project."
+    },
+    {
+      "name": "host",
+      "label": "Add the game to Genex",
+      "confirmation": "Add this game to your Genex account as a private draft, so real AI in its preview can be paid from your credits. None of its files are uploaded, and only you can see it."
     },
     {
       "name": "publish-remove-web",

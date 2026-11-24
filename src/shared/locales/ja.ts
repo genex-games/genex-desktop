@@ -4072,6 +4072,7 @@ export default {
     "このゲームには、キャンバスに表示されている以上のファイルがあります。",
   "This game has no Mac, Windows or Linux app ready to publish":
     "このゲームには公開できるMac版、Windows版、Linux版のアプリがありません",
+  "This game could not be added to your Genex account": "このゲームを Genex のアカウントに追加できませんでした",
   "This game has no Mac, Windows or Linux app ready to publish.":
     "このゲームには、公開できるMac版、Windows版、Linux版のアプリがありません。",
   "This game has no Unity project": "このゲームにはUnityプロジェクトがありません",
@@ -6714,7 +6715,6 @@ export default {
   "{share} reach the end, typically the same day.": "{share}が最後まで到達（ふつうは同じ日）。",
   "Remove this funnel?": "このファネルを削除しますか？",
   "Remove funnel": "ファネルを削除",
-  "Keep it": "残す",
   "Couldn’t remove it. Try again.": "削除できませんでした。もう一度試してください。",
   "A game keeps up to {max, plural, one {{shown} funnel} other {{shown} funnels}}. Remove one to make another.":
     "ゲームごとに保存できるファネルは{max, plural, other {{shown}個}}までです。別のを作るには、どれかを削除してください。",
@@ -7156,8 +7156,10 @@ export default {
   "Most credits this play session may spend": "このプレイで使えるクレジットの上限",
   "Practice answers (free, made up)": "練習用の回答（無料・作り物）",
   "Practice answers could not start: {error}": "練習用の回答を開始できませんでした: {error}",
-  "Real AI is billed to this game's draft on Genex, and it has none yet. Ask the chat to publish a draft, then try again. Practice answers go on.":
-    "本物の AI はこのゲームの Genex の下書きに請求されますが、まだ下書きがありません。チャットに下書きの公開を頼んでから、もう一度試してね。練習用の回答は続きます。",
+  "Real AI could not start: this game could not be added to your Genex account. Practice answers go on.":
+    "本物の AI を始められませんでした: このゲームを Genex のアカウントに追加できませんでした。練習用の回答は続きます。",
+  "Real AI needs Genex's updated terms accepted. Review them on genex.games, then try again. Practice answers go on.":
+    "本物の AI を使うには、更新された Genex の規約への同意が必要です。genex.games で確認してから、もう一度試してね。練習用の回答は続きます。",
   "Real AI is not available in this test profile. Practice answers go on.":
     "このテスト用プロフィールでは本物の AI は使えません。練習用の回答は続きます。",
   "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
@@ -7166,6 +7168,8 @@ export default {
   "Real AI · {spent} of {cap} credits": "本物の AI · {cap} 中 {spent} クレジット",
   "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
     "このプレビューでは本物のモデルが答え、Genex のクレジットから支払われます: このプレイで最大 {cap} クレジット ({dollars})。",
+  "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session. The game is added to your Genex account as a private draft; none of its files are uploaded.":
+    "このプレビューでは本物のモデルが答え、Genex のクレジットから支払われます: このプレイで最大 {cap} クレジット ({dollars})。 ゲームは非公開の下書きとして Genex のアカウントに追加されます。ゲームのファイルはアップロードされません。",
   Start: "開始",
   "Starting real AI…": "本物の AI を起動中…",
   "The cap is used up": "上限に達しました",
@@ -7180,4 +7184,42 @@ export default {
   "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
     "ローカルモデルにはAppleシリコン搭載のMac、または64ビットのWindowsかLinuxのPCが必要です",
   "{model} can't run on this computer.": "{model}はこのコンピュータでは動きません。",
+  "AI budget for {game}": "{game}のAI予算",
+  "AI budget: {remaining} of {limit, plural, one {{shown} credit} other {{shown} credits}} left":
+    "AI予算：残り{remaining}／{limit, plural, other {{shown}クレジット}}",
+  "AI in games is paused right now. Try again later.": "ゲーム内のAIは今止まっています。あとでもう一度試してください。",
+  "Approving replaces the AI budget already running for this game.":
+    "承認すると、このゲームで使用中のAI予算と入れ替わります。",
+  "At most {n, plural, one {{shown} credit} other {{shown} credits}} for one call.":
+    "1回の呼び出しは最大{n, plural, other {{shown}クレジット}}です。",
+  "Couldn’t set the budget. Try again.": "予算を設定できませんでした。もう一度試してください。",
+  "Couldn’t stop the AI budget. Try again.": "AI予算を停止できませんでした。もう一度試してください。",
+  "It ends when you stop it, when you sign out of Genex, or after 24 hours.":
+    "停止したとき、Genexからサインアウトしたとき、または24時間後に終了します。",
+  "It uses {models}.": "{models}を使います。",
+  "Keep it": "続ける",
+  Limit: "上限",
+  "Reading the AI budget…": "AI予算を読み込み中…",
+  "Set AI budget": "AI予算を設定",
+  "Sign in to Genex to set an AI budget.": "AI予算を設定するにはGenexにサインインしてください。",
+  "Stop this AI budget?": "このAI予算を停止しますか？",
+  "Stopping the AI budget…": "AI予算を停止中…",
+  "That took too long, so the budget has to be read again.":
+    "時間がかかりすぎたため、予算を読み込み直す必要があります。",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per hour.":
+    "ゲームの見積もりは1時間あたり約{n, plural, other {{shown}クレジット}}です。",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per minute.":
+    "ゲームの見積もりは1分あたり約{n, plural, other {{shown}クレジット}}です。",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per session.":
+    "ゲームの見積もりは1セッションあたり約{n, plural, other {{shown}クレジット}}です。",
+  "This game asks AI models for things while you play. You pay for what it uses from your Genex credits, up to the limit you set.":
+    "このゲームはプレイ中にAIモデルを使います。使った分は、設定した上限までGenexのクレジットで支払います。",
+  "This game’s AI isn’t available right now.": "このゲームのAIは今使えません。",
+  "This game’s voice AI isn’t available in the app yet.": "このゲームの音声AIは、アプリではまだ使えません。",
+  "Uses AI, paid from your Genex credits.": "AIを使います。支払いはGenexのクレジットです。",
+  "Verify your Genex account’s email to pay with credits, then try again.":
+    "クレジットで支払うにはGenexアカウントのメールを確認して、もう一度試してください。",
+  "You don’t have enough Genex credits for this budget.": "この予算にはGenexのクレジットが足りません。",
+  "{n, plural, one {{shown} credit} other {{shown} credits}}": "{n, plural, other {{shown}クレジット}}",
+  "an AI judge": "AIジャッジ",
 } satisfies LocaleCatalog;

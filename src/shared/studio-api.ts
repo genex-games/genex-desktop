@@ -52,6 +52,7 @@ import type {
 } from "./store-items.ts";
 import type { LocalItemsView, LocalShareResult } from "./item-draft.ts";
 import type { PlayCredits } from "./play-credits.ts";
+import type { AiBudgetConfirmed, AiBudgetOpened, AiBudgetRead, AiBudgetStopped } from "./play-ai-budget.ts";
 import type {
   AddOutcome,
   AddSource,
@@ -674,6 +675,17 @@ export interface StudioApi {
   playRevealInstall(slug: string): Promise<void>;
   /** Play: like or unlike a game from its own page, as the Genex account; answers its likes after. */
   playLike(slug: string, liked: boolean): Promise<{ liked: boolean; likes: number }>;
+  /**
+   * Play: what a native game declared for AI and the account's AI budget in it, read from
+   * genex.games; nothing declared when genex.games serves none, `signedOut` while the app is signed out.
+   */
+  playAiBudget(slug: string): Promise<AiBudgetRead>;
+  /** Play: open a game's declared AI budget for approval; main keeps the quote the sheet shows. */
+  playAiBudgetOpen(slug: string): Promise<AiBudgetOpened>;
+  /** Play: approve the open quote with a limit it offers, as the Genex account; the budget now running. */
+  playAiBudgetConfirm(slug: string, limitCredits: number): Promise<AiBudgetConfirmed>;
+  /** Play: stop the account's AI budget in a game; null when none was running. */
+  playAiBudgetStop(slug: string): Promise<AiBudgetStopped>;
   /** Play: close the viewer. */
   playClose(): Promise<void>;
   /**

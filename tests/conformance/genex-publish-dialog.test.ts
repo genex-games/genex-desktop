@@ -13,6 +13,7 @@ import { EXPORT_APPROVAL_TTL_MS, ExportApprovals } from "../../src/main/core/exp
 import { GenexStudioTool } from "../../src/main/core/genex-cli-prompts.ts";
 import {
   cloudBuildFromDialog,
+  hostOnGenex,
   PublishRefusal,
   PublishRefusedError,
   publishAppsFromDialog,
@@ -22,7 +23,7 @@ import {
   renameOnGenex,
 } from "../../src/main/core/genex-publish.ts";
 import type { ExportResult } from "../../src/shared/game-project.ts";
-import { GENEX_PLUGIN_ID, GenexAction, GenexPublishKind } from "../../src/shared/genex.ts";
+import { GENEX_PLUGIN_ID, GenexAction, GenexHosting, GenexPublishKind } from "../../src/shared/genex.ts";
 import { HostMethod } from "../../src/shared/harness-api.ts";
 import { type ExportReview, type PluginBinding, PluginService, PluginSourceKind } from "../../src/shared/plugins.ts";
 import { UiEvent, type UiEventMap } from "../../src/shared/ui-events.ts";
@@ -262,6 +263,40 @@ test("an Unreal game's Windows app is asked of Genex for a known system and a ga
       await assert.rejects(cloudBuildFromDialog(rig.core, project, "windows"), String(project));
     assert.equal(rig.calls.length, before, "Genex is asked nothing");
     assert.deepEqual(rig.staged, [], "no web copy is made");
+  } finally {
+    await rig.close();
+  }
+});
+
+test("a game is put on Genex for real models: Genex's answer is read as it says, never guessed", async () => {
+  const rig = await dialogRig();
+  try {
+    const answers: unknown[] = [
+      { hosting: GenexHosting.Hosted },
+      { hosting: GenexHosting.TermsPending },
+      {},
+      { hosting: "something-new" },
+      null,
+    ];
+    rig.core.plugins.action = async (id, name, args, bound) => {
+      rig.calls.push({ id, name, args, binding: bound });
+      return answers.shift();
+    };
+    assert.equal(await hostOnGenex(rig.core, GAME), GenexHosting.Hosted);
+    assert.deepEqual(rig.calls.at(-1), {
+      id: "genex",
+      name: GenexAction.Host,
+      args: {},
+      binding: { project: GAME, directory: rig.game.dir, threadId: undefined },
+    });
+    assert.equal(await hostOnGenex(rig.core, GAME), GenexHosting.TermsPending);
+    for (const answer of ["nothing", "an unknown word", "no answer"])
+      await assert.rejects(hostOnGenex(rig.core, GAME), /could not be added to your Genex account/, answer);
+    const before = rig.calls.length;
+    for (const project of [undefined, "", 42, `../${GAME}`, "no-such-game"])
+      await assert.rejects(hostOnGenex(rig.core, project), String(project));
+    assert.equal(rig.calls.length, before, "Genex is asked nothing for a game Studio does not open");
+    assert.deepEqual(rig.staged, [], "no copy of the game is made");
   } finally {
     await rig.close();
   }

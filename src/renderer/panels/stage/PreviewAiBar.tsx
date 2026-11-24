@@ -65,11 +65,11 @@ function CapChoice({ cap, onCap }: { cap: number; onCap: (cap: number) => void }
 }
 
 /** The confirmation of a cap: the person's Start is the only way real models start. */
-function Confirm({ project, onDone }: { project: string; onDone: () => void }): JSX.Element {
+function Confirm({ project, onGenex, onDone }: { project: string; onGenex: boolean; onDone: () => void }): JSX.Element {
   const [cap, setCap] = useState<number>(PREVIEW_AI_DEFAULT_CAP);
   return (
     <Row kind={PreviewAiBarKind.Confirm}>
-      <Words text={WORDS.confirm(cap)} />
+      <Words text={WORDS.confirm(cap, onGenex)} />
       <CapChoice cap={cap} onCap={setCap} />
       <Button variant="ghost" data-preview-ai-cancel onClick={onDone}>
         {WORDS.cancel()}
@@ -170,6 +170,7 @@ export function PreviewAiBar({ project }: { project: string | null }): JSX.Eleme
   const kind = previewAiBarKind(state, confirming);
   if (!project || !state || kind === PreviewAiBarKind.Hidden) return null;
   if (kind === PreviewAiBarKind.Mic) return <MicAsk project={project} />;
-  if (kind === PreviewAiBarKind.Confirm) return <Confirm project={project} onDone={() => setConfirming(false)} />;
+  if (kind === PreviewAiBarKind.Confirm)
+    return <Confirm project={project} onGenex={state.onGenex} onDone={() => setConfirming(false)} />;
   return <StateRow state={state} kind={kind} onConfirm={() => setConfirming(true)} />;
 }

@@ -4042,6 +4042,7 @@ export default {
   "This game has more files than the canvas lists.": "В этой игре больше файлов, чем показано на холсте.",
   "This game has no Mac, Windows or Linux app ready to publish":
     "У этой игры нет готового приложения для Mac, Windows или Linux",
+  "This game could not be added to your Genex account": "Не получилось добавить эту игру в твой аккаунт Genex",
   "This game has no Mac, Windows or Linux app ready to publish.":
     "У этой игры нет готового приложения для Mac, Windows или Linux.",
   "This game has no Unity project": "У этой игры нет проекта Unity",
@@ -6756,7 +6757,6 @@ export default {
   "{share} reach the end, typically the same day.": "{share} доходят до конца, обычно в тот же день.",
   "Remove this funnel?": "Удалить эту воронку?",
   "Remove funnel": "Удалить воронку",
-  "Keep it": "Оставить",
   "Couldn’t remove it. Try again.": "Не удалось удалить. Попробуй снова.",
   "A game keeps up to {max, plural, one {{shown} funnel} other {{shown} funnels}}. Remove one to make another.":
     "У игры может быть до {max, plural, one {{shown} воронки} few {{shown} воронок} many {{shown} воронок} other {{shown} воронки}}. Удали одну, чтобы создать другую.",
@@ -7201,8 +7201,10 @@ export default {
   "Most credits this play session may spend": "Сколько кредитов можно потратить за эту игровую сессию",
   "Practice answers (free, made up)": "Пробные ответы (бесплатно, выдуманные)",
   "Practice answers could not start: {error}": "Пробные ответы не запустились: {error}",
-  "Real AI is billed to this game's draft on Genex, and it has none yet. Ask the chat to publish a draft, then try again. Practice answers go on.":
-    "Настоящий ИИ оплачивается с черновика этой игры на Genex, а его пока нет. Попроси чат опубликовать черновик и попробуй снова. Пробные ответы продолжаются.",
+  "Real AI could not start: this game could not be added to your Genex account. Practice answers go on.":
+    "Настоящий ИИ не запустился: не получилось добавить эту игру в твой аккаунт Genex. Пробные ответы продолжаются.",
+  "Real AI needs Genex's updated terms accepted. Review them on genex.games, then try again. Practice answers go on.":
+    "Для настоящего ИИ нужно принять обновлённые условия Genex. Посмотри их на genex.games и попробуй снова. Пробные ответы продолжаются.",
   "Real AI is not available in this test profile. Practice answers go on.":
     "Настоящий ИИ недоступен в этом тестовом профиле. Пробные ответы продолжаются.",
   "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
@@ -7211,6 +7213,8 @@ export default {
   "Real AI · {spent} of {cap} credits": "Настоящий ИИ · {spent} из {cap} кредитов",
   "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
     "В этом превью отвечают настоящие модели, за твои кредиты Genex: не больше {cap} кредитов ({dollars}) за эту игровую сессию.",
+  "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session. The game is added to your Genex account as a private draft; none of its files are uploaded.":
+    "В этом превью отвечают настоящие модели, за твои кредиты Genex: не больше {cap} кредитов ({dollars}) за эту игровую сессию. Игра добавится в твой аккаунт Genex как закрытый черновик; её файлы никуда не загружаются.",
   Start: "Начать",
   "Starting real AI…": "Запускаем настоящий ИИ…",
   "The cap is used up": "Лимит исчерпан",
@@ -7225,4 +7229,43 @@ export default {
   "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
     "Для локальных моделей нужен Mac с Apple Silicon или 64-битный ПК с Windows или Linux",
   "{model} can't run on this computer.": "{model} не запустится на этом компьютере.",
+  "AI budget for {game}": "Бюджет на ИИ для «{game}»",
+  "AI budget: {remaining} of {limit, plural, one {{shown} credit} other {{shown} credits}} left":
+    "Бюджет на ИИ: осталось {remaining} из {limit, plural, one {{shown} кредита} few {{shown} кредитов} many {{shown} кредитов} other {{shown} кредита}}",
+  "AI in games is paused right now. Try again later.": "ИИ в играх сейчас на паузе. Попробуй позже.",
+  "Approving replaces the AI budget already running for this game.":
+    "Новый бюджет заменит тот, что уже действует в этой игре.",
+  "At most {n, plural, one {{shown} credit} other {{shown} credits}} for one call.":
+    "Не больше {n, plural, one {{shown} кредита} few {{shown} кредитов} many {{shown} кредитов} other {{shown} кредита}} за один запрос.",
+  "Couldn’t set the budget. Try again.": "Не удалось задать бюджет. Попробуй ещё раз.",
+  "Couldn’t stop the AI budget. Try again.": "Не удалось остановить бюджет на ИИ. Попробуй ещё раз.",
+  "It ends when you stop it, when you sign out of Genex, or after 24 hours.":
+    "Он закончится, когда ты его остановишь, выйдешь из Genex или через 24 часа.",
+  "It uses {models}.": "Она использует {models}.",
+  "Keep it": "Оставить",
+  Limit: "Лимит",
+  "Reading the AI budget…": "Загружаем бюджет на ИИ…",
+  "Set AI budget": "Задать бюджет на ИИ",
+  "Sign in to Genex to set an AI budget.": "Войди в Genex, чтобы задать бюджет на ИИ.",
+  "Stop this AI budget?": "Остановить этот бюджет на ИИ?",
+  "Stopping the AI budget…": "Останавливаем бюджет на ИИ…",
+  "That took too long, so the budget has to be read again.":
+    "Прошло слишком много времени, бюджет нужно загрузить заново.",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per hour.":
+    "По оценке игры — около {n, plural, one {{shown} кредита} few {{shown} кредитов} many {{shown} кредитов} other {{shown} кредита}} в час.",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per minute.":
+    "По оценке игры — около {n, plural, one {{shown} кредита} few {{shown} кредитов} many {{shown} кредитов} other {{shown} кредита}} в минуту.",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per session.":
+    "По оценке игры — около {n, plural, one {{shown} кредита} few {{shown} кредитов} many {{shown} кредитов} other {{shown} кредита}} за сессию.",
+  "This game asks AI models for things while you play. You pay for what it uses from your Genex credits, up to the limit you set.":
+    "Пока ты играешь, эта игра обращается к ИИ-моделям. Ты платишь за это кредитами Genex — не больше лимита, который задашь.",
+  "This game’s AI isn’t available right now.": "ИИ этой игры сейчас недоступен.",
+  "This game’s voice AI isn’t available in the app yet.": "Голосовой ИИ этой игры пока недоступен в приложении.",
+  "Uses AI, paid from your Genex credits.": "Использует ИИ за твои кредиты Genex.",
+  "Verify your Genex account’s email to pay with credits, then try again.":
+    "Подтверди почту аккаунта Genex, чтобы платить кредитами, и попробуй ещё раз.",
+  "You don’t have enough Genex credits for this budget.": "На этот бюджет не хватает кредитов Genex.",
+  "{n, plural, one {{shown} credit} other {{shown} credits}}":
+    "{n, plural, one {{shown} кредит} few {{shown} кредита} many {{shown} кредитов} other {{shown} кредита}}",
+  "an AI judge": "ИИ-судью",
 } satisfies LocaleCatalog;

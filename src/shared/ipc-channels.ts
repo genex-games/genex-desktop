@@ -211,6 +211,10 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:play.sessions": "playSessions",
   "studio:play.reveal-install": "playRevealInstall",
   "studio:play.like": "playLike",
+  "studio:play.ai-budget": "playAiBudget",
+  "studio:play.ai-budget-open": "playAiBudgetOpen",
+  "studio:play.ai-budget-confirm": "playAiBudgetConfirm",
+  "studio:play.ai-budget-stop": "playAiBudgetStop",
   "studio:play.close": "playClose",
   "studio:play.take-game-link": "playTakeGameLink",
   "studio:play.control": "playControl",
@@ -556,6 +560,10 @@ export interface StudioInvokePayloads {
   "studio:play.sessions": undefined;
   "studio:play.reveal-install": { slug: string };
   "studio:play.like": { slug: string; liked: boolean };
+  "studio:play.ai-budget": { slug: string };
+  "studio:play.ai-budget-open": { slug: string };
+  "studio:play.ai-budget-confirm": { slug: string; limitCredits: number };
+  "studio:play.ai-budget-stop": { slug: string };
   "studio:play.close": undefined;
   "studio:play.take-game-link": undefined;
   "studio:play.control": { control: PlayControl; at?: PlayPoint };

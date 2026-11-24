@@ -4122,6 +4122,7 @@ export default {
   "This game has more files than the canvas lists.": "Este juego tiene más archivos de los que muestra el lienzo.",
   "This game has no Mac, Windows or Linux app ready to publish":
     "Este juego no tiene ninguna app para Mac, Windows o Linux lista para publicar",
+  "This game could not be added to your Genex account": "No se pudo añadir este juego a tu cuenta de Genex",
   "This game has no Mac, Windows or Linux app ready to publish.":
     "Este juego no tiene ninguna app para Mac, Windows o Linux lista para publicar.",
   "This game has no Unity project": "Este juego no tiene proyecto de Unity",
@@ -6802,7 +6803,6 @@ export default {
   "{share} reach the end, typically the same day.": "{share} llegan al final, normalmente el mismo día.",
   "Remove this funnel?": "¿Quitar este embudo?",
   "Remove funnel": "Quitar embudo",
-  "Keep it": "Conservarlo",
   "Couldn’t remove it. Try again.": "No se pudo quitar. Inténtalo de nuevo.",
   "A game keeps up to {max, plural, one {{shown} funnel} other {{shown} funnels}}. Remove one to make another.":
     "Un juego guarda hasta {max, plural, one {{shown} embudo} other {{shown} embudos}}. Quita uno para crear otro.",
@@ -7247,8 +7247,10 @@ export default {
   "Most credits this play session may spend": "Créditos máximos para esta sesión de juego",
   "Practice answers (free, made up)": "Respuestas de práctica (gratis, inventadas)",
   "Practice answers could not start: {error}": "Las respuestas de práctica no pudieron empezar: {error}",
-  "Real AI is billed to this game's draft on Genex, and it has none yet. Ask the chat to publish a draft, then try again. Practice answers go on.":
-    "La IA real se cobra al borrador de este juego en Genex, y aún no tiene uno. Pide al chat que publique un borrador y vuelve a intentarlo. Las respuestas de práctica siguen.",
+  "Real AI could not start: this game could not be added to your Genex account. Practice answers go on.":
+    "La IA real no pudo empezar: no se pudo añadir este juego a tu cuenta de Genex. Las respuestas de práctica siguen.",
+  "Real AI needs Genex's updated terms accepted. Review them on genex.games, then try again. Practice answers go on.":
+    "La IA real necesita que aceptes los términos actualizados de Genex. Revísalos en genex.games y vuelve a intentarlo. Las respuestas de práctica siguen.",
   "Real AI is not available in this test profile. Practice answers go on.":
     "La IA real no está disponible en este perfil de prueba. Las respuestas de práctica siguen.",
   "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
@@ -7257,6 +7259,8 @@ export default {
   "Real AI · {spent} of {cap} credits": "IA real · {spent} de {cap} créditos",
   "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
     "En esta vista previa responden modelos reales, pagados con tus créditos de Genex: como mucho {cap} créditos ({dollars}) en esta sesión de juego.",
+  "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session. The game is added to your Genex account as a private draft; none of its files are uploaded.":
+    "En esta vista previa responden modelos reales, pagados con tus créditos de Genex: como mucho {cap} créditos ({dollars}) en esta sesión de juego. El juego se añade a tu cuenta de Genex como borrador privado; no se sube ninguno de sus archivos.",
   Start: "Empezar",
   "Starting real AI…": "Iniciando la IA real…",
   "The cap is used up": "Se acabó el límite",
@@ -7270,4 +7274,45 @@ export default {
   "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
     "Los modelos locales necesitan un Mac con Apple Silicon o un PC de 64 bits con Windows o Linux",
   "{model} can't run on this computer.": "{model} no puede funcionar en este ordenador.",
+  "AI budget for {game}": "Presupuesto de IA para {game}",
+  "AI budget: {remaining} of {limit, plural, one {{shown} credit} other {{shown} credits}} left":
+    "Presupuesto de IA: quedan {remaining} de {limit, plural, one {{shown} crédito} other {{shown} créditos}}",
+  "AI in games is paused right now. Try again later.": "La IA en los juegos está en pausa ahora. Inténtalo más tarde.",
+  "Approving replaces the AI budget already running for this game.":
+    "Al aprobar, se reemplaza el presupuesto de IA que ya está activo en este juego.",
+  "At most {n, plural, one {{shown} credit} other {{shown} credits}} for one call.":
+    "Como máximo {n, plural, one {{shown} crédito} other {{shown} créditos}} por llamada.",
+  "Couldn’t set the budget. Try again.": "No se pudo fijar el presupuesto. Inténtalo de nuevo.",
+  "Couldn’t stop the AI budget. Try again.": "No se pudo detener el presupuesto de IA. Inténtalo de nuevo.",
+  "It ends when you stop it, when you sign out of Genex, or after 24 hours.":
+    "Termina cuando lo detienes, cuando cierras sesión en Genex o después de 24 horas.",
+  "It uses {models}.": "Usa {models}.",
+  "Keep it": "Mantenerlo",
+  Limit: "Límite",
+  "Reading the AI budget…": "Leyendo el presupuesto de IA…",
+  "Set AI budget": "Fijar presupuesto de IA",
+  "Sign in to Genex to set an AI budget.": "Inicia sesión en Genex para fijar un presupuesto de IA.",
+  "Stop this AI budget?": "¿Detener este presupuesto de IA?",
+  "Stopping the AI budget…": "Deteniendo el presupuesto de IA…",
+  "That took too long, so the budget has to be read again.":
+    "Pasó demasiado tiempo, así que hay que leer el presupuesto otra vez.",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per hour.":
+    "El juego calcula unos {n, plural, one {{shown} crédito} other {{shown} créditos}} por hora.",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per minute.":
+    "El juego calcula unos {n, plural, one {{shown} crédito} other {{shown} créditos}} por minuto.",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per session.":
+    "El juego calcula unos {n, plural, one {{shown} crédito} other {{shown} créditos}} por sesión.",
+  "This game asks AI models for things while you play. You pay for what it uses from your Genex credits, up to the limit you set.":
+    "Este juego les pide cosas a modelos de IA mientras juegas. Pagas lo que use con tus créditos de Genex, hasta el límite que fijes.",
+  "This game’s AI isn’t available right now.": "La IA de este juego no está disponible ahora.",
+  "This game’s voice AI isn’t available in the app yet.":
+    "La IA de voz de este juego todavía no está disponible en la app.",
+  "Uses AI, paid from your Genex credits.": "Usa IA, pagada con tus créditos de Genex.",
+  "Verify your Genex account’s email to pay with credits, then try again.":
+    "Verifica el correo de tu cuenta de Genex para pagar con créditos y vuelve a intentarlo.",
+  "You don’t have enough Genex credits for this budget.":
+    "No tienes suficientes créditos de Genex para este presupuesto.",
+  "{n, plural, one {{shown} credit} other {{shown} credits}}":
+    "{n, plural, one {{shown} crédito} other {{shown} créditos}}",
+  "an AI judge": "un juez de IA",
 } satisfies LocaleCatalog;

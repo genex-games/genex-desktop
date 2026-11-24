@@ -3826,6 +3826,7 @@ export default {
   "This game has an unlisted draft page": "此游戏有一个不公开列出的草稿页面",
   "This game has more files than the canvas lists.": "此游戏的文件比画布列出的更多。",
   "This game has no Mac, Windows or Linux app ready to publish": "这个游戏还没有可发布的 Mac、Windows 或 Linux 应用",
+  "This game could not be added to your Genex account": "无法把这个游戏添加到你的 Genex 账号",
   "This game has no Mac, Windows or Linux app ready to publish.": "此游戏没有可发布的 Mac、Windows 或 Linux 应用。",
   "This game has no Unity project": "这个游戏没有 Unity 项目",
   "This game has no Unity project.": "这个游戏没有 Unity 项目。",
@@ -6336,7 +6337,6 @@ export default {
   "{share} reach the end, typically the same day.": "{share} 走到了最后一步，通常在当天。",
   "Remove this funnel?": "移除这个漏斗？",
   "Remove funnel": "移除漏斗",
-  "Keep it": "保留",
   "Couldn’t remove it. Try again.": "无法移除。请再试一次。",
   "A game keeps up to {max, plural, one {{shown} funnel} other {{shown} funnels}}. Remove one to make another.":
     "一个游戏最多保存 {max, plural, other {{shown} 个漏斗}}。想再建一个，请先移除一个。",
@@ -6761,8 +6761,10 @@ export default {
   "Most credits this play session may spend": "这次游戏最多可用的积分",
   "Practice answers (free, made up)": "练习回答（免费、编的）",
   "Practice answers could not start: {error}": "练习回答没能启动：{error}",
-  "Real AI is billed to this game's draft on Genex, and it has none yet. Ask the chat to publish a draft, then try again. Practice answers go on.":
-    "真实 AI 会计费到这个游戏在 Genex 上的草稿，但它还没有草稿。让聊天发布一个草稿，然后再试一次。练习回答会继续。",
+  "Real AI could not start: this game could not be added to your Genex account. Practice answers go on.":
+    "真实 AI 没能启动：无法把这个游戏添加到你的 Genex 账号。练习回答会继续。",
+  "Real AI needs Genex's updated terms accepted. Review them on genex.games, then try again. Practice answers go on.":
+    "使用真实 AI 需要先接受更新后的 Genex 条款。在 genex.games 上查看后再试一次。练习回答会继续。",
   "Real AI is not available in this test profile. Practice answers go on.":
     "这个测试配置里不能用真实 AI。练习回答会继续。",
   "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
@@ -6771,6 +6773,8 @@ export default {
   "Real AI · {spent} of {cap} credits": "真实 AI · {spent} / {cap} 积分",
   "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
     "这个预览里由真实模型回答，用你的 Genex 积分付费：这次游戏最多 {cap} 积分（{dollars}）。",
+  "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session. The game is added to your Genex account as a private draft; none of its files are uploaded.":
+    "这个预览里由真实模型回答，用你的 Genex 积分付费：这次游戏最多 {cap} 积分（{dollars}）。游戏会作为私密草稿添加到你的 Genex 账号；它的文件一个都不会上传。",
   Start: "开始",
   "Starting real AI…": "正在启动真实 AI…",
   "The cap is used up": "额度用完了",
@@ -6784,4 +6788,40 @@ export default {
   "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
     "本地模型需要搭载 Apple 芯片的 Mac，或 64 位 Windows / Linux 电脑",
   "{model} can't run on this computer.": "{model} 无法在这台电脑上运行。",
+  "AI budget for {game}": "{game} 的 AI 预算",
+  "AI budget: {remaining} of {limit, plural, one {{shown} credit} other {{shown} credits}} left":
+    "AI 预算：剩余 {remaining} / {limit, plural, other {{shown} 积分}}",
+  "AI in games is paused right now. Try again later.": "游戏中的 AI 目前已暂停，请稍后再试。",
+  "Approving replaces the AI budget already running for this game.": "批准后，将替换这款游戏正在使用的 AI 预算。",
+  "At most {n, plural, one {{shown} credit} other {{shown} credits}} for one call.":
+    "每次调用最多 {n, plural, other {{shown} 积分}}。",
+  "Couldn’t set the budget. Try again.": "无法设置预算，请重试。",
+  "Couldn’t stop the AI budget. Try again.": "无法停止 AI 预算，请重试。",
+  "It ends when you stop it, when you sign out of Genex, or after 24 hours.":
+    "你停止它、退出登录 Genex 或 24 小时后，它就会结束。",
+  "It uses {models}.": "它会使用 {models}。",
+  "Keep it": "保留",
+  Limit: "上限",
+  "Reading the AI budget…": "正在读取 AI 预算…",
+  "Set AI budget": "设置 AI 预算",
+  "Sign in to Genex to set an AI budget.": "登录 Genex 即可设置 AI 预算。",
+  "Stop this AI budget?": "停止这个 AI 预算？",
+  "Stopping the AI budget…": "正在停止 AI 预算…",
+  "That took too long, so the budget has to be read again.": "等待太久，需要重新读取预算。",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per hour.":
+    "游戏预计每小时约 {n, plural, other {{shown} 积分}}。",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per minute.":
+    "游戏预计每分钟约 {n, plural, other {{shown} 积分}}。",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per session.":
+    "游戏预计每次游玩约 {n, plural, other {{shown} 积分}}。",
+  "This game asks AI models for things while you play. You pay for what it uses from your Genex credits, up to the limit you set.":
+    "这款游戏会在你游玩时调用 AI 模型。用掉的部分从你的 Genex 积分中支付，不超过你设置的上限。",
+  "This game’s AI isn’t available right now.": "这款游戏的 AI 目前不可用。",
+  "This game’s voice AI isn’t available in the app yet.": "这款游戏的语音 AI 暂时无法在应用中使用。",
+  "Uses AI, paid from your Genex credits.": "使用 AI，从你的 Genex 积分中支付。",
+  "Verify your Genex account’s email to pay with credits, then try again.":
+    "请先验证 Genex 账号的邮箱才能用积分支付，然后重试。",
+  "You don’t have enough Genex credits for this budget.": "你的 Genex 积分不够设置这个预算。",
+  "{n, plural, one {{shown} credit} other {{shown} credits}}": "{n, plural, other {{shown} 积分}}",
+  "an AI judge": "AI 裁判",
 } satisfies LocaleCatalog;

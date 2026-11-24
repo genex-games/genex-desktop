@@ -562,6 +562,47 @@ is.
     uninstall; a refusal, an outage or an unreadable id drops that report. A 404 (genex.games takes
     none yet) drops every report for an hour (`NOT_SERVED_PAUSE_MS`) and logs one line. A fixture or
     smoke launch sends nothing.
+- AI budget (`main/play/ai-budget.ts`, `renderer/play/AiBudget.tsx` with its decisions in
+  `play/ai-budget-model.ts`, the contract in `shared/play-ai-budget.ts`). A native game can ask AI
+  models for things while it is played, paid from the player's Genex credits under a budget the
+  player sets on the game's page before Play. The maker declares it for the published game with the
+  Genex CLI; genex.games is the authority on every number, and the app never computes a price.
+  - **The line.** Under the primary block, while the page offers Install, Play or Update or the
+    game runs. A game that declared nothing shows nothing, as does a read that failed, a
+    genex.games that serves no budgets (any 404) and a signed-out app that never read the game. A
+    declared budget nobody approved reads "Uses AI, paid from your Genex credits." with **Set AI
+    budget** (signed out since the read, the button signs in first); a declared model that is not
+    served now reads as unavailable, with nothing to press. A running budget reads "AI budget: 85
+    of 100 credits left" with **Stop**, asked once on the line itself, and **Change** while the
+    game is not running. While the game runs under a budget the count is read again every 30
+    seconds and when the window comes back (`watchBudget`).
+  - **The sheet** (`DialogSurface`): what the budget is, the models' names and an AI judge when
+    one is declared, the most one call may cost and the game's estimate when genex.games gave
+    one, a slider over the limits the quote offers starting on its default, that approving
+    replaces a running budget, and when it ends (the player's stop, signing out of Genex, 24
+    hours). Approve shows the budget only once genex.games answers that it runs. A refusal gets
+    one sentence and its next step (`sheetFailureOf`, `sheetNext`): not enough credits (Get
+    credits), an unverified email, a quote that lapsed (Try again opens a new one), AI in games
+    paused, signed out (Sign in, then a new quote), anything else.
+  - **The four calls**, under `/api/runtime/projects/<id>/budget`, as the app's Genex account:
+    `GET` (what the game declared and the running budget), `POST` (a quote, good for five
+    minutes), `POST <grantId>/confirm` (the quote's id and billing policy, `funding: "credits"`
+    and the chosen limit) and `POST stop`. The renderer names a game by its slug and chooses only
+    a limit (`studio:play.ai-budget`, `-open`, `-confirm`, `-stop`, registered in
+    `main/ipc/play-ai-budget.ts`); main reads the game's id from the catalog, keeps the quote an
+    approval names, and sends only a limit the quote offers (`limitOffered`). Answers are read as
+    hostile input: one that does not read whole is never shown. A 401 on the read ends the
+    sign-in; on an approval or a stop it is a refusal like any other, and neither is ever sent
+    twice.
+  - **What the game is told.** Nothing new: launched with the sign-in ticket as before, it finds
+    the running budget on genex.games itself (the Unreal kit's `UGenexModelsSubsystem`).
+  - **Voice.** A budget that covers listening or speaking is not offered: the line says the
+    game's voice AI is not available in the app yet, a quote that carries voice terms is refused
+    in main, and no approval carries a `voice` key.
+  - **Fixtures** (`dev/fixture-ai-budget.ts`): signed in as a fixture account, Iron Tide declares
+    a budget that approves and is spent a little as time passes; Night Patrol's approval is
+    refused for want of credits, Frigate's first one finds its quote lapsed, Puck Rush's budget
+    is paused and SKATE's model is not served; every other game declares none.
 - Links (`main/play/game-links.ts`): the website's Open in Genex sends `genex://game/<slug>`.
   The packaged app declares the scheme (`protocols` in `forge.config.cjs`, the Linux packages'
   `x-scheme-handler/genex`) and registers it at start; macOS hands a link over `open-url`, Windows

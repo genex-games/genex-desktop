@@ -44,14 +44,25 @@ describe("Live's AI bar", () => {
     assert.equal(capDollars(100), "$1");
     assert.equal(capDollars(1000), "$10");
     assert.equal(capDollars(250), "$2.50");
-    assert.match(PREVIEW_AI_WORDS.confirm(300), /at most 300 credits \(\$3\) for this play session/);
+    assert.match(PREVIEW_AI_WORDS.confirm(300), /at most 300 credits \(\$3\) for this play session\.$/);
+    assert.match(
+      PREVIEW_AI_WORDS.confirm(300, false),
+      /at most 300 credits \(\$3\).* added to your Genex account as a private draft; none of its files are uploaded/,
+      "a game that is not on Genex: the confirmation says what Start does about it",
+    );
     assert.equal(PREVIEW_AI_WORDS.live(12, 100), "Real AI · 12 of 100 credits");
     assert.equal(PREVIEW_AI_WORDS.addMore(100), "Add 100 more");
   });
 
   it("says why real models are not available, and offers a retry only where one can help", () => {
     for (const reason of Object.values(PreviewAiUnavailable)) assert.ok(unavailableWords(reason, null).length > 0);
-    assert.match(unavailableWords(PreviewAiUnavailable.NoDraft, null), /publish a draft/);
+    assert.match(
+      unavailableWords(PreviewAiUnavailable.NoDraft, "Genex did not answer"),
+      /could not be added to your Genex account.*\(Genex did not answer\)$/,
+    );
+    assert.match(unavailableWords(PreviewAiUnavailable.Terms, null), /terms/);
+    assert.equal(offersRetry(PreviewAiUnavailable.NoDraft), true);
+    assert.equal(offersRetry(PreviewAiUnavailable.Terms), true);
     assert.match(unavailableWords(PreviewAiUnavailable.HelperFailed, "EACCES: no"), /\(EACCES: no\)$/);
     assert.equal(offersRetry(PreviewAiUnavailable.NotHere), false);
     assert.equal(offersRetry(PreviewAiUnavailable.SignedOut), true);

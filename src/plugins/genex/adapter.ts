@@ -29,6 +29,7 @@ import {
   type GenexCoverSent,
   ownerChoseCover,
   GenexHostedStatus,
+  GenexHosting,
   GenexJobStatus,
   GenexOperation,
   GenexPublishJobState,
@@ -2675,7 +2676,7 @@ export class GenexTools {
     await this.#refuseCloudEngine(gameDir);
     await this.#publishWorkspace(project);
     // Genex's terms are still to accept: the record says so, and nothing is sent.
-    if (keep && !(await this.#hostForBuild(project))) return this.#nativeRecord(project);
+    if (keep && !(await this.#hostGame(project))) return this.#nativeRecord(project);
     const running = (await this.#cloud(project)).builds.find(
       (build) => build.platform === platform && isRunning(build),
     );
@@ -2683,10 +2684,22 @@ export class GenexTools {
     return this.#nativeRecord(project);
   }
   /**
-   * Put the game on Genex for a build Genex keeps: signed in, its terms accepted, and the game's hosted
-   * project made when it has none. False when the terms are still to accept, which the record then says.
+   * Put the game on the person's Genex account for real play-time models in Live (`PreviewAiService`):
+   * its hosted project, a draft nobody sees, which those calls are billed to. None of the game's files
+   * go anywhere and nothing is published. Refused signed out; `TermsPending` while Genex's terms are
+   * still to accept, which the publish record then says too.
    */
-  #hostForBuild(project: string): Promise<boolean> {
+  async host(project: string): Promise<{ hosting: GenexHosting }> {
+    await this.#publishWorkspace(project);
+    const hosted = await this.#hostGame(project);
+    return { hosting: hosted ? GenexHosting.Hosted : GenexHosting.TermsPending };
+  }
+  /**
+   * Put the game on Genex with nothing sent (a build Genex keeps, real models in Live): signed in,
+   * its terms accepted, and the game's hosted project made when it has none. False when the terms are
+   * still to accept, which the record then says.
+   */
+  #hostGame(project: string): Promise<boolean> {
     return this.#account(async () => {
       const state = await this.publishStatus(project);
       if (!state.connected) throw new Error(PUBLISH_MESSAGE.ConnectFirstRefusal());

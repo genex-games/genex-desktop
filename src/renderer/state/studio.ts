@@ -87,6 +87,7 @@ import { createGameAnalyticsStore, type GameAnalyticsStore } from "./game-analyt
 import { createItemsStore, type ItemsStore, ItemsRead } from "./items.ts";
 import { createGenexReviewStore, type GenexReviewStore } from "./genex-review.ts";
 import { createPreviewAiStore, type PreviewAiStore } from "./preview-ai.ts";
+import { type AiBudgetStore, createAiBudgetStore } from "./ai-budget.ts";
 import { GENEX_PLUGIN_ID } from "../../shared/genex.ts";
 import { createSharingStore, type SharingStore } from "./sharing.ts";
 import {
@@ -171,6 +172,8 @@ export interface Studio {
   readonly sharing: SharingStore;
   /** Live's play-time models and microphone ask per game (`preview-ai.ts`). */
   readonly previewAi: PreviewAiStore;
+  /** Native games' AI budgets, as their pages in Play read them (`ai-budget.ts`). */
+  readonly aiBudget: AiBudgetStore;
   readonly agentScreens: AgentScreensStore;
   readonly commandRuns: CommandRunsStore;
   /** What commands a reply offered have printed, outside React state. */
@@ -269,6 +272,7 @@ interface Stores {
   readonly genexReview: GenexReviewStore;
   readonly sharing: SharingStore;
   readonly previewAi: PreviewAiStore;
+  readonly aiBudget: AiBudgetStore;
   readonly agentScreens: AgentScreensStore;
   readonly commandRuns: CommandRunsStore;
   readonly commandOutput: CommandOutput;
@@ -331,6 +335,7 @@ function createStores(api: StudioApi, host: StoresHost): Stores {
     genexReview: createGenexReviewStore(api),
     sharing: createSharingStore(api, timers),
     previewAi: createPreviewAiStore(api),
+    aiBudget: createAiBudgetStore(api),
     agentScreens: createAgentScreensStore(),
     commandRuns: createCommandRunsStore(),
     commandOutput: createCommandOutput(),
