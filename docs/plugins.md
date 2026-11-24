@@ -3946,7 +3946,8 @@ working dot; none for a game Genex doesn't know) comes from
   game's web row, and its rows for a system this computer doesn't package, except the Windows row on
   a Mac once Genex can build it (`cloudWords`, `CLOUD_TARGETS`). The Publish card's Build asks for it
   with `keep`: Genex keeps what it builds for the Publish after it, and a game
-  that was never published gets its hosted project here, a draft nobody sees (`#hostForBuild`). The
+  that was never published gets its hosted project here, a draft nobody sees (`#hostGame`; Live's
+  Use real AI asks for the same through the plugin's `host`, `hostOnGenex`, with nothing sent). The
   platform list's row asks without it: while the game has no page on Genex it says to publish first,
   then it offers Build on Genex, whose app goes on the game's page once built. Both run
   `studio:plugins.genex-cloud-build` (`cloudBuildFromDialog`, Windows only) → the plugin's

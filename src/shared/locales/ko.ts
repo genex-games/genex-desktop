@@ -3968,6 +3968,7 @@ export default {
   "This game has more files than the canvas lists.": "이 게임에는 캔버스에 표시된 것보다 파일이 더 많아요.",
   "This game has no Mac, Windows or Linux app ready to publish":
     "이 게임에는 게시할 준비가 된 Mac, Windows 또는 Linux 앱이 없어요",
+  "This game could not be added to your Genex account": "이 게임을 네 Genex 계정에 추가하지 못했어요",
   "This game has no Mac, Windows or Linux app ready to publish.":
     "이 게임에는 게시할 준비가 된 Mac, Windows 또는 Linux 앱이 없어요.",
   "This game has no Unity project": "이 게임에는 Unity 프로젝트가 없어요",
@@ -6347,8 +6348,10 @@ export default {
   "Most credits this play session may spend": "이번 플레이에서 쓸 수 있는 최대 크레딧",
   "Practice answers (free, made up)": "연습 답변 (무료, 지어낸 답)",
   "Practice answers could not start: {error}": "연습 답변을 시작하지 못했어: {error}",
-  "Real AI is billed to this game's draft on Genex, and it has none yet. Ask the chat to publish a draft, then try again. Practice answers go on.":
-    "실제 AI는 Genex에 있는 이 게임의 초안으로 청구되는데, 아직 초안이 없어. 채팅에 초안을 게시해 달라고 한 다음 다시 해 봐. 연습 답변은 계속돼.",
+  "Real AI could not start: this game could not be added to your Genex account. Practice answers go on.":
+    "실제 AI를 시작하지 못했어: 이 게임을 네 Genex 계정에 추가하지 못했어. 연습 답변은 계속돼.",
+  "Real AI needs Genex's updated terms accepted. Review them on genex.games, then try again. Practice answers go on.":
+    "실제 AI를 쓰려면 업데이트된 Genex 약관에 동의해야 해. genex.games에서 확인한 다음 다시 해 봐. 연습 답변은 계속돼.",
   "Real AI is not available in this test profile. Practice answers go on.":
     "이 테스트 프로필에서는 실제 AI를 쓸 수 없어. 연습 답변은 계속돼.",
   "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
@@ -6357,6 +6360,8 @@ export default {
   "Real AI · {spent} of {cap} credits": "실제 AI · {cap} 중 {spent} 크레딧",
   "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
     "이 미리보기에서는 실제 모델이 답하고, 네 Genex 크레딧으로 결제돼: 이번 플레이에서 최대 {cap} 크레딧 ({dollars}).",
+  "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session. The game is added to your Genex account as a private draft; none of its files are uploaded.":
+    "이 미리보기에서는 실제 모델이 답하고, 네 Genex 크레딧으로 결제돼: 이번 플레이에서 최대 {cap} 크레딧 ({dollars}). 게임은 비공개 초안으로 네 Genex 계정에 추가되고, 게임 파일은 하나도 업로드되지 않아.",
   Start: "시작",
   "Starting real AI…": "실제 AI 시작하는 중…",
   "The cap is used up": "한도를 다 썼어",

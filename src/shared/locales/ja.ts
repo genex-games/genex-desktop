@@ -4072,6 +4072,7 @@ export default {
     "このゲームには、キャンバスに表示されている以上のファイルがあります。",
   "This game has no Mac, Windows or Linux app ready to publish":
     "このゲームには公開できるMac版、Windows版、Linux版のアプリがありません",
+  "This game could not be added to your Genex account": "このゲームを Genex のアカウントに追加できませんでした",
   "This game has no Mac, Windows or Linux app ready to publish.":
     "このゲームには、公開できるMac版、Windows版、Linux版のアプリがありません。",
   "This game has no Unity project": "このゲームにはUnityプロジェクトがありません",
@@ -6501,8 +6502,10 @@ export default {
   "Most credits this play session may spend": "このプレイで使えるクレジットの上限",
   "Practice answers (free, made up)": "練習用の回答（無料・作り物）",
   "Practice answers could not start: {error}": "練習用の回答を開始できませんでした: {error}",
-  "Real AI is billed to this game's draft on Genex, and it has none yet. Ask the chat to publish a draft, then try again. Practice answers go on.":
-    "本物の AI はこのゲームの Genex の下書きに請求されますが、まだ下書きがありません。チャットに下書きの公開を頼んでから、もう一度試してね。練習用の回答は続きます。",
+  "Real AI could not start: this game could not be added to your Genex account. Practice answers go on.":
+    "本物の AI を始められませんでした: このゲームを Genex のアカウントに追加できませんでした。練習用の回答は続きます。",
+  "Real AI needs Genex's updated terms accepted. Review them on genex.games, then try again. Practice answers go on.":
+    "本物の AI を使うには、更新された Genex の規約への同意が必要です。genex.games で確認してから、もう一度試してね。練習用の回答は続きます。",
   "Real AI is not available in this test profile. Practice answers go on.":
     "このテスト用プロフィールでは本物の AI は使えません。練習用の回答は続きます。",
   "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
@@ -6511,6 +6514,8 @@ export default {
   "Real AI · {spent} of {cap} credits": "本物の AI · {cap} 中 {spent} クレジット",
   "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
     "このプレビューでは本物のモデルが答え、Genex のクレジットから支払われます: このプレイで最大 {cap} クレジット ({dollars})。",
+  "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session. The game is added to your Genex account as a private draft; none of its files are uploaded.":
+    "このプレビューでは本物のモデルが答え、Genex のクレジットから支払われます: このプレイで最大 {cap} クレジット ({dollars})。 ゲームは非公開の下書きとして Genex のアカウントに追加されます。ゲームのファイルはアップロードされません。",
   Start: "開始",
   "Starting real AI…": "本物の AI を起動中…",
   "The cap is used up": "上限に達しました",

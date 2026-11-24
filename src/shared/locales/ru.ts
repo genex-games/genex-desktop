@@ -4042,6 +4042,7 @@ export default {
   "This game has more files than the canvas lists.": "В этой игре больше файлов, чем показано на холсте.",
   "This game has no Mac, Windows or Linux app ready to publish":
     "У этой игры нет готового приложения для Mac, Windows или Linux",
+  "This game could not be added to your Genex account": "Не получилось добавить эту игру в твой аккаунт Genex",
   "This game has no Mac, Windows or Linux app ready to publish.":
     "У этой игры нет готового приложения для Mac, Windows или Linux.",
   "This game has no Unity project": "У этой игры нет проекта Unity",
@@ -6536,8 +6537,10 @@ export default {
   "Most credits this play session may spend": "Сколько кредитов можно потратить за эту игровую сессию",
   "Practice answers (free, made up)": "Пробные ответы (бесплатно, выдуманные)",
   "Practice answers could not start: {error}": "Пробные ответы не запустились: {error}",
-  "Real AI is billed to this game's draft on Genex, and it has none yet. Ask the chat to publish a draft, then try again. Practice answers go on.":
-    "Настоящий ИИ оплачивается с черновика этой игры на Genex, а его пока нет. Попроси чат опубликовать черновик и попробуй снова. Пробные ответы продолжаются.",
+  "Real AI could not start: this game could not be added to your Genex account. Practice answers go on.":
+    "Настоящий ИИ не запустился: не получилось добавить эту игру в твой аккаунт Genex. Пробные ответы продолжаются.",
+  "Real AI needs Genex's updated terms accepted. Review them on genex.games, then try again. Practice answers go on.":
+    "Для настоящего ИИ нужно принять обновлённые условия Genex. Посмотри их на genex.games и попробуй снова. Пробные ответы продолжаются.",
   "Real AI is not available in this test profile. Practice answers go on.":
     "Настоящий ИИ недоступен в этом тестовом профиле. Пробные ответы продолжаются.",
   "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
@@ -6546,6 +6549,8 @@ export default {
   "Real AI · {spent} of {cap} credits": "Настоящий ИИ · {spent} из {cap} кредитов",
   "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
     "В этом превью отвечают настоящие модели, за твои кредиты Genex: не больше {cap} кредитов ({dollars}) за эту игровую сессию.",
+  "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session. The game is added to your Genex account as a private draft; none of its files are uploaded.":
+    "В этом превью отвечают настоящие модели, за твои кредиты Genex: не больше {cap} кредитов ({dollars}) за эту игровую сессию. Игра добавится в твой аккаунт Genex как закрытый черновик; её файлы никуда не загружаются.",
   Start: "Начать",
   "Starting real AI…": "Запускаем настоящий ИИ…",
   "The cap is used up": "Лимит исчерпан",

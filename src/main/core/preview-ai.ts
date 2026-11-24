@@ -10,7 +10,8 @@
  * and each agent's own window. Real models go to Live alone, and only after the person pressed
  * Start for a cap in Live's bar (`startRealModels`): the helper is then started with `--live --max-credits
  * <cap> --user-approved`, billed to the game's hosted project from the person's own credits, and the
- * CLI holds the whole run to the cap. An agent's window never gets that key. The choice is kept per
+ * CLI holds the whole run to the cap. A game that has no hosted project yet gets one on that Start
+ * (`host`): a draft nobody sees, with none of its files sent. An agent's window never gets that key. The choice is kept per
  * game for this app session, and so is the cap: a run started after a Stop or a visit to another
  * game may spend only what the runs before it left, and once nothing is left real models wait for a
  * new Start. A new app start begins in practice.
@@ -24,6 +25,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { Writable } from "node:stream";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
+import { GenexHosting } from "../../shared/genex.ts";
 import {
   isPreviewAiCap,
   noPreviewAi,
@@ -77,8 +79,14 @@ export interface PreviewAiDeps {
   }) => Promise<{ child: ChildProcess; input: Writable; expose?: LoopbackExpose }>;
   /** Whether the app is signed in to Genex now. */
   signedIn: () => Promise<boolean>;
-  /** Whether the game has a published draft to bill real calls to. */
+  /** Whether the game has a hosted project on Genex to bill real calls to. */
   hasDraft: (project: string) => Promise<boolean>;
+  /**
+   * Put the game on the person's Genex account, with none of its files sent (`hostOnGenex`): asked
+   * only after their Start, for a game that has no hosted project. Throws with Genex's words when it
+   * could not.
+   */
+  host: (project: string) => Promise<GenexHosting>;
   /** Whether this profile may spend at all: false in a test (fixture) profile. */
   liveAllowed: () => boolean;
   /** A game's state changed: the bar hears it. */
@@ -106,6 +114,12 @@ interface Helper {
   closed: Promise<void>;
   /** Asked to stop by the service: its exit is no failure. */
   stopping: boolean;
+}
+
+/** Why real models cannot start for a game, with Genex's own words when it gave any. */
+interface Refusal {
+  reason: PreviewAiUnavailable;
+  error: string | null;
 }
 
 /** What a helper's first line said. */
@@ -197,6 +211,11 @@ export class PreviewAiService {
     this.#deps.emit(next);
   }
 
+  /** Whether the game is on Genex, for the bar's confirmation, said only when it changed. */
+  #noteOnGenex(project: string, onGenex: boolean): void {
+    if (this.state(project).onGenex !== onGenex) this.#set(project, { onGenex });
+  }
+
   /** The microphone's ask for a game changed (`preview-mic.ts`). */
   setMic(project: string, mic: PreviewMicAsk): void {
     this.#set(project, { mic });
@@ -211,6 +230,7 @@ export class PreviewAiService {
     const before = this.#holders.get(handle);
     this.#holders.set(handle, project);
     if (before !== undefined && before !== project) await this.#letGo(before);
+    if (handle === this.#liveHandle) this.#noteOnGenex(project, await this.#deps.hasDraft(project));
     if (handle === this.#liveHandle && this.#approved.has(project)) {
       const live = await this.#startLive(project);
       if (live?.key) return live.key;
@@ -250,14 +270,15 @@ export class PreviewAiService {
 
   /**
    * The person pressed Start in Live's bar for `capCredits`: recorded as their approval for this
-   * game and cap, then Live is loaded again on real models. Refused with the reason the bar shows
-   * when this profile never spends, the app is signed out or the game has no draft.
+   * game and cap, then Live is loaded again on real models. A game that is not on their Genex account
+   * is put there first. Refused with the reason the bar shows when this profile never spends, the app
+   * is signed out, Genex's terms wait or the game could not be put on Genex.
    */
   async startRealModels(project: string, capCredits: number): Promise<PreviewAiState> {
     if (!isPreviewAiCap(capCredits)) throw new Error(`${capCredits} is not a cap Live offers`);
-    const reason = await this.#cannotSpend(project);
-    if (reason !== null) {
-      this.#set(project, { mode: PreviewAiMode.Unavailable, reason, error: null, capCredits: null });
+    const refusal = (await this.#cannotSpend(project)) ?? (await this.#putOnGenex(project, capCredits));
+    if (refusal !== null) {
+      this.#set(project, { mode: PreviewAiMode.Unavailable, ...refusal, capCredits: null });
       return this.state(project);
     }
     // A new cap starts a new run, counted from nothing: the one on the old cap ends first.
@@ -286,12 +307,31 @@ export class PreviewAiService {
     return this.state(project);
   }
 
-  /** Why real models cannot answer for `project` here, or null when they can be started. */
-  async #cannotSpend(project: string): Promise<PreviewAiUnavailable | null> {
-    if (!this.#deps.liveAllowed()) return PreviewAiUnavailable.NotHere;
-    if (!(await this.#deps.signedIn())) return PreviewAiUnavailable.SignedOut;
-    if (!(await this.#deps.hasDraft(project))) return PreviewAiUnavailable.NoDraft;
+  /** Why real models cannot answer in this profile or for this account, or null when they can. */
+  async #cannotSpend(project: string): Promise<Refusal | null> {
+    if (!this.#deps.liveAllowed()) return { reason: PreviewAiUnavailable.NotHere, error: null };
+    if (!(await this.#deps.signedIn())) return { reason: PreviewAiUnavailable.SignedOut, error: null };
     return null;
+  }
+
+  /**
+   * The game's hosted project, which real calls are billed to, made when it has none; the bar says
+   * real AI is starting while Genex is asked. Null once the game is on Genex, else why it is not.
+   */
+  async #putOnGenex(project: string, capCredits: number): Promise<Refusal | null> {
+    if (await this.#deps.hasDraft(project)) {
+      this.#noteOnGenex(project, true);
+      return null;
+    }
+    this.#set(project, { mode: PreviewAiMode.Starting, reason: null, error: null, capCredits, onGenex: false });
+    try {
+      const hosting = await this.#deps.host(project);
+      if (hosting !== GenexHosting.Hosted) return { reason: PreviewAiUnavailable.Terms, error: null };
+      this.#noteOnGenex(project, true);
+      return null;
+    } catch (error) {
+      return { reason: PreviewAiUnavailable.NoDraft, error: errorMessage(error).slice(0, ERROR_MAX_CHARS) };
+    }
   }
 
   /**

@@ -29,6 +29,11 @@ export const GenexAction = {
   PublishApps: "publish-apps",
   /** Ask Genex to build an app this computer can't make, on its own computers (`genex native build`). */
   CloudBuild: "cloud-build",
+  /**
+   * Put the game on the person's Genex account as a draft nobody sees, with none of its files sent:
+   * the project real play-time model calls in Live are billed to. Answers `{ hosting }`.
+   */
+  Host: "host",
   /** Take the game's web version off Genex, keeping its apps: its page shows them again. */
   PublishRemoveWeb: "publish-remove-web",
   /** Take one platform's app off Genex (`{ platform }`), from the Publish card's switch. */
@@ -69,6 +74,7 @@ export const GENEX_ACCOUNT_ACTIONS: readonly GenexAction[] = [
   GenexAction.PublishGallery,
   GenexAction.PublishApps,
   GenexAction.CloudBuild,
+  GenexAction.Host,
   GenexAction.PublishRemoveWeb,
   GenexAction.PublishRemoveApp,
   GenexAction.PublishName,
@@ -82,6 +88,15 @@ export const GENEX_ACCOUNT_ACTIONS: readonly GenexAction[] = [
   GenexAction.ReviewRequest,
   GenexAction.AppsResend,
 ];
+
+/** How putting a game on Genex went (`GenexAction.Host`). Wire values: never rename one. */
+export const GenexHosting = {
+  /** The game has its project on Genex. */
+  Hosted: "hosted",
+  /** Genex's terms are still to accept: nothing was made. */
+  TermsPending: "terms-pending",
+} as const;
+export type GenexHosting = (typeof GenexHosting)[keyof typeof GenexHosting];
 
 /**
  * The Genex SDK packages a game may add, each at the exact version Studio installs. The agent names
