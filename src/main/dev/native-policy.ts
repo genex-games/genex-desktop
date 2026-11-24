@@ -269,11 +269,15 @@ const FIXTURE_SAFE = [
   "studio:preview.state",
   "studio:preview.live",
   // Live's play-time models: the state and practice answers reach only the app's own helper on this
-  // computer's loopback. Real models answer only where the core may spend (`previewAiLive`, never in
-  // a fixture launch): there the call answers the unavailable state and nothing starts.
+  // computer's loopback. Real models, and a plan of the person's own, answer only where the core may
+  // spend (`previewAiLive`, never in a fixture launch): there the call answers the unavailable state
+  // and nothing starts.
   "studio:preview-ai.state",
   "studio:preview-ai.real",
+  "studio:preview-ai.plan",
   "studio:preview-ai.practice",
+  // Names the same loopback helper to the Unreal editor, in a file in the game's own folder.
+  "studio:preview-ai.editor",
   // The answer to a game's microphone ask in Live; a fixture's preview has no microphone to open.
   "studio:preview-ai.mic",
   "studio:build.preview",
@@ -369,6 +373,13 @@ const FIXTURE_SAFE = [
   "studio:play.sessions",
   // A like from a game's page: a fixture launch's likes answer signed out (`dev/fixture-play.ts`).
   "studio:play.like",
+  // A native game's AI budget: a fixture launch answers the read, the quote, Approve and Stop from
+  // its own data (`dev/fixture-ai-budget.ts`), signed out unless it asks for its fixture account, so
+  // no socket opens and no credits are spent.
+  "studio:play.ai-budget",
+  "studio:play.ai-budget-open",
+  "studio:play.ai-budget-confirm",
+  "studio:play.ai-budget-stop",
   // The viewer header's controls: a fixture launch's likes, tickets and invites answer signed out, even with its account.
   "studio:play.control",
   // The bar's layer says what holds it up; no socket.

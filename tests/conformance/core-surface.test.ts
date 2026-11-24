@@ -124,6 +124,8 @@ const METHODS = [
   "setGamesRoot",
   "setPermissionMode",
   "showBuild",
+  // Live's view of a game is its Unreal card, or is so no longer (studio:preview-ai.editor).
+  "showEditorGame",
   "snapshot",
   "start",
   "startEngine",
@@ -152,6 +154,7 @@ const FIELDS = [
   "contextPreferences",
   // The games' design boards: read for the Design tab, served to its frames, shown by `show_design`.
   "design",
+  "editorPractice",
   "engineLinks",
   "engines",
   "fastDecisions",

@@ -2845,6 +2845,24 @@ placed. A core that isn't the pinned one, or a link in its way, is a note in `co
 `windows.why`), never a refusal; a link anywhere on the plugin's way refuses the call before anything is written. The `unreal-multiplayer` skill takes the builder from there: the room module
 and `genex.json`'s `authority` block, the `Genex Authority Subsystem` client, `genex__room` with bots
 (Play joins it through `.studio/authority.json`) and publish, which stages the room as for any game.
+A game whose own work names the plugin's `GenexModelsSubsystem` (`unrealGameCallsPlayTimeModels`: a
+`.h` or `.cpp` under the project's `Source/`, or the bytes of a `.uasset` or `.umap` under its
+`Content/`, the project being `unreal/` or the game folder itself, no link followed) has its plays in the editor answered as a web game's page is in Live. While Live's
+view of the game is its Unreal card, Genex names Live's practice helper in the game's
+`.studio/llm-practice.json` (`{"key":"<port>.<token>"}`, `main/core/practice-handoff.ts`), written and
+removed as `authority.json` is and only in a folder that holds `studio.json`. The plugin's editor
+module (`GenexLocalPractice`) reads the file each time Play in the editor begins, takes only a key in
+a small plain file whose port answers, and hands it to the play, whose model calls then go to the
+helper on this computer, so Live's bar speaks for that play: practice answers, the person's own Claude
+Code or Codex plan (**Use my plan**, at no credits), or real AI for the cap the person approved. A choice in the bar rewrites the file and reaches the next Play, not one already
+running, which the bar's own line says. Genex removes the file when Live leaves the game, on Live's
+Stop, when no helper runs and when the app quits; a file left behind names a port that no longer
+answers and is ignored, and with no file a play asks Genex as a published game does. Live has one
+helper, so a web game's page that ran in Live with a helper's key stops when an Unreal game takes
+the helper, and its Play loads it again. Not covered: the packaged app the game's Play starts from
+its folder (`main/play/local-plays.ts`) and any game a player installed. Only an editor build of the
+plugin takes a key, so a packaged game reaches no helper whatever its environment says, and Genex
+hands none to one.
 Any Unreal game also gets `unreal__package-game {stop?, system?}` and `unreal__package-status {system?}`
 (`game-package.ts`): the app players install, for this computer's own system, on Windows a Linux
 one with `system: "linux"`, or the game's web version with `system: "web"` (`PackageSystem`, `HOST_SYSTEMS`; Unreal makes a Mac app only on a Mac and a
@@ -4200,7 +4218,7 @@ working dot; none for a game Genex doesn't know) comes from
   (a call starts at `maxCredits` 4, a budget's `perCallMaxCredits` is 16 so a call cut off as `provider_token_limit` can double its `maxCredits` up to 16, and `perCallEstimateCredits` stays 1, marked in the
   code) until a bench replaces them, a bench card left unapproved is asked once; Studio's previews
   answer with practice answers (`source: 'practice'`), which the game wires as real answers, and the
-  person can switch Live to real models ([Builds and Live](product/builds-live.md#the-two-views)), so
+  person can switch Live to real models, or to an AI plan of their own at no credits ([Builds and Live](product/builds-live.md#the-two-views)), so
   the final message says so and gives the draft's link; the game labels its written lines whenever
   they play instead; and a game that listens or speaks is built on Genex voice (the card's
   `references/voice.md`: `getVoiceCatalog`, `voice` on

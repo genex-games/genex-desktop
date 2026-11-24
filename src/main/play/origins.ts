@@ -5,9 +5,10 @@
  * may point Play at a local or test copy of genex.games, a stand, through {@link PlayOriginEnv},
  * read here in main only. Each origin must be a bare origin, https anywhere or plain http on this
  * Mac; anything else is ignored and that side stays on genex.games, so a typo never sends the
- * account's token somewhere new. A stand's game host, the Genex host tools' CLI and the trust of a
- * stand's own CA follow the stand only while Play's API is the stand's (`devStand`), so genex.games'
- * account and its sign-in tickets never reach a stand.
+ * account's token somewhere new. A stand's game host, its native build host, the Genex host tools'
+ * CLI and the trust of a stand's own CA follow the stand only while Play's API is the stand's
+ * (`devStand`), so genex.games' account and its sign-in tickets never reach a stand, and a game
+ * listed on genex.games never installs from anywhere but genex.games' build CDN.
  */
 import path from "node:path";
 import { browserGenexLink, tagGenexLink } from "../../plugins/genex/http.ts";
@@ -26,6 +27,11 @@ export const PlayOriginEnv = {
    * hosts only, and the Genex plugin's publish (its backend and CLI runs) beside the system's.
    */
   GamesCa: "GENEX_DEV_PLAY_GAMES_CA",
+  /**
+   * Where the stand serves native builds, e.g. `https://cdn.stand.example.test`: the one host a
+   * native game's archive may download from in this launch, instead of genex.games' build CDN.
+   */
+  Builds: "GENEX_DEV_PLAY_BUILDS_ORIGIN",
 } as const;
 export type PlayOriginEnv = (typeof PlayOriginEnv)[keyof typeof PlayOriginEnv];
 
@@ -93,6 +99,11 @@ export interface DevStand {
    * nothing more.
    */
   gamesCaFile: string | null;
+  /**
+   * The stand's own native build host, the only one a build installs from in this launch; null:
+   * genex.games' build CDN (`NATIVE_BUILD_HOSTS`).
+   */
+  buildHosts: ReadonlySet<string> | null;
 }
 
 /** The longest CA file path taken. */
@@ -110,10 +121,12 @@ export function devStand(env: Readonly<Record<string, string | undefined>>, laun
   const origins = playOrigins(env, developmentLaunch(launch));
   const onStand = origins.api !== PLAY_ORIGIN.api;
   const gamesOnStand = origins.games !== PLAY_ORIGIN.games;
+  const builds = onStand ? devOrigin(env[PlayOriginEnv.Builds]) : null;
   return {
     origins,
     hostToolsApi: onStand ? origins.api : null,
     gamesCaFile: gamesOnStand ? caFile(env[PlayOriginEnv.GamesCa]) : null,
+    buildHosts: builds ? new Set([new URL(builds).hostname]) : null,
   };
 }
 

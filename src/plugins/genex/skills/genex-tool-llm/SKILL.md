@@ -17,7 +17,7 @@ this preface, this preface wins.
 - Other commands map onto Studio tools as the `genex` skill describes
   (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-llm/SKILL.md v1.45.3 sha256 fc87c7a9e032b15e6c7eecd1e279344d92d21efa961128aa1e23b55d322249d2 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-llm/SKILL.md v1.46.1 sha256 fc87c7a9e032b15e6c7eecd1e279344d92d21efa961128aa1e23b55d322249d2 -->
 ---
 name: genex-tool-llm
 description: A language model running while somebody PLAYS the finished game — NPCs that answer in their own words, AI opponents, teammates or agents that plan and act, a narrator or game master, a quest written from what the player typed, a prompt box in the game. On Genex the player pays and approves it, so this is a platform feature, never a key on the author's meter.

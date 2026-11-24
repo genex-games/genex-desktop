@@ -39,6 +39,7 @@ export default {
   "A card battler where your deck is a stack of recipes": "덱이 레시피 더미인 카드 배틀",
   "A castle siege where you defend with catapults and bad jokes": "투석기와 썰렁한 농담으로 막아 내는 성 공방전",
   "A cave diving game where your light slowly runs out": "손전등 불빛이 점점 꺼져 가는 동굴 다이빙 게임",
+  "A change here applies from the next Play in Unreal.": "여기서 바꾼 내용은 Unreal의 다음 Play부터 적용돼요.",
   "A chess variant where pieces level up after each capture": "기물을 잡을 때마다 레벨업하는 체스 변형",
   "A city builder on the back of a giant walking turtle": "걸어 다니는 거대한 거북이 등 위에 짓는 도시 건설 게임",
   "A clockwork tower where you fix gears to reach the top": "톱니바퀴를 고치며 꼭대기까지 오르는 시계탑",
@@ -6367,6 +6368,14 @@ export default {
   "The cap is used up": "한도를 다 썼어",
   "This game wants to hear you through your microphone.": "이 게임이 마이크로 네 목소리를 듣고 싶어 해.",
   "Use real AI": "실제 AI 사용",
+  "Use my plan": "내 요금제 사용",
+  "Your own {plan} plan answers in this preview, on this computer. No Genex credits are spent; your plan's limits apply, answers come slower, and voices stay practice.":
+    "이 미리보기에서는 이 컴퓨터에서 네 {plan} 요금제가 답해. Genex 크레딧은 쓰지 않아. 요금제 한도가 적용되고, 답은 더 느리게 오고, 음성은 연습용 그대로야.",
+  "The plan that answers": "답하는 요금제",
+  "Starting {plan}…": "{plan} 시작하는 중…",
+  "{plan} answers · your own plan, no credits": "{plan}이(가) 답하는 중 · 내 요금제, 크레딧 없음",
+  "That plan is not signed in or ready on this computer. Check it in Settings, then try again. Practice answers go on.":
+    "그 요금제는 이 컴퓨터에서 로그인되어 있지 않거나 준비되지 않았어. 설정에서 확인한 다음 다시 해 봐. 연습 답변은 계속돼.",
   "A local model is answering a chat or build. Delete the model when it finishes.":
     "로컬 모델이 채팅이나 빌드에 답하는 중이에요. 끝나면 모델을 삭제해 주세요.",
   "Download Inkling 2 Mini in Settings › Local Models.": "설정 › 로컬 모델에서 Inkling 2 Mini를 다운로드해 주세요.",
@@ -6375,4 +6384,42 @@ export default {
   "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
     "로컬 모델에는 Apple 실리콘 Mac이나 64비트 Windows 또는 Linux PC가 필요해요",
   "{model} can't run on this computer.": "{model}은(는) 이 컴퓨터에서 실행할 수 없어요.",
+  "AI budget for {game}": "{game} AI 예산",
+  "AI budget: {remaining} of {limit, plural, one {{shown} credit} other {{shown} credits}} left":
+    "AI 예산: {limit, plural, other {{shown} 크레딧}} 중 {remaining} 남음",
+  "AI in games is paused right now. Try again later.":
+    "지금은 게임 속 AI가 일시 중지됐어요. 나중에 다시 시도해 주세요.",
+  "Approving replaces the AI budget already running for this game.":
+    "승인하면 이 게임에서 이미 쓰고 있는 AI 예산을 대신해요.",
+  "At most {n, plural, one {{shown} credit} other {{shown} credits}} for one call.":
+    "한 번 호출에 최대 {n, plural, other {{shown} 크레딧}}이에요.",
+  "Couldn’t set the budget. Try again.": "예산을 설정하지 못했어요. 다시 시도해 주세요.",
+  "Couldn’t stop the AI budget. Try again.": "AI 예산을 중지하지 못했어요. 다시 시도해 주세요.",
+  "It ends when you stop it, when you sign out of Genex, or after 24 hours.":
+    "직접 중지하거나, Genex에서 로그아웃하거나, 24시간이 지나면 끝나요.",
+  "It uses {models}.": "사용하는 AI: {models}.",
+  "Keep it": "유지하기",
+  Limit: "한도",
+  "Reading the AI budget…": "AI 예산 불러오는 중…",
+  "Set AI budget": "AI 예산 설정하기",
+  "Sign in to Genex to set an AI budget.": "AI 예산을 설정하려면 Genex에 로그인해 주세요.",
+  "Stop this AI budget?": "이 AI 예산을 중지할까요?",
+  "Stopping the AI budget…": "AI 예산 중지하는 중…",
+  "That took too long, so the budget has to be read again.": "시간이 너무 오래 걸려서 예산을 다시 불러와야 해요.",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per hour.":
+    "게임 추정으로는 한 시간에 약 {n, plural, other {{shown} 크레딧}}이에요.",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per minute.":
+    "게임 추정으로는 1분에 약 {n, plural, other {{shown} 크레딧}}이에요.",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per session.":
+    "게임 추정으로는 한 세션에 약 {n, plural, other {{shown} 크레딧}}이에요.",
+  "This game asks AI models for things while you play. You pay for what it uses from your Genex credits, up to the limit you set.":
+    "이 게임은 플레이하는 동안 AI 모델을 사용해요. 사용한 만큼 Genex 크레딧으로 결제하고, 설정한 한도를 넘지 않아요.",
+  "This game’s AI isn’t available right now.": "지금은 이 게임의 AI를 사용할 수 없어요.",
+  "This game’s voice AI isn’t available in the app yet.": "이 게임의 음성 AI는 아직 앱에서 사용할 수 없어요.",
+  "Uses AI, paid from your Genex credits.": "AI를 사용하고, Genex 크레딧으로 결제해요.",
+  "Verify your Genex account’s email to pay with credits, then try again.":
+    "크레딧으로 결제하려면 Genex 계정의 이메일을 인증한 뒤 다시 시도해 주세요.",
+  "You don’t have enough Genex credits for this budget.": "이 예산에 쓸 Genex 크레딧이 부족해요.",
+  "{n, plural, one {{shown} credit} other {{shown} credits}}": "{n, plural, other {{shown} 크레딧}}",
+  "an AI judge": "AI 심판",
 } satisfies LocaleCatalog;

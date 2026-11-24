@@ -25,6 +25,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { genexCliEnv, parseGenexJson, stripAnsi } from "../../plugins/genex/cli.ts";
+import { isAtLeast } from "../../plugins/genex/cli-version.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { GenexHostedStatus } from "../../shared/genex.ts";
 import { PLAY_ORIGIN } from "../../shared/play.ts";
@@ -170,6 +171,15 @@ export const PracticeRefusal = {
   NoDraft: "no_draft",
 } as const;
 export type PracticeRefusal = (typeof PracticeRefusal)[keyof typeof PracticeRefusal];
+
+/** The first Genex CLI whose practice helper has host mode (`genex llm practice --host`). */
+const HOST_PRACTICE_FIRST = [1, 46, 1] as const;
+
+/** The sandbox label of a practice helper, by who answers its calls. */
+function practiceLabel(live: boolean, host: boolean): string {
+  if (live) return "genex-cli:llm-practice-live";
+  return host ? "genex-cli:llm-practice-host" : "genex-cli:llm-practice";
+}
 
 /** A {@link PracticeRefusal} as an error, its code beside its words. */
 const practiceRefusal = (code: PracticeRefusal): Error & { code: PracticeRefusal } =>
@@ -532,9 +542,11 @@ export class GenexCliService {
    * models (`live`) are billed to the game's hosted project at most `maxCredits` for the whole run:
    * the run folder names that project, the credential goes on stdin as for every command, and the
    * network opens to the Genex API alone. The caller passes `live` only for a cap the person
-   * approved (`PreviewAiService`). The caller removes `root` once the helper is gone.
+   * approved (`PreviewAiService`). With `host` the helper asks the caller for the words of every
+   * call over its pipes (`--host --user-approved`, the person's own AI plan): like made-up answers
+   * it needs no account and no network. The caller removes `root` once the helper is gone.
    */
-  async practiceLaunch(project: string, live: { maxCredits: number } | null): Promise<PracticeLaunch> {
+  async practiceLaunch(project: string, live: { maxCredits: number } | null, host = false): Promise<PracticeLaunch> {
     const hosted = live ? await this.#hostedProjectOrNull(project) : null;
     if (live && !hosted) throw practiceRefusal(PracticeRefusal.NoDraft);
     const credential = live ? await this.#deps.credentialFile() : undefined;
@@ -546,13 +558,14 @@ export class GenexCliService {
     const preload = live ? ["--import", path.join(this.#deps.resources, PRELOAD_IN_RESOURCES)] : [];
     const liveFlags = live ? ["--live", "--max-credits", String(live.maxCredits), "--user-approved"] : [];
     const hostFlags = live ? ["--env", CREDENTIALS_ENV_FILE, "--api-url", this.#api, "--no-auth"] : [];
-    const argv = [node, ...preload, cli, "llm", "practice", ...liveFlags, ...hostFlags, "--json"];
+    const ownFlags = host && !live ? ["--host", "--user-approved"] : [];
+    const argv = [node, ...preload, cli, "llm", "practice", ...liveFlags, ...hostFlags, ...ownFlags, "--json"];
     return {
       command: argv.map(shellQuote).join(" "),
       cwd: work,
       env: this.#env(root),
       ...(credential ? { stdin: credential } : {}),
-      label: live ? "genex-cli:llm-practice-live" : "genex-cli:llm-practice",
+      label: practiceLabel(live !== null, host),
       policy: {
         allowedDomains: live ? [new URL(this.#api).hostname] : [],
         allowWrite: [root],
@@ -560,6 +573,22 @@ export class GenexCliService {
       },
       root,
     };
+  }
+
+  /**
+   * Whether the pinned CLI's practice helper can ask its host for the words of a call
+   * (`genex llm practice --host`, CLI {@link HOST_PRACTICE_FIRST} on): read from the package the
+   * helper is started from, so a profile on another CLI answers for that one.
+   */
+  async practiceAsksHost(): Promise<boolean> {
+    const manifest = path.join(path.dirname(this.#cliPath()), "..", "package.json");
+    try {
+      const meta: unknown = JSON.parse(await readFile(manifest, "utf8"));
+      const version = isPlainRecord(meta) && typeof meta.version === "string" ? meta.version : "";
+      return isAtLeast(version, HOST_PRACTICE_FIRST);
+    } catch {
+      return false;
+    }
   }
 
   /** Whether the app holds a Genex credential now (signed in and unlocked). */

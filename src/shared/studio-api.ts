@@ -52,6 +52,7 @@ import type {
 } from "./store-items.ts";
 import type { LocalItemsView, LocalShareResult } from "./item-draft.ts";
 import type { PlayCredits } from "./play-credits.ts";
+import type { AiBudgetConfirmed, AiBudgetOpened, AiBudgetRead, AiBudgetStopped } from "./play-ai-budget.ts";
 import type {
   AddOutcome,
   AddSource,
@@ -655,6 +656,17 @@ export interface StudioApi {
   playRevealInstall(slug: string): Promise<void>;
   /** Play: like or unlike a game from its own page, as the Genex account; answers its likes after. */
   playLike(slug: string, liked: boolean): Promise<{ liked: boolean; likes: number }>;
+  /**
+   * Play: what a native game declared for AI and the account's AI budget in it, read from
+   * genex.games; nothing declared when genex.games serves none, `signedOut` while the app is signed out.
+   */
+  playAiBudget(slug: string): Promise<AiBudgetRead>;
+  /** Play: open a game's declared AI budget for approval; main keeps the quote the sheet shows. */
+  playAiBudgetOpen(slug: string): Promise<AiBudgetOpened>;
+  /** Play: approve the open quote with a limit it offers, as the Genex account; the budget now running. */
+  playAiBudgetConfirm(slug: string, limitCredits: number): Promise<AiBudgetConfirmed>;
+  /** Play: stop the account's AI budget in a game; null when none was running. */
+  playAiBudgetStop(slug: string): Promise<AiBudgetStopped>;
   /** Play: close the viewer. */
   playClose(): Promise<void>;
   /**
@@ -894,8 +906,20 @@ export interface StudioApi {
    * its reason, where real models cannot start.
    */
   previewAiReal(project: string, capCredits: number): Promise<PreviewAiState>;
+  /**
+   * The person pressed Start in Live's bar for a plan of their own (`engine`, one of the state's
+   * `plans`): that plan answers this game in Live, on this computer, and no Genex credits are spent.
+   * Answers the unavailable state, with its reason, where the plan is not ready.
+   */
+  previewAiPlan(project: string, engine: string): Promise<PreviewAiState>;
   /** The person went back to practice answers (free, made up) for this game in Live. */
   previewAiPractice(project: string): Promise<PreviewAiState>;
+  /**
+   * Live's view of this game is its Unreal card (`shown`), or is so no longer: while it is, a game
+   * whose Unreal project calls Genex's models has Live's practice helper named to the Unreal editor,
+   * so a Play there is answered as Live's bar says.
+   */
+  previewAiEditor(project: string, shown: boolean): Promise<boolean>;
   /** The person's answer to the game's microphone ask in Live: allowed for this game until the app quits, or not now. */
   previewMicAnswer(project: string, allow: boolean): Promise<PreviewAiState>;
   /** What waits for this game's Live Reload and the build Live shows, as `live.behind` says it: read on mount. */

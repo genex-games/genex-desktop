@@ -12,7 +12,7 @@ this preface wins.
   `no-download`: Studio submits every create without waiting and delivers the file into the
   game. Pick it up with operation `wait` and its generationId.
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-image/SKILL.md v1.45.3 sha256 1dc42905c9a511a6cbec47d60d0f6de5519a1b7142c9ab400b74df41ef321756 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-image/SKILL.md v1.46.1 sha256 1dc42905c9a511a6cbec47d60d0f6de5519a1b7142c9ab400b74df41ef321756 -->
 ---
 name: genex-tool-image
 description: Generate a real image (PNG/JPEG) from a text prompt with `npx genex image` — posters, signs, logos, sprites, icons, card and item art, loading screens, decals, art for in-game screens. Pass `--transparent` for an alpha channel, `--edit` to modify an existing image, `--remove-bg` to cut a background. The file downloads to ./assets and is yours.

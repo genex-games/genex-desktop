@@ -537,8 +537,33 @@ export class PreviewService {
     const calls = loopback && (await gameCallsPlayTimeModels(dir));
     const key = calls ? await this.#core.previewAi.keyFor(holder, project) : null;
     if (!calls) await this.#core.previewAi.noModels(holder, project);
-    if (holder === LIVE_HANDLE) this.#liveKeyed = key !== null;
+    if (holder === LIVE_HANDLE) {
+      this.#liveKeyed = key !== null;
+      // Live's helper is also the one a game played in the Unreal editor is named: its handoff follows.
+      void this.#core.editorPractice.pageAsked(project);
+    }
     return key;
+  }
+
+  /** The game Live's page runs with a practice helper's key now; null for none, a stopped page included. */
+  liveKeyedGame(): string | null {
+    const running = this.#liveKeyed && !this.#liveStopped;
+    return running ? (this.#x.servedRoots.get(LIVE_HANDLE)?.project ?? null) : null;
+  }
+
+  /**
+   * Live's page stops as the person's Stop stops it, its helper left to whoever takes it next (the
+   * game played in the Unreal editor, `practice-handoff.ts`); Play loads it again with a fresh key.
+   * For a caller in Live's queue already.
+   */
+  async stopLivePage(): Promise<void> {
+    await this.#optionalPreview()?.stop?.();
+    this.#liveStopped = true;
+  }
+
+  /** Run `op` in Live's queue: after any load of Live under way, and before the next. */
+  inLiveQueue<T>(op: () => Promise<T>): Promise<T> {
+    return serial(this.#x.previewOperations, LIVE_HANDLE, op);
   }
 
   async previewRevision(project: string, root: string | null): Promise<string | null> {
@@ -1468,9 +1493,9 @@ export class PreviewService {
   /** The person's Stop: Live's game stops running, after any load of it already under way, and its practice helper with it. */
   stopLive(): Promise<void> {
     return serial(this.#x.previewOperations, LIVE_HANDLE, async () => {
-      await this.#optionalPreview()?.stop?.();
-      this.#liveStopped = true;
+      await this.stopLivePage();
       await this.#core.previewAi.release(LIVE_HANDLE);
+      await this.#core.editorPractice.liveStopped();
     });
   }
 

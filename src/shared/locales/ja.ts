@@ -39,6 +39,7 @@ export default {
   "A card battler where your deck is a stack of recipes": "デッキがレシピの束になっているカードバトル",
   "A castle siege where you defend with catapults and bad jokes": "カタパルトとつまらないダジャレで守る城の攻防戦",
   "A cave diving game where your light slowly runs out": "ライトが少しずつ切れていく洞窟ダイビングゲーム",
+  "A change here applies from the next Play in Unreal.": "ここでの変更は、Unrealで次にPlayしたときから反映されます。",
   "A chess variant where pieces level up after each capture": "駒を取るたびにレベルアップする変則チェス",
   "A city builder on the back of a giant walking turtle": "歩く巨大なカメの背中で街をつくるゲーム",
   "A clockwork tower where you fix gears to reach the top": "歯車を直しててっぺんを目指すからくり時計塔",
@@ -6521,6 +6522,14 @@ export default {
   "The cap is used up": "上限に達しました",
   "This game wants to hear you through your microphone.": "このゲームはマイクであなたの声を聞きたがっています。",
   "Use real AI": "本物の AI を使う",
+  "Use my plan": "自分のプランを使う",
+  "Your own {plan} plan answers in this preview, on this computer. No Genex credits are spent; your plan's limits apply, answers come slower, and voices stay practice.":
+    "このプレビューでは、このコンピューター上であなた自身の {plan} のプランが答えます。Genex のクレジットは使いません。プランの上限が適用され、答えは遅くなり、声は練習用のままです。",
+  "The plan that answers": "答えるプラン",
+  "Starting {plan}…": "{plan} を起動中…",
+  "{plan} answers · your own plan, no credits": "{plan} が回答 · 自分のプラン、クレジットなし",
+  "That plan is not signed in or ready on this computer. Check it in Settings, then try again. Practice answers go on.":
+    "そのプランはこのコンピューターでサインインしていないか、準備ができていません。設定で確認してから、もう一度試してね。練習用の回答は続きます。",
   "A local model is answering a chat or build. Delete the model when it finishes.":
     "ローカルモデルがチャットかビルドで応答中です。終わってからモデルを削除してください。",
   "Download Inkling 2 Mini in Settings › Local Models.":
@@ -6530,4 +6539,42 @@ export default {
   "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
     "ローカルモデルにはAppleシリコン搭載のMac、または64ビットのWindowsかLinuxのPCが必要です",
   "{model} can't run on this computer.": "{model}はこのコンピュータでは動きません。",
+  "AI budget for {game}": "{game}のAI予算",
+  "AI budget: {remaining} of {limit, plural, one {{shown} credit} other {{shown} credits}} left":
+    "AI予算：残り{remaining}／{limit, plural, other {{shown}クレジット}}",
+  "AI in games is paused right now. Try again later.": "ゲーム内のAIは今止まっています。あとでもう一度試してください。",
+  "Approving replaces the AI budget already running for this game.":
+    "承認すると、このゲームで使用中のAI予算と入れ替わります。",
+  "At most {n, plural, one {{shown} credit} other {{shown} credits}} for one call.":
+    "1回の呼び出しは最大{n, plural, other {{shown}クレジット}}です。",
+  "Couldn’t set the budget. Try again.": "予算を設定できませんでした。もう一度試してください。",
+  "Couldn’t stop the AI budget. Try again.": "AI予算を停止できませんでした。もう一度試してください。",
+  "It ends when you stop it, when you sign out of Genex, or after 24 hours.":
+    "停止したとき、Genexからサインアウトしたとき、または24時間後に終了します。",
+  "It uses {models}.": "{models}を使います。",
+  "Keep it": "続ける",
+  Limit: "上限",
+  "Reading the AI budget…": "AI予算を読み込み中…",
+  "Set AI budget": "AI予算を設定",
+  "Sign in to Genex to set an AI budget.": "AI予算を設定するにはGenexにサインインしてください。",
+  "Stop this AI budget?": "このAI予算を停止しますか？",
+  "Stopping the AI budget…": "AI予算を停止中…",
+  "That took too long, so the budget has to be read again.":
+    "時間がかかりすぎたため、予算を読み込み直す必要があります。",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per hour.":
+    "ゲームの見積もりは1時間あたり約{n, plural, other {{shown}クレジット}}です。",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per minute.":
+    "ゲームの見積もりは1分あたり約{n, plural, other {{shown}クレジット}}です。",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per session.":
+    "ゲームの見積もりは1セッションあたり約{n, plural, other {{shown}クレジット}}です。",
+  "This game asks AI models for things while you play. You pay for what it uses from your Genex credits, up to the limit you set.":
+    "このゲームはプレイ中にAIモデルを使います。使った分は、設定した上限までGenexのクレジットで支払います。",
+  "This game’s AI isn’t available right now.": "このゲームのAIは今使えません。",
+  "This game’s voice AI isn’t available in the app yet.": "このゲームの音声AIは、アプリではまだ使えません。",
+  "Uses AI, paid from your Genex credits.": "AIを使います。支払いはGenexのクレジットです。",
+  "Verify your Genex account’s email to pay with credits, then try again.":
+    "クレジットで支払うにはGenexアカウントのメールを確認して、もう一度試してください。",
+  "You don’t have enough Genex credits for this budget.": "この予算にはGenexのクレジットが足りません。",
+  "{n, plural, one {{shown} credit} other {{shown} credits}}": "{n, plural, other {{shown}クレジット}}",
+  "an AI judge": "AIジャッジ",
 } satisfies LocaleCatalog;

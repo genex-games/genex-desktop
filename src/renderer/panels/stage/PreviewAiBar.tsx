@@ -1,14 +1,15 @@
 /**
  * Live's AI bar, above the game (the native view paints over anything inside the stage): for a
  * game whose code calls Genex's models, practice answers by default and the person's own way to real
- * ones, approved once for a cap; and the game's microphone ask. Every button is the person's click
- * in the app, never an agent's call.
+ * ones, approved once for a cap, or to a plan of their own at no credits; and the game's microphone
+ * ask. Every button is the person's click in the app, never an agent's call.
  */
 import { type JSX, type ReactNode, useEffect, useState } from "react";
 import {
   PREVIEW_AI_CAPS,
   PREVIEW_AI_DEFAULT_CAP,
   PreviewAiMode,
+  type PreviewAiPlan,
   type PreviewAiState,
 } from "../../../shared/preview-ai.ts";
 import { studio } from "../../state/studio.ts";
@@ -19,7 +20,9 @@ import {
   offersRetry,
   PREVIEW_AI_WORDS as WORDS,
   PreviewAiBarKind,
+  PreviewAiConfirm,
   previewAiBarKind,
+  retryConfirms,
   unavailableWords,
 } from "./preview-ai-bar.ts";
 
@@ -88,6 +91,68 @@ function Confirm({ project, onGenex, onDone }: { project: string; onGenex: boole
   );
 }
 
+/** The plans to choose between, as one radio group of small buttons; nothing to choose with one plan. */
+function PlanChoice({
+  plans,
+  engine,
+  onEngine,
+}: {
+  plans: readonly PreviewAiPlan[];
+  engine: string;
+  onEngine: (engine: string) => void;
+}): JSX.Element | null {
+  if (plans.length < 2) return null;
+  return (
+    <div role="radiogroup" aria-label={WORDS.planChoice()} className="flex items-center gap-1">
+      {plans.map((plan) => (
+        <Button
+          key={plan.engine}
+          role="radio"
+          aria-checked={plan.engine === engine}
+          variant={plan.engine === engine ? "accent-outline" : "ghost"}
+          data-preview-ai-plan-choice={plan.engine}
+          onClick={() => onEngine(plan.engine)}
+        >
+          {plan.label}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+/** The confirmation of a plan of the person's own: their Start is the only way it answers. */
+function PlanConfirm({
+  project,
+  plans,
+  onDone,
+}: {
+  project: string;
+  plans: readonly PreviewAiPlan[];
+  onDone: () => void;
+}): JSX.Element {
+  const [chosen, setChosen] = useState<string | null>(null);
+  const plan = plans.find((one) => one.engine === chosen) ?? plans[0];
+  return (
+    <Row kind={PreviewAiBarKind.PlanConfirm}>
+      <Words text={WORDS.planConfirm(plan?.label ?? "")} />
+      <PlanChoice plans={plans} engine={plan?.engine ?? ""} onEngine={setChosen} />
+      <Button variant="ghost" data-preview-ai-cancel onClick={onDone}>
+        {WORDS.cancel()}
+      </Button>
+      <Button
+        variant="default"
+        data-preview-ai-start
+        onClick={() => {
+          onDone();
+          if (plan) void studio().previewAi.startPlan(project, plan.engine);
+        }}
+      >
+        {WORDS.start()}
+      </Button>
+    </Row>
+  );
+}
+
 /** The game's microphone ask. */
 function MicAsk({ project }: { project: string }): JSX.Element {
   const answer = (allow: boolean) => void studio().previewAi.answerMic(project, allow);
@@ -104,7 +169,46 @@ function MicAsk({ project }: { project: string }): JSX.Element {
   );
 }
 
-/** The bar for a state that is not the confirmation or the microphone. */
+/** What answers now, or is starting, with the Stop that goes back to practice. */
+function runningWords(state: PreviewAiState, kind: PreviewAiBarKind): string {
+  const cap = state.capCredits ?? PREVIEW_AI_DEFAULT_CAP;
+  if (kind === PreviewAiBarKind.Live) return WORDS.live(state.chargedCredits, cap);
+  if (kind === PreviewAiBarKind.Plan) return WORDS.plan(state.plan?.label ?? "");
+  return state.plan ? WORDS.startingPlan(state.plan.label) : WORDS.starting();
+}
+
+/** The kinds in which something other than practice answers, or is about to. */
+const RUNNING: ReadonlySet<PreviewAiBarKind> = new Set([
+  PreviewAiBarKind.Live,
+  PreviewAiBarKind.Plan,
+  PreviewAiBarKind.Starting,
+]);
+
+/** Practice answers, with the person's ways out of them: a plan of their own, or real models on credits. */
+function PracticeRow({
+  state,
+  onConfirm,
+}: {
+  state: PreviewAiState;
+  onConfirm: (what: PreviewAiConfirm) => void;
+}): JSX.Element {
+  const failed = state.mode === PreviewAiMode.Practice && state.error !== null;
+  return (
+    <Row kind={PreviewAiBarKind.Practice}>
+      <Words text={failed ? WORDS.practiceFailed(state.error ?? "") : WORDS.practice()} quiet />
+      {state.plans.length > 0 ? (
+        <Button variant="accent-outline" data-preview-ai-plan onClick={() => onConfirm(PreviewAiConfirm.Plan)}>
+          {WORDS.myPlan()}
+        </Button>
+      ) : null}
+      <Button variant="accent-outline" data-preview-ai-real onClick={() => onConfirm(PreviewAiConfirm.Real)}>
+        {WORDS.realAi()}
+      </Button>
+    </Row>
+  );
+}
+
+/** The bar for a state that is not a confirmation or the microphone. */
 function StateRow({
   state,
   kind,
@@ -112,14 +216,13 @@ function StateRow({
 }: {
   state: PreviewAiState;
   kind: PreviewAiBarKind;
-  onConfirm: () => void;
+  onConfirm: (what: PreviewAiConfirm) => void;
 }): JSX.Element | null {
   const stop = () => void studio().previewAi.backToPractice(state.project);
-  const cap = state.capCredits ?? PREVIEW_AI_DEFAULT_CAP;
-  if (kind === PreviewAiBarKind.Live || kind === PreviewAiBarKind.Starting)
+  if (RUNNING.has(kind))
     return (
       <Row kind={kind}>
-        <Words text={kind === PreviewAiBarKind.Live ? WORDS.live(state.chargedCredits, cap) : WORDS.starting()} />
+        <Words text={runningWords(state, kind)} />
         <Button variant="ghost" data-preview-ai-stop onClick={stop}>
           {WORDS.stop()}
         </Button>
@@ -132,8 +235,8 @@ function StateRow({
         <Button variant="ghost" data-preview-ai-stop onClick={stop}>
           {WORDS.stop()}
         </Button>
-        <Button variant="accent-outline" data-preview-ai-more onClick={onConfirm}>
-          {WORDS.addMore(cap)}
+        <Button variant="accent-outline" data-preview-ai-more onClick={() => onConfirm(PreviewAiConfirm.Real)}>
+          {WORDS.addMore(state.capCredits ?? PREVIEW_AI_DEFAULT_CAP)}
         </Button>
       </Row>
     );
@@ -142,35 +245,28 @@ function StateRow({
       <Row kind={kind}>
         <Words text={unavailableWords(state.reason, state.error)} />
         {offersRetry(state.reason) ? (
-          <Button variant="ghost" data-preview-ai-retry onClick={onConfirm}>
+          <Button variant="ghost" data-preview-ai-retry onClick={() => onConfirm(retryConfirms(state.reason))}>
             {WORDS.tryAgain()}
           </Button>
         ) : null}
       </Row>
     );
-  const failed = state.mode === PreviewAiMode.Practice && state.error !== null;
-  return (
-    <Row kind={PreviewAiBarKind.Practice}>
-      <Words text={failed ? WORDS.practiceFailed(state.error ?? "") : WORDS.practice()} quiet />
-      <Button variant="accent-outline" data-preview-ai-real onClick={onConfirm}>
-        {WORDS.realAi()}
-      </Button>
-    </Row>
-  );
+  return <PracticeRow state={state} onConfirm={onConfirm} />;
 }
 
 /** Live's AI bar for the game on the stage; nothing for a game that calls no model and asks nothing. */
 export function PreviewAiBar({ project }: { project: string | null }): JSX.Element | null {
   const state = usePreviewAi((s) => (project ? s.games[project] : undefined));
-  const [confirming, setConfirming] = useState(false);
+  const [confirming, setConfirming] = useState<PreviewAiConfirm | null>(null);
   useEffect(() => {
-    setConfirming(false);
+    setConfirming(null);
     if (project) void studio().previewAi.read(project);
   }, [project]);
   const kind = previewAiBarKind(state, confirming);
   if (!project || !state || kind === PreviewAiBarKind.Hidden) return null;
+  const done = () => setConfirming(null);
   if (kind === PreviewAiBarKind.Mic) return <MicAsk project={project} />;
-  if (kind === PreviewAiBarKind.Confirm)
-    return <Confirm project={project} onGenex={state.onGenex} onDone={() => setConfirming(false)} />;
-  return <StateRow state={state} kind={kind} onConfirm={() => setConfirming(true)} />;
+  if (kind === PreviewAiBarKind.Confirm) return <Confirm project={project} onGenex={state.onGenex} onDone={done} />;
+  if (kind === PreviewAiBarKind.PlanConfirm) return <PlanConfirm project={project} plans={state.plans} onDone={done} />;
+  return <StateRow state={state} kind={kind} onConfirm={setConfirming} />;
 }

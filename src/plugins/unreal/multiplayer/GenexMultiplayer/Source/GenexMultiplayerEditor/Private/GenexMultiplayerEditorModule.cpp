@@ -4,7 +4,11 @@
 // the variable held before (a URL the developer set before starting the editor). Nothing is named
 // while no server runs, so PIE then joins only a server the game names itself. The port of
 // Studio's Unity GenexAuthorityPlay.cs.
+//
+// The same moment hands the play its practice helper (GenexLocalPractice.h): while Genex Studio runs
+// one for the game, the play's model calls go to it; as PIE ends the key is taken away again.
 #include "GenexLocalAuthority.h"
+#include "GenexLocalPractice.h"
 
 #include "Editor.h"
 #include "Misc/Paths.h"
@@ -31,10 +35,15 @@ public:
 private:
 	void NameServer(bool /*bIsSimulating*/)
 	{
+		// The helper's key, or none: a key from an earlier play never outlives its helper.
+		const FString Practice = FGenexLocalPractice::Find(FPaths::ProjectDir());
+		FGenexLocalPractice::Hand(Practice);
+		if (!Practice.IsEmpty()) UE_LOG(LogGenexEditor, Display, TEXT("Genex: this play's model calls go to the game's practice helper on this computer."));
 		const FString Url = FGenexLocalAuthority::Find(FPaths::ProjectDir());
 		if (Url.IsEmpty())
 		{
-			TakeBack(false);
+			// Only the server's address: the practice key handed above stays for this play.
+			Handoff.TakeBack();
 			return;
 		}
 		Handoff.Name(Url);
@@ -43,6 +52,7 @@ private:
 
 	void TakeBack(bool /*bIsSimulating*/)
 	{
+		FGenexLocalPractice::Hand(FString());
 		Handoff.TakeBack();
 	}
 

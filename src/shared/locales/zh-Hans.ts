@@ -39,6 +39,7 @@ export default {
   "A card battler where your deck is a stack of recipes": "卡组是一叠食谱的卡牌对战游戏",
   "A castle siege where you defend with catapults and bad jokes": "用投石机和冷笑话守城的攻城战",
   "A cave diving game where your light slowly runs out": "灯光会慢慢耗尽的洞穴潜水游戏",
+  "A change here applies from the next Play in Unreal.": "这里的更改从 Unreal 的下一次 Play 开始生效。",
   "A chess variant where pieces level up after each capture": "棋子每吃一子就升级的国际象棋变体",
   "A city builder on the back of a giant walking turtle": "在一只行走的巨型海龟背上建造城市",
   "A clockwork tower where you fix gears to reach the top": "修好齿轮、登上塔顶的发条塔",
@@ -6145,6 +6146,14 @@ export default {
   "The cap is used up": "额度用完了",
   "This game wants to hear you through your microphone.": "这个游戏想通过麦克风听你说话。",
   "Use real AI": "使用真实 AI",
+  "Use my plan": "用我的订阅",
+  "Your own {plan} plan answers in this preview, on this computer. No Genex credits are spent; your plan's limits apply, answers come slower, and voices stay practice.":
+    "这个预览里由你自己的 {plan} 订阅在这台电脑上回答。不花 Genex 积分；受你订阅的限额约束，回答会慢一些，语音仍是练习用的。",
+  "The plan that answers": "负责回答的订阅",
+  "Starting {plan}…": "正在启动 {plan}…",
+  "{plan} answers · your own plan, no credits": "{plan} 在回答 · 你自己的订阅，不花积分",
+  "That plan is not signed in or ready on this computer. Check it in Settings, then try again. Practice answers go on.":
+    "那个订阅在这台电脑上没有登录或还没准备好。在设置里检查后再试一次。练习回答会继续。",
   "A local model is answering a chat or build. Delete the model when it finishes.":
     "本地模型正在回复对话或构建。请等它完成后再删除模型。",
   "Download Inkling 2 Mini in Settings › Local Models.": "请在“设置 › 本地模型”中下载 Inkling 2 Mini。",
@@ -6153,4 +6162,40 @@ export default {
   "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
     "本地模型需要搭载 Apple 芯片的 Mac，或 64 位 Windows / Linux 电脑",
   "{model} can't run on this computer.": "{model} 无法在这台电脑上运行。",
+  "AI budget for {game}": "{game} 的 AI 预算",
+  "AI budget: {remaining} of {limit, plural, one {{shown} credit} other {{shown} credits}} left":
+    "AI 预算：剩余 {remaining} / {limit, plural, other {{shown} 积分}}",
+  "AI in games is paused right now. Try again later.": "游戏中的 AI 目前已暂停，请稍后再试。",
+  "Approving replaces the AI budget already running for this game.": "批准后，将替换这款游戏正在使用的 AI 预算。",
+  "At most {n, plural, one {{shown} credit} other {{shown} credits}} for one call.":
+    "每次调用最多 {n, plural, other {{shown} 积分}}。",
+  "Couldn’t set the budget. Try again.": "无法设置预算，请重试。",
+  "Couldn’t stop the AI budget. Try again.": "无法停止 AI 预算，请重试。",
+  "It ends when you stop it, when you sign out of Genex, or after 24 hours.":
+    "你停止它、退出登录 Genex 或 24 小时后，它就会结束。",
+  "It uses {models}.": "它会使用 {models}。",
+  "Keep it": "保留",
+  Limit: "上限",
+  "Reading the AI budget…": "正在读取 AI 预算…",
+  "Set AI budget": "设置 AI 预算",
+  "Sign in to Genex to set an AI budget.": "登录 Genex 即可设置 AI 预算。",
+  "Stop this AI budget?": "停止这个 AI 预算？",
+  "Stopping the AI budget…": "正在停止 AI 预算…",
+  "That took too long, so the budget has to be read again.": "等待太久，需要重新读取预算。",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per hour.":
+    "游戏预计每小时约 {n, plural, other {{shown} 积分}}。",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per minute.":
+    "游戏预计每分钟约 {n, plural, other {{shown} 积分}}。",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per session.":
+    "游戏预计每次游玩约 {n, plural, other {{shown} 积分}}。",
+  "This game asks AI models for things while you play. You pay for what it uses from your Genex credits, up to the limit you set.":
+    "这款游戏会在你游玩时调用 AI 模型。用掉的部分从你的 Genex 积分中支付，不超过你设置的上限。",
+  "This game’s AI isn’t available right now.": "这款游戏的 AI 目前不可用。",
+  "This game’s voice AI isn’t available in the app yet.": "这款游戏的语音 AI 暂时无法在应用中使用。",
+  "Uses AI, paid from your Genex credits.": "使用 AI，从你的 Genex 积分中支付。",
+  "Verify your Genex account’s email to pay with credits, then try again.":
+    "请先验证 Genex 账号的邮箱才能用积分支付，然后重试。",
+  "You don’t have enough Genex credits for this budget.": "你的 Genex 积分不够设置这个预算。",
+  "{n, plural, one {{shown} credit} other {{shown} credits}}": "{n, plural, other {{shown} 积分}}",
+  "an AI judge": "AI 裁判",
 } satisfies LocaleCatalog;

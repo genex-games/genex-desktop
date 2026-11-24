@@ -6,6 +6,7 @@
  * (`fixture-manage.ts`) shows for the launch.
  */
 import { FEED_PAGE_SIZE, type GalleryAnswer, type GalleryRequest, PlayRoute } from "../play/gallery.ts";
+import { createFixtureAiBudget } from "./fixture-ai-budget.ts";
 import { fixtureLibraryAnswer } from "./fixture-asset-library.ts";
 import { createFixtureCoin, FIXTURE_BUY_STYLE, fixtureBuyScript } from "./fixture-coin.ts";
 import { fixtureCommentCount, fixtureCommentsAnswer } from "./fixture-comments.ts";
@@ -460,6 +461,12 @@ const coin = createFixtureCoin({
   },
 });
 
+/** The launch's AI budgets (`fixture-ai-budget.ts`), for the games still listed. */
+const aiBudget = createFixtureAiBudget({
+  now: Date.now,
+  slugOf: (projectId) => listed().find((candidate) => candidate.id === projectId)?.slug ?? null,
+});
+
 /** Get Nex in a fixture launch: no page opens, and the balance grows as though coin were bought on genex.games. */
 export const fixtureGetCoin = (): void => coin.topUp();
 
@@ -480,6 +487,8 @@ export const fixturePlayRequest: GalleryRequest = async (route, init) => {
   if (comments) return comments;
   const purchase = coin.answer(route, init);
   if (purchase) return purchase;
+  const budget = aiBudget.answer(route, init);
+  if (budget) return budget;
   if (route === PlayRoute.Referral && fixtureAccountOf(init.token)) return ok(fixtureReferral());
   const [pathname = "", search = ""] = route.split("?");
   const query = new URLSearchParams(search);

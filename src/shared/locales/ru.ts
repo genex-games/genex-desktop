@@ -43,6 +43,7 @@ export default {
   "A castle siege where you defend with catapults and bad jokes":
     "Осада замка: защищайся катапультами и плохими шутками",
   "A cave diving game where your light slowly runs out": "Пещерный дайвинг, где твой фонарь медленно гаснет",
+  "A change here applies from the next Play in Unreal.": "Изменение здесь сработает со следующего Play в Unreal.",
   "A chess variant where pieces level up after each capture": "Шахматы, где фигуры прокачиваются после каждого взятия",
   "A city builder on the back of a giant walking turtle": "Градостроитель на спине гигантской шагающей черепахи",
   "A clockwork tower where you fix gears to reach the top":
@@ -6556,6 +6557,14 @@ export default {
   "The cap is used up": "Лимит исчерпан",
   "This game wants to hear you through your microphone.": "Эта игра хочет слышать тебя через микрофон.",
   "Use real AI": "Включить настоящий ИИ",
+  "Use my plan": "Мой тариф",
+  "Your own {plan} plan answers in this preview, on this computer. No Genex credits are spent; your plan's limits apply, answers come slower, and voices stay practice.":
+    "В этом превью отвечает твой собственный тариф {plan}, на этом компьютере. Кредиты Genex не тратятся; действуют лимиты твоего тарифа, ответы приходят медленнее, а голоса остаются пробными.",
+  "The plan that answers": "Тариф, который отвечает",
+  "Starting {plan}…": "Запускаем {plan}…",
+  "{plan} answers · your own plan, no credits": "Отвечает {plan} · твой тариф, без кредитов",
+  "That plan is not signed in or ready on this computer. Check it in Settings, then try again. Practice answers go on.":
+    "Этот тариф не подключён или не готов на этом компьютере. Проверь его в настройках и попробуй снова. Пробные ответы продолжаются.",
   "A local model is answering a chat or build. Delete the model when it finishes.":
     "Локальная модель сейчас отвечает в чате или сборке. Удали модель, когда ответ будет готов.",
   "Download Inkling 2 Mini in Settings › Local Models.":
@@ -6565,4 +6574,43 @@ export default {
   "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
     "Для локальных моделей нужен Mac с Apple Silicon или 64-битный ПК с Windows или Linux",
   "{model} can't run on this computer.": "{model} не запустится на этом компьютере.",
+  "AI budget for {game}": "Бюджет на ИИ для «{game}»",
+  "AI budget: {remaining} of {limit, plural, one {{shown} credit} other {{shown} credits}} left":
+    "Бюджет на ИИ: осталось {remaining} из {limit, plural, one {{shown} кредита} few {{shown} кредитов} many {{shown} кредитов} other {{shown} кредита}}",
+  "AI in games is paused right now. Try again later.": "ИИ в играх сейчас на паузе. Попробуй позже.",
+  "Approving replaces the AI budget already running for this game.":
+    "Новый бюджет заменит тот, что уже действует в этой игре.",
+  "At most {n, plural, one {{shown} credit} other {{shown} credits}} for one call.":
+    "Не больше {n, plural, one {{shown} кредита} few {{shown} кредитов} many {{shown} кредитов} other {{shown} кредита}} за один запрос.",
+  "Couldn’t set the budget. Try again.": "Не удалось задать бюджет. Попробуй ещё раз.",
+  "Couldn’t stop the AI budget. Try again.": "Не удалось остановить бюджет на ИИ. Попробуй ещё раз.",
+  "It ends when you stop it, when you sign out of Genex, or after 24 hours.":
+    "Он закончится, когда ты его остановишь, выйдешь из Genex или через 24 часа.",
+  "It uses {models}.": "Она использует {models}.",
+  "Keep it": "Оставить",
+  Limit: "Лимит",
+  "Reading the AI budget…": "Загружаем бюджет на ИИ…",
+  "Set AI budget": "Задать бюджет на ИИ",
+  "Sign in to Genex to set an AI budget.": "Войди в Genex, чтобы задать бюджет на ИИ.",
+  "Stop this AI budget?": "Остановить этот бюджет на ИИ?",
+  "Stopping the AI budget…": "Останавливаем бюджет на ИИ…",
+  "That took too long, so the budget has to be read again.":
+    "Прошло слишком много времени, бюджет нужно загрузить заново.",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per hour.":
+    "По оценке игры — около {n, plural, one {{shown} кредита} few {{shown} кредитов} many {{shown} кредитов} other {{shown} кредита}} в час.",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per minute.":
+    "По оценке игры — около {n, plural, one {{shown} кредита} few {{shown} кредитов} many {{shown} кредитов} other {{shown} кредита}} в минуту.",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per session.":
+    "По оценке игры — около {n, plural, one {{shown} кредита} few {{shown} кредитов} many {{shown} кредитов} other {{shown} кредита}} за сессию.",
+  "This game asks AI models for things while you play. You pay for what it uses from your Genex credits, up to the limit you set.":
+    "Пока ты играешь, эта игра обращается к ИИ-моделям. Ты платишь за это кредитами Genex — не больше лимита, который задашь.",
+  "This game’s AI isn’t available right now.": "ИИ этой игры сейчас недоступен.",
+  "This game’s voice AI isn’t available in the app yet.": "Голосовой ИИ этой игры пока недоступен в приложении.",
+  "Uses AI, paid from your Genex credits.": "Использует ИИ за твои кредиты Genex.",
+  "Verify your Genex account’s email to pay with credits, then try again.":
+    "Подтверди почту аккаунта Genex, чтобы платить кредитами, и попробуй ещё раз.",
+  "You don’t have enough Genex credits for this budget.": "На этот бюджет не хватает кредитов Genex.",
+  "{n, plural, one {{shown} credit} other {{shown} credits}}":
+    "{n, plural, one {{shown} кредит} few {{shown} кредита} many {{shown} кредитов} other {{shown} кредита}}",
+  "an AI judge": "ИИ-судью",
 } satisfies LocaleCatalog;

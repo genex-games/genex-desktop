@@ -81,6 +81,8 @@ import type { HealthFinding } from "../shared/preview-contract.ts";
 import type { CommandState } from "./state/command-runs.ts";
 import type { JobState } from "./panels/plugins/genex/genex-view.ts";
 import { InstallLine, type InstallLineView } from "./play/native-model.ts";
+import { SheetFailure } from "./play/ai-budget-model.ts";
+import { AiBudgetPeriod } from "../shared/play-ai-budget.ts";
 import { formatList, intlLocale, t, tc } from "../shared/i18n.ts";
 import { JUDGE_PLAY_TOOL_NAME } from "../shared/chat-judge.ts";
 import {
@@ -6503,6 +6505,86 @@ export function notHereWords(
   }
 }
 
+/** An amount of credits as genex.games counted it, in the reader's digits. */
+const creditsShown = (credits: number): string =>
+  new Intl.NumberFormat(intlLocale(), { maximumFractionDigits: 2 }).format(credits);
+
+/** A native game's AI budget: the line under its page's primary block and the sheet that sets it (`play/AiBudget.tsx`). */
+export const AI_BUDGET_WORDS = {
+  /** The line: the game uses AI and no budget runs. */
+  offer: t("Uses AI, paid from your Genex credits."),
+  set: t("Set AI budget"),
+  unavailable: t("This game’s AI isn’t available right now."),
+  voice: t("This game’s voice AI isn’t available in the app yet."),
+  /** The line while a budget runs: "AI budget: 85 of 100 credits left". */
+  left: (remaining: number, limit: number) =>
+    t("AI budget: {remaining} of {limit, plural, one {{shown} credit} other {{shown} credits}} left", {
+      remaining: creditsShown(remaining),
+      limit,
+      shown: creditsShown(limit),
+    }),
+  stop: t("Stop"),
+  change: t("Change"),
+  /** Stop asks once, on the line itself. */
+  stopAsk: t("Stop this AI budget?"),
+  stopKeep: t("Keep it"),
+  stopping: t("Stopping the AI budget…"),
+  stopFailed: t("Couldn’t stop the AI budget. Try again."),
+  // The sheet.
+  title: (game: string) => t("AI budget for {game}", { game }),
+  what: t(
+    "This game asks AI models for things while you play. You pay for what it uses from your Genex credits, up to the limit you set.",
+  ),
+  /** What the game uses, by the names genex.games gave, an AI judge last; null with nothing to name. */
+  uses: (models: readonly string[], judge: boolean): string | null => {
+    const used = judge ? [...models, t("an AI judge")] : models;
+    return used.length > 0 ? t("It uses {models}.", { models: formatList(used) }) : null;
+  },
+  perCall: (credits: number) =>
+    t("At most {n, plural, one {{shown} credit} other {{shown} credits}} for one call.", {
+      n: credits,
+      shown: creditsShown(credits),
+    }),
+  estimate: {
+    [AiBudgetPeriod.Session]: (credits: number) =>
+      t("The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per session.", {
+        n: credits,
+        shown: creditsShown(credits),
+      }),
+    [AiBudgetPeriod.Hour]: (credits: number) =>
+      t("The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per hour.", {
+        n: credits,
+        shown: creditsShown(credits),
+      }),
+    [AiBudgetPeriod.Minute]: (credits: number) =>
+      t("The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per minute.", {
+        n: credits,
+        shown: creditsShown(credits),
+      }),
+  } satisfies Record<AiBudgetPeriod, (credits: number) => string>,
+  limit: t("Limit"),
+  limitValue: (credits: number) =>
+    t("{n, plural, one {{shown} credit} other {{shown} credits}}", { n: credits, shown: creditsShown(credits) }),
+  replaces: t("Approving replaces the AI budget already running for this game."),
+  ends: t("It ends when you stop it, when you sign out of Genex, or after 24 hours."),
+  approve: t("Approve"),
+  approving: t("Approving…"),
+  cancel: t("Cancel"),
+  loading: t("Reading the AI budget…"),
+  failure: {
+    [SheetFailure.Credits]: t("You don’t have enough Genex credits for this budget."),
+    [SheetFailure.Email]: t("Verify your Genex account’s email to pay with credits, then try again."),
+    [SheetFailure.Expired]: t("That took too long, so the budget has to be read again."),
+    [SheetFailure.Paused]: t("AI in games is paused right now. Try again later."),
+    [SheetFailure.Unavailable]: t("This game’s AI isn’t available right now."),
+    [SheetFailure.SignedOut]: t("Sign in to Genex to set an AI budget."),
+    [SheetFailure.Other]: t("Couldn’t set the budget. Try again."),
+  } satisfies Record<SheetFailure, string>,
+  getCredits: t("Get credits"),
+  tryAgain: t("Try again"),
+  signIn: t("Sign in"),
+} as const;
+
 /** Who took a check, for the sources that played the build. */
 export const PLAYED_SOURCE_WORDS: Record<InteractionSource, string> = {
   [InteractionSource.IndependentPlaytester]: t("Independent playtester"),
@@ -6560,6 +6642,8 @@ export const GAME_PLAY_WORDS = {
 export const UNREAL_WORDS = {
   /** The Live tab's line under the project's name, in place of the web page. */
   stageStatus: t("Plays in the Unreal editor."),
+  /** Under Live's AI bar on the Unreal card: a play keeps the helper it began with. */
+  playAiNote: t("A change here applies from the next Play in Unreal."),
   open: t("Open in Unreal"),
   opening: t("Opening…"),
   /** The Live card for each step of the game's own project (`stage-status`). */

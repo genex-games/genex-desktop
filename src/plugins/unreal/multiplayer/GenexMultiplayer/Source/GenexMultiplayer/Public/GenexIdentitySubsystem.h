@@ -106,6 +106,9 @@ public:
 	 *  answer the doors with a fake. Starts a fresh identity: whoever was signed in is signed out. The
 	 *  transport must outlive this subsystem or the next SetTransport. */
 	void SetTransport(genex::IHttp* InHttp, TFunction<double()> InClock = nullptr);
+	/** The HTTP transport the identity sends through now (Unreal's HTTP module, or the one SetTransport
+	 *  gave); null before Initialize and after Deinitialize. The model calls go out through it too. */
+	genex::IHttp* Transport() const { return ActiveHttp; }
 
 private:
 	void MakeIdentity(genex::IHttp* InHttp);
@@ -118,6 +121,8 @@ private:
 	double NowMs() const;
 
 	TSharedPtr<FGenexUnrealHttp> Http;
+	/** The transport of the current identity: `Http`, or a test's. Never owned. */
+	genex::IHttp* ActiveHttp = nullptr;
 	TSharedPtr<genex::EmbedIdentity> Identity;
 	TFunction<double()> Clock;
 	/** Every caller of the automatic sign-in under way. */

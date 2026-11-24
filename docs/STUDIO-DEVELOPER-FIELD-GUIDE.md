@@ -78,14 +78,18 @@ GENEX_DEV_PLAY_GAMES_ORIGIN=https://localhost:8443 GENEX_DEV_PLAY_GAMES_CA=/abs/
 ```
 
 Origins are bare (https, or http on this Mac); the CA is an absolute path to a PEM file. With the stand's
-API the account signs in on the stand's device sign-in, for the launch only; Play, the store,
+API the account signs in on the stand's device sign-in, under the app's own name ("AI Game Studio",
+which a stand reads to know the desktop app, as genex.games does), for the launch only; Play, the store,
 `genex__cli`/`genex__cli-paid` (the CLI's `--api-url` and token) and the Genex plugin's backend (Publish,
 its asset tools and its account page) use the stand and that account, never genex.games or the Genex
 plugin's saved account. With a games origin too, the Play viewer plays
 `https://<slug>.localhost:8443/`, trusts that CA for those game hosts only, and catches their purchases
 on the stand's website; the Genex plugin's Publish trusts the CA too (its backend and CLI runs, beside
 the system's), so it can push to a local stand's source host and test its draft on the stand's
-game host. `genex://` links stay on genex.games: a development launch never registers as
+game host. A stand that serves native builds from its own host names it with
+`GENEX_DEV_PLAY_BUILDS_ORIGIN` (for example the dev stand's `https://cdn.auras.cc`): native games then
+install from that host only, instead of genex.games' build CDN, and only while the API is the stand's.
+`genex://` links stay on genex.games: a development launch never registers as
 the system's link handler. To tie a local game to a stand
 project, write the stand's `{ "id", "slug" }` to `.studio-dev/profiles/<name>/core/engine-homes/genex/publish/<game>/.genex/project.json`.
 The pinned CLI decides which `genex` commands exist (shop JSON drafts need 1.36.14, local item drafts

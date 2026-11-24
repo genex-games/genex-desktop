@@ -49,6 +49,7 @@ export default {
     "Un asedio a un castillo donde te defiendes con catapultas y chistes malos",
   "A cave diving game where your light slowly runs out":
     "Un juego de buceo en cuevas donde tu luz se va apagando poco a poco",
+  "A change here applies from the next Play in Unreal.": "Un cambio aquí se aplica desde el próximo Play en Unreal.",
   "A chess variant where pieces level up after each capture":
     "Una variante del ajedrez donde las piezas suben de nivel tras cada captura",
   "A city builder on the back of a giant walking turtle":
@@ -6603,6 +6604,14 @@ export default {
   "The cap is used up": "Se acabó el límite",
   "This game wants to hear you through your microphone.": "Este juego quiere oírte por el micrófono.",
   "Use real AI": "Usar IA real",
+  "Use my plan": "Usar mi plan",
+  "Your own {plan} plan answers in this preview, on this computer. No Genex credits are spent; your plan's limits apply, answers come slower, and voices stay practice.":
+    "En esta vista previa responde tu propio plan de {plan}, en este ordenador. No se gastan créditos de Genex; se aplican los límites de tu plan, las respuestas llegan más despacio y las voces siguen siendo de práctica.",
+  "The plan that answers": "El plan que responde",
+  "Starting {plan}…": "Iniciando {plan}…",
+  "{plan} answers · your own plan, no credits": "Responde {plan} · tu propio plan, sin créditos",
+  "That plan is not signed in or ready on this computer. Check it in Settings, then try again. Practice answers go on.":
+    "Ese plan no tiene la sesión iniciada o no está listo en este ordenador. Revísalo en Ajustes y vuelve a intentarlo. Las respuestas de práctica siguen.",
   "A local model is answering a chat or build. Delete the model when it finishes.":
     "Un modelo local está respondiendo en un chat o build. Borra el modelo cuando termine.",
   "Download Inkling 2 Mini in Settings › Local Models.": "Descarga Inkling 2 Mini en Ajustes › Modelos locales.",
@@ -6611,4 +6620,45 @@ export default {
   "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
     "Los modelos locales necesitan un Mac con Apple Silicon o un PC de 64 bits con Windows o Linux",
   "{model} can't run on this computer.": "{model} no puede funcionar en este ordenador.",
+  "AI budget for {game}": "Presupuesto de IA para {game}",
+  "AI budget: {remaining} of {limit, plural, one {{shown} credit} other {{shown} credits}} left":
+    "Presupuesto de IA: quedan {remaining} de {limit, plural, one {{shown} crédito} other {{shown} créditos}}",
+  "AI in games is paused right now. Try again later.": "La IA en los juegos está en pausa ahora. Inténtalo más tarde.",
+  "Approving replaces the AI budget already running for this game.":
+    "Al aprobar, se reemplaza el presupuesto de IA que ya está activo en este juego.",
+  "At most {n, plural, one {{shown} credit} other {{shown} credits}} for one call.":
+    "Como máximo {n, plural, one {{shown} crédito} other {{shown} créditos}} por llamada.",
+  "Couldn’t set the budget. Try again.": "No se pudo fijar el presupuesto. Inténtalo de nuevo.",
+  "Couldn’t stop the AI budget. Try again.": "No se pudo detener el presupuesto de IA. Inténtalo de nuevo.",
+  "It ends when you stop it, when you sign out of Genex, or after 24 hours.":
+    "Termina cuando lo detienes, cuando cierras sesión en Genex o después de 24 horas.",
+  "It uses {models}.": "Usa {models}.",
+  "Keep it": "Mantenerlo",
+  Limit: "Límite",
+  "Reading the AI budget…": "Leyendo el presupuesto de IA…",
+  "Set AI budget": "Fijar presupuesto de IA",
+  "Sign in to Genex to set an AI budget.": "Inicia sesión en Genex para fijar un presupuesto de IA.",
+  "Stop this AI budget?": "¿Detener este presupuesto de IA?",
+  "Stopping the AI budget…": "Deteniendo el presupuesto de IA…",
+  "That took too long, so the budget has to be read again.":
+    "Pasó demasiado tiempo, así que hay que leer el presupuesto otra vez.",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per hour.":
+    "El juego calcula unos {n, plural, one {{shown} crédito} other {{shown} créditos}} por hora.",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per minute.":
+    "El juego calcula unos {n, plural, one {{shown} crédito} other {{shown} créditos}} por minuto.",
+  "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per session.":
+    "El juego calcula unos {n, plural, one {{shown} crédito} other {{shown} créditos}} por sesión.",
+  "This game asks AI models for things while you play. You pay for what it uses from your Genex credits, up to the limit you set.":
+    "Este juego les pide cosas a modelos de IA mientras juegas. Pagas lo que use con tus créditos de Genex, hasta el límite que fijes.",
+  "This game’s AI isn’t available right now.": "La IA de este juego no está disponible ahora.",
+  "This game’s voice AI isn’t available in the app yet.":
+    "La IA de voz de este juego todavía no está disponible en la app.",
+  "Uses AI, paid from your Genex credits.": "Usa IA, pagada con tus créditos de Genex.",
+  "Verify your Genex account’s email to pay with credits, then try again.":
+    "Verifica el correo de tu cuenta de Genex para pagar con créditos y vuelve a intentarlo.",
+  "You don’t have enough Genex credits for this budget.":
+    "No tienes suficientes créditos de Genex para este presupuesto.",
+  "{n, plural, one {{shown} credit} other {{shown} credits}}":
+    "{n, plural, one {{shown} crédito} other {{shown} créditos}}",
+  "an AI judge": "un juez de IA",
 } satisfies LocaleCatalog;

@@ -142,6 +142,7 @@ import { registerPluginsIpc } from "./ipc/plugins.ts";
 import { type PreviewBoundsRecord, registerPreviewIpc } from "./ipc/preview.ts";
 import { registerProjectsIpc } from "./ipc/projects.ts";
 import { type PlayIpcDeps, registerPlayIpc } from "./ipc/play.ts";
+import { registerAiBudgetIpc } from "./ipc/play-ai-budget.ts";
 import { registerStoreIpc, type StoreIpcDeps } from "./ipc/store.ts";
 import { registerGenexAccountIpc } from "./ipc/genex-account.ts";
 import {
@@ -224,6 +225,7 @@ import { playMicStore } from "./play/mic-store.ts";
 import { microphoneAccess, playViewsOf, wirePlayViewer } from "./play/viewer-view.ts";
 import { purchaseConfirmOrigin } from "./play/purchase-window.ts";
 import { type PlayComments, playComments } from "./play/comments.ts";
+import { type PlayAiBudget, playAiBudget } from "./play/ai-budget.ts";
 import { type PlayCoin, playCoin } from "./play/coin.ts";
 import { playStore } from "./play/store.ts";
 import { followStudioWindow, type StoreSheetControl, storeSheet } from "./play/store-sheet.ts";
@@ -661,6 +663,7 @@ let playAccount: { people: PlayPeople; creators: CreatorStats; credits: GenexCre
   null;
 let gameLibrary: LibrarySharing | null = null;
 let playManage: PlayManage | null = null;
+let playBudget: PlayAiBudget | null = null;
 /** The store on the Genex account and its purchase sheet in the studio window, made on first use (`storeFor`). */
 let playStoreDeps: PlayStoreParts | null = null;
 /** Play's native installs and the games being played, made on first use (`playInstallsFor`, `playSessionsFor`). */
@@ -1349,7 +1352,8 @@ function genexAccountPort(studio: StudioCore): GenexAccountPort {
 
 /**
  * Play's native installs on this computer, or null where Genex launches no native game: genex.games'
- * build CDN over the network, or a fixture launch's own made-up build host.
+ * build CDN over the network, a development profile's stand's own build host, or a fixture launch's
+ * made-up one.
  */
 function playInstallsFor(studio: StudioCore): NativeInstaller | null {
   const host = thisComputer();
@@ -1357,7 +1361,7 @@ function playInstallsFor(studio: StudioCore): NativeInstaller | null {
   nativeInstaller ??= nativeInstalls({
     root: studio.layout.installedGames,
     host,
-    hosts: buildHostsFor(fixtureNativePolicy),
+    hosts: stand.buildHosts ?? buildHostsFor(fixtureNativePolicy),
     game: (slug) => playCatalogFor(studio).game(slug),
     // A fixture launch never reaches the network: its archives are the fixture's own files.
     fetch: fixtureNativePolicy ? fixtureNativeFetch : globalThis.fetch,
@@ -1571,6 +1575,8 @@ function playCatalogFor(studio: StudioCore): PlayGallery {
     now: Date.now,
     localImages: fixtureNativePolicy,
     ...(host ? { host } : {}),
+    // A development profile's stand serves its native builds from its own host.
+    ...(stand.buildHosts ? { buildHosts: stand.buildHosts } : {}),
   });
   return playCatalog;
 }
@@ -1589,6 +1595,7 @@ function playAccountFor(studio: StudioCore): NonNullable<typeof playAccount> {
     upload: fixtureNativePolicy ? fixtureUpload : networkUpload(globalThis.fetch),
     refused: account.refused,
     web: playOrigin.web,
+    ...(stand.buildHosts ? { buildHosts: stand.buildHosts } : {}),
   };
   // A 401 to a creator's numbers or the credits ends the sign-in as one to the account's own calls does.
   const counted = { ...deps, request: refusingRequest(deps.request, deps.refused) };
@@ -1738,6 +1745,24 @@ function playCoinFor(studio: StudioCore): PlayCoin {
     localImages: fixtureNativePolicy,
     refused: account.refused,
   });
+}
+
+/**
+ * A native game's AI budget for its page in Play, as the Genex account (`play/ai-budget.ts`), made on
+ * first use: it keeps the quote an approval names. Only the page's read ends the sign-in on a refused
+ * token, as coin's does; an approval or a stop is sent once and never tried again.
+ */
+function playAiBudgetFor(studio: StudioCore): PlayAiBudget {
+  const account = genexAccountFor(studio);
+  playBudget ??= playAiBudget({
+    request: fixtureNativePolicy ? fixturePlayRequest : apiRequest(),
+    token: account.token,
+    now: Date.now,
+    refused: account.refused,
+    // Main finds the game's id in the catalog: the page names a game only by its address.
+    project: async (slug) => (await playCatalogFor(studio).world(slug)).id,
+  });
+  return playBudget;
 }
 
 /** The store's parts: its client, the purchase sheet, and the requests both make. */
@@ -2460,6 +2485,7 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
   registerDataFolderIpc(handle, dataFolderIpc(studio));
   registerGenexAccountIpc(handle, { account: genexAccountFor(studio), web: playOrigin.web });
   registerPlayIpc(handle, playIpcDeps(studio));
+  registerAiBudgetIpc(handle, { budget: playAiBudgetFor(studio) });
   registerStoreIpc(handle, { ...storeFor(studio), coin: plateCoinFor(studio), local: studio.localItems });
   const { library } = playAccountFor(studio);
   registerAssetLibraryIpc(handle, { library, sharing: librarySharingFor(studio), pictureFile: pictureFileFor() });

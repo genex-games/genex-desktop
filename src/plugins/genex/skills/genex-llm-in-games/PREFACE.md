@@ -63,12 +63,16 @@ disagrees with this preface, this preface wins.
   it; your windows always get practice answers. A game that is not on Genex yet is added to their
   account by that press, as a private draft with none of its files sent: never publish a draft so
   that real models can answer.
+- In Live, the person can press Use my plan instead: an AI plan of their own that Genex is signed
+  in to on this computer (Claude Code, Codex) then answers the game's calls there, with no Genex
+  credits spent. Only they can switch it. Its answers are slower, the models are that plan's own,
+  and voices and the judge stay practice.
 - On genex.games the published draft calls the real model for its owner, signed in (anyone else gets
   `player_wallet_required` on a test build).
 - The final message for a game that calls a model says in one line that Live answers with practice
-  answers until the person presses Use real AI there (which spends their credits up to the cap they
-  choose), and that a draft on genex.games uses the real model; give the draft's link when there is
-  one.
+  answers until the person presses Use my plan (their own AI plan, no credits) or Use real AI there
+  (which spends their credits up to the cap they choose), and that a draft on genex.games uses the
+  real model; give the draft's link when there is one.
 
 ## When the written lines play, the game says so
 
@@ -129,7 +133,17 @@ These parts of Genex CLI 1.45.2 are left out of the card below because Studio ca
 - Model calls from a multiplayer server room (`shareWithRooms`, `lendSpendGrantToRoom`,
   `ctx.models`) are not built here. `features.roomCalls` may read true on a stand; a game made here
   calls the model from the player's page.
-- Unity, Godot, Rust and Unreal games have no model-call binding in Studio.
+- Unity, Godot and Rust games have no model-call binding in Studio.
+- An Unreal game published as a native build calls models under a budget the player sets on the
+  game's page in the Genex app before Play. The game reads that budget through
+  `UGenexModelsSubsystem`, which comes with Genex's multiplayer plugin (`unreal__multiplayer` adds
+  it to the project): `GetActiveSpendGrant`, then `Generate` with that `grantId`. A native
+  build cannot open an approval window, so a one-time call (`native_unsupported`) and
+  `RequestSpendGrant` without a live budget (`budget_not_approved`) resolve by their code, and the
+  game plays its written lines. The creator declares the budget for the published game with the
+  Genex CLI in a terminal (`genex llm budget set`, in a CLI release that has it). The CLI Studio
+  ships may not have that command yet, so do not run it through Studio's tools or promise that it
+  works there.
 
 `system`, `messages`, the controls and `features` work: Studio ships the SDK that has them.
 

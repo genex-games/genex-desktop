@@ -480,6 +480,19 @@ describe("what a game's sandbox and environment take of its way to Genex", () =>
     assert.deepEqual(gameGenexEnv(undefined), {});
   });
 
+  it("never tells an installed game a practice helper's key", async () => {
+    // The key is for a game being made, played in Live or in its engine's editor: a game a player
+    // installed asks Genex itself, whatever else its launch was handed.
+    const key = `41000.${"a".repeat(32)}`;
+    const told = { ...good, GENEX_LLM_PRACTICE: key, genex_llm_practice: key };
+    assert.deepEqual(gameGenexEnv(told), good);
+    const { sessions, games, requests, gateways } = await rig({ genex: "open" });
+    await sessions.launch("dust-runners");
+    assert.equal(/llm_practice/i.test(JSON.stringify(requests[0])), false, "nothing in its launch names one");
+    games[0]?.exit(0);
+    await until(() => gateways.closed === 1);
+  });
+
   it("drops a game name Genex would never give", () => {
     const names = [
       "",
