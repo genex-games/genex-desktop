@@ -47,6 +47,7 @@ export default {
     "Um cerco a um castelo onde você se defende com catapultas e piadas ruins",
   "A cave diving game where your light slowly runs out":
     "Um jogo de mergulho em cavernas onde sua luz vai acabando aos poucos",
+  "A change here applies from the next Play in Unreal.": "Uma mudança aqui vale a partir do próximo Play no Unreal.",
   "A chess variant where pieces level up after each capture":
     "Uma variante de xadrez onde as peças sobem de nível a cada captura",
   "A city builder on the back of a giant walking turtle":

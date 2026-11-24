@@ -48,6 +48,7 @@ export default {
   "A castle siege where you defend with catapults and bad jokes":
     "Un siège de château où tu te défends avec des catapultes et de mauvaises blagues",
   "A cave diving game where your light slowly runs out": "Un jeu de plongée souterraine où ta lampe s’éteint peu à peu",
+  "A change here applies from the next Play in Unreal.": "Un changement ici s’applique au prochain Play dans Unreal.",
   "A chess variant where pieces level up after each capture":
     "Une variante des échecs où les pièces montent de niveau après chaque prise",
   "A city builder on the back of a giant walking turtle": "Un city builder sur le dos d’une tortue géante qui marche",

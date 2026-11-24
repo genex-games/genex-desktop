@@ -25,6 +25,10 @@ constexpr std::string_view kInvalidRequest = "invalid_request";
 constexpr std::string_view kNoPlayerSession = "no_player_session";
 constexpr std::string_view kWaitTimeout = "wait_timeout";
 constexpr std::string_view kStreamAborted = "stream_aborted";
+/** A practice key's port (one a helper binds without privileges) and its token's length. */
+constexpr int kPracticePortMin = 1024;
+constexpr int kPracticePortMax = 65535;
+constexpr std::size_t kPracticeTokenChars = 32;
 
 /** The sentence a player reads when the game asks for a budget they have not approved. */
 constexpr std::string_view kBudgetNotApprovedMessage = "Set an AI budget for this game on its Genex page, then start the game again.";
@@ -428,6 +432,52 @@ IdRoute RouteOf(std::string_view call, const Json& id) {
 
 namespace genex::models {
 
+std::optional<PracticeTarget> ParsePracticeKey(std::string_view key) {
+  namespace detail = models_http_detail;
+  const std::size_t dot = key.find('.');
+  if (dot == std::string_view::npos) return std::nullopt;
+  const std::string_view port = key.substr(0, dot);
+  const std::string_view token = key.substr(dot + 1);
+  // `^[1-9][0-9]{3,4}$`, then 1024..65535.
+  if (port.size() < 4 || port.size() > 5 || port.front() == '0') return std::nullopt;
+  int number = 0;
+  for (const char c : port) {
+    if (c < '0' || c > '9') return std::nullopt;
+    number = number * 10 + (c - '0');
+  }
+  if (number < detail::kPracticePortMin || number > detail::kPracticePortMax) return std::nullopt;
+  if (token.size() != detail::kPracticeTokenChars) return std::nullopt;
+  for (const char c : token) {
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return std::nullopt;
+  }
+  PracticeTarget target;
+  target.port = number;
+  target.token = std::string(token);
+  return target;
+}
+
+std::optional<PracticeTarget> TakePracticeKey() {
+  const std::optional<std::string> key = GetEnv(kPracticeEnv);
+  // Removed whatever it held, before anything the game starts can inherit it.
+  UnsetEnv(kPracticeEnv);
+  if (!key) return std::nullopt;
+  return ParsePracticeKey(*key);
+}
+
+std::string PracticeOrigin(int port) { return "http://127.0.0.1:" + std::to_string(port); }
+
+HttpBridgeOptions HttpBridgeOptionsForPractice(PracticeTarget target, IHttp* http) {
+  HttpBridgeOptions options;
+  options.http = http;
+  options.practice = true;
+  // The helper's own token and address, and nothing of the player's: no Genex credential goes to it.
+  options.token = [token = target.token](TokenCallback done) {
+    if (done) done(true, token, IdentityError());
+  };
+  options.apiBase = [origin = PracticeOrigin(target.port)] { return origin; };
+  return options;
+}
+
 HttpBridgeOptions HttpBridgeOptionsFor(EmbedIdentity& identity, IHttp* http) {
   EmbedIdentity* self = &identity;
   HttpBridgeOptions options;
@@ -729,9 +779,19 @@ void HttpBridge::Init(int id, const Json& args) {
     // A guest's answer may carry no account at all: that reads as no user.
     const bool named = player.signedIn && player.user.IsObject() && player.user.Size() > 0;
     Json result = Json::MakeObject();
-    result.Set("user", named ? player.user : Json());
-    result.Set("guest", !player.signedIn || player.guest);
-    result.Set("shell", "app");
+    if (options_.practice) {
+      // The SDK's local test identity: nobody is signed in while a game is being made.
+      Json tester = Json::MakeObject();
+      tester.Set("id", "local:test");
+      tester.Set("name", "Local Tester");
+      result.Set("user", std::move(tester));
+      result.Set("guest", true);
+      result.Set("shell", "local");
+    } else {
+      result.Set("user", named ? player.user : Json());
+      result.Set("guest", !player.signedIn || player.guest);
+      result.Set("shell", "app");
+    }
     Resolve(id, "init", std::move(result));
     inits_ -= 1;
     if (inits_ > 0) return;
@@ -739,7 +799,8 @@ void HttpBridge::Init(int id, const Json& args) {
     waiting.swap(afterInit_);
     for (const std::function<void()>& run : waiting) run();
   };
-  if (!options_.beforeInit) {
+  // A practice helper has nobody to sign in.
+  if (!options_.beforeInit || options_.practice) {
     finish();
     return;
   }
@@ -775,6 +836,8 @@ void HttpBridge::RequestGrant(int id, const Json& args) {
   // A budget the game's creator pays is asked for at a door this build does not use.
   const Json* sponsored = options->Find("sponsored");
   if (sponsored != nullptr && sponsored->IsBool() && sponsored->AsBool()) return Fail(id, kNativeUnsupported);
+  // A practice helper stands in for the player, so it is asked.
+  if (options_.practice) return AskForGrant(id, *options);
   // There is no approval window to open, so no budget is ever asked for (never POST /grants): the answer is the
   // budget the player approved on the game's Genex page, or that there is none.
   Get("/grants/current", detail::kGrantUnavailable, [this, id](Reply reply) {
@@ -787,11 +850,39 @@ void HttpBridge::RequestGrant(int id, const Json& args) {
   });
 }
 
-std::string HttpBridge::InvalidGeneration(const Json& options, bool stream) {
+void HttpBridge::AskForGrant(int id, const Json& options) {
   namespace detail = models_http_detail;
-  // Without a budget a call opens the approval window, which a native build does not have.
+  // The options as written, without the wait's own; the helper answers what the player would.
+  static constexpr std::string_view kNotSent[] = {"timeoutMs", "sponsored"};
+  Json body = Json::MakeObject();
+  for (const JsonMember& member : options.Members()) {
+    bool sent = true;
+    for (const std::string_view key : kNotSent) sent = sent && member.key != key;
+    if (sent) body.Set(member.key, member.value);
+  }
+  const Json* key = options.Find("idempotencyKey");
+  if (key == nullptr || key->IsNull()) body.Set("idempotencyKey", NewKey());
+  const double timeoutMs = detail::TimeoutOf(options.Find("timeoutMs"), http_limits::kGrantWaitMs);
+  Post("/grants", std::move(body), detail::kGrantUnavailable, [this, id, timeoutMs](Reply reply) {
+    Op* op = FindOp(id);
+    if (op == nullptr) return;
+    if (!reply.ok) return Fail(id, reply.code);
+    if (!detail::IsId(reply.body.Find("id"))) return Fail(id, "invalid_grant_response");
+    if (std::optional<Json> answer = detail::GrantOutcome(reply.body)) return Settle(id, std::move(*answer));
+    op->grant = true;
+    op->generationId = reply.body.Find("id")->AsString();
+    StartPoll(id, timeoutMs);
+  });
+}
+
+std::string HttpBridge::InvalidGeneration(const Json& options, bool stream) const {
+  namespace detail = models_http_detail;
+  // Without a budget a call opens the approval window, which a native build does not have. A practice
+  // helper stands in for it, for a call that is not a stream (`stream_requires_grant` everywhere).
   const Json* grant = options.Find("grantId");
-  if (grant == nullptr || grant->IsNull()) return std::string(stream ? std::string_view("stream_requires_grant") : kNativeUnsupported);
+  const bool oneTime = grant == nullptr || grant->IsNull();
+  if (oneTime && stream) return "stream_requires_grant";
+  if (oneTime && !options_.practice) return std::string(kNativeUnsupported);
   const detail::Ceiling ceiling = detail::CeilingOf(options);
   if (!ceiling.error.empty()) return ceiling.error;
   const Json* tokens = options.Find("maxOutputTokens");
@@ -799,6 +890,7 @@ std::string HttpBridge::InvalidGeneration(const Json& options, bool stream) {
   // A conversation the server would refuse is refused before it could be folded into a prompt nobody checked.
   const std::string malformed = detail::HasRichFields(options) ? ConversationError(options) : std::string();
   if (!malformed.empty()) return malformed;
+  if (oneTime) return std::string();
   return detail::IsId(grant) ? std::string() : std::string("invalid_grant_id");
 }
 
@@ -823,7 +915,9 @@ void HttpBridge::Generate(int id, const Json& args) {
   body.Set(ceiling.key, ceiling.value);
   const Json* key = options->Find("idempotencyKey");
   body.Set("idempotencyKey", key != nullptr && !key->IsNull() ? *key : Json(NewKey()));
-  const std::string grantId = options->Find("grantId")->AsString();
+  // Empty: a one-time call, which only a practice helper is asked for.
+  const Json* budget = options->Find("grantId");
+  const std::string grantId = budget != nullptr && budget->IsString() ? budget->AsString() : std::string();
   const double timeoutMs = detail::TimeoutOf(options->Find("timeoutMs"), http_limits::kGenerationWaitMs);
 
   if (!detail::HasRichFields(body)) return SendGeneration(id, grantId, timeoutMs, std::move(body));
@@ -837,12 +931,14 @@ void HttpBridge::Generate(int id, const Json& args) {
 
 void HttpBridge::SendGeneration(int id, const std::string& grantId, double timeoutMs, Json body) {
   namespace detail = models_http_detail;
-  Post("/grants/" + detail::EncodeSegment(grantId) + "/generations", std::move(body), detail::kUnavailable, [this, id, grantId, timeoutMs](Reply reply) {
+  const std::string path = grantId.empty() ? std::string("/generations") : "/grants/" + detail::EncodeSegment(grantId) + "/generations";
+  Post(path, std::move(body), detail::kUnavailable, [this, id, grantId, timeoutMs](Reply reply) {
     Op* op = FindOp(id);
     if (op == nullptr) return;
     if (!reply.ok) return Fail(id, reply.code);
     const Json& view = reply.body;
-    if (!detail::IsId(view.Find("id")) || !detail::IsText(view.Find("grantId"), grantId)) return Fail(id, "invalid_generation_response");
+    const bool ofBudget = grantId.empty() || detail::IsText(view.Find("grantId"), grantId);
+    if (!detail::IsId(view.Find("id")) || !ofBudget) return Fail(id, "invalid_generation_response");
     op->generationId = view.Find("id")->AsString();
     if (std::optional<Json> ended = detail::Outcome(view)) return Settle(id, std::move(*ended));
     StartPoll(id, timeoutMs);
@@ -942,14 +1038,15 @@ void HttpBridge::Step(int id) {
     // Waiting time only: the call is not cancelled, and waitForGeneration resumes it.
     Json result = Json::MakeObject();
     result.Set("status", "pending");
-    result.Set("generationId", op->generationId);
+    result.Set(op->grant ? "grantId" : "generationId", op->generationId);
     result.Set("error", detail::kWaitTimeout);
     if (op->billing) result.Set("billing", *op->billing);
     return Settle(id, std::move(result));
   }
   if (now < op->nextReadAtMs) return;
   op->readInFlight = true;
-  Get("/generations/" + detail::EncodeSegment(op->generationId), detail::kUnavailable, [this, id](Reply reply) {
+  const std::string route = (op->grant ? "/grants/" : "/generations/") + detail::EncodeSegment(op->generationId);
+  Get(route, op->grant ? detail::kGrantUnavailable : detail::kUnavailable, [this, id](Reply reply) {
     Op* read = FindOp(id);
     if (read == nullptr) return;
     read->readInFlight = false;
@@ -957,7 +1054,8 @@ void HttpBridge::Step(int id) {
     read->endsWithoutSession = false;
     if (reply.noSession && first) return Fail(id, detail::kNoPlayerSession);
     std::optional<Json> ended;
-    if (reply.ok) ended = read->judge ? detail::JudgeOutcome(reply.body) : detail::Outcome(reply.body);
+    if (reply.ok && read->grant) ended = detail::GrantOutcome(reply.body);
+    else if (reply.ok) ended = read->judge ? detail::JudgeOutcome(reply.body) : detail::Outcome(reply.body);
     if (ended) return Settle(id, std::move(*ended));
     // Still running, or a read that failed: a failed read is not a failed generation.
     read->nextReadAtMs = Now() + http_limits::kPollIntervalMs;

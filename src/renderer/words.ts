@@ -6642,6 +6642,8 @@ export const GAME_PLAY_WORDS = {
 export const UNREAL_WORDS = {
   /** The Live tab's line under the project's name, in place of the web page. */
   stageStatus: t("Plays in the Unreal editor."),
+  /** Under Live's AI bar on the Unreal card: a play keeps the helper it began with. */
+  playAiNote: t("A change here applies from the next Play in Unreal."),
   open: t("Open in Unreal"),
   opening: t("Opening…"),
   /** The Live card for each step of the game's own project (`stage-status`). */

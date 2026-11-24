@@ -314,4 +314,72 @@ bool FGenexModelsSubsystemTest::RunTest(const FString&)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGenexModelsPracticeTest, "Genex.Multiplayer.UObject.ModelsPractice",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FGenexModelsPracticeTest::RunTest(const FString&)
+{
+	using namespace GenexModelsTestsDetail;
+	// A game being made: the editor handed this play a practice helper's key as it began.
+	const TCHAR* KeyEnv = TEXT("GENEX_LLM_PRACTICE");
+	const char* Token = "0123456789abcdef0123456789abcdef";
+	FPlatformMisc::SetEnvironmentVar(KeyEnv, TEXT("51234.0123456789abcdef0123456789abcdef"));
+	FModelsFakeHttp Http;
+	FModelsTestGame Game;
+	TestTrue(TEXT("the key is taken as the game begins, so nothing it starts inherits it"), FPlatformMisc::GetEnvironmentVariable(KeyEnv).IsEmpty());
+	UGenexModelsSubsystem* Models = Game.Instance->GetSubsystem<UGenexModelsSubsystem>();
+	UGenexIdentitySubsystem* Identity = Game.Instance->GetSubsystem<UGenexIdentitySubsystem>();
+	if (!TestNotNull(TEXT("the game instance has the models subsystem"), Models)) return false;
+	if (!TestNotNull(TEXT("and the identity subsystem whose transport it sends through"), Identity)) return false;
+	Identity->SetTransport(&Http);
+
+	TArray<FModelsEnd> Ends;
+	Models->OnEndedNative.AddLambda([&Ends](int32 Request, const FString& Call, bool bRejected, const FString& Body) {
+		Ends.Add({Request, Call, bRejected, Body});
+	});
+	auto Find = [&Ends](int32 Request) -> const FModelsEnd* {
+		return Ends.FindByPredicate([Request](const FModelsEnd& E) { return E.Request == Request; });
+	};
+	auto LastUrl = [&Http]() { return Http.Sent.Num() > 0 ? Http.Sent.Last().url : std::string(); };
+	const std::string Bearer = std::string("Bearer ") + Token;
+
+	// Nobody signs in: the launcher's ticket stays unspent and Genex is never asked.
+	FGenexMultiplayerModule::SetLaunchTicketForTests(FString(TEXT("tkt-must-stay-unspent")));
+	const int32 Init = Models->Init(GetDefault<UGenexSettings>()->Slug);
+	Models->Poll();
+	const FModelsEnd* Player = Find(Init);
+	TestTrue(TEXT("Init answers the helper's stand-in player"),
+		Player != nullptr && !Player->bRejected && Player->Body == TEXT("{\"user\":{\"id\":\"local:test\",\"name\":\"Local Tester\"},\"guest\":true,\"shell\":\"local\"}"));
+	TestEqual(TEXT("with no request to anyone"), Http.Sent.Num(), 0);
+
+	// Asking for a budget asks the helper, on this computer, with the helper's own token.
+	const int32 Granted = Models->RequestSpendGrant(TEXT("{\"models\":[\"cheap/model\"],\"perCallMaxCredits\":5}"));
+	TestTrue(TEXT("RequestSpendGrant posts to the helper"), Http.Sent.Num() == 1 && Http.Sent.Last().method == "POST" && LastUrl() == "http://127.0.0.1:51234/api/runtime/grants");
+	TestTrue(TEXT("with the helper's token as the bearer"), Http.LastHeader("Authorization") == Bearer);
+	TestTrue(TEXT("and no Origin header"), Http.LastHeader("Origin").empty());
+	Http.Answer("/api/runtime/grants", 200, R"({"id":"grant_p1","status":"active","limitCredits":20,"source":"practice"})");
+	Models->Poll();
+	const FModelsEnd* Budget = Find(Granted);
+	TestTrue(TEXT("the helper's approval is the budget"),
+		Budget != nullptr && !Budget->bRejected && Budget->Body.Contains(TEXT("\"status\":\"active\"")) && Budget->Body.Contains(TEXT("\"grantId\":\"grant_p1\"")));
+
+	// A call under it, and a one-time call, which a published game cannot make.
+	const int32 Asked = Models->Generate(TEXT("{\"grantId\":\"grant_p1\",\"modelId\":\"cheap/model\",\"prompt\":\"hello\",\"outputFormat\":\"text\",\"maxCredits\":5}"));
+	TestTrue(TEXT("a call under the budget goes to the helper"), LastUrl() == "http://127.0.0.1:51234/api/runtime/grants/grant_p1/generations" && Http.LastHeader("Authorization") == Bearer);
+	Http.Answer("/generations", 200, R"({"id":"request_1","grantId":"grant_p1","status":"succeeded","output":"[practice] hello","source":"practice"})");
+	const int32 OneTime = Models->Generate(TEXT("{\"modelId\":\"cheap/model\",\"prompt\":\"hello\",\"outputFormat\":\"text\",\"maxCredits\":5}"));
+	TestTrue(TEXT("a one-time call goes to the helper too"), LastUrl() == "http://127.0.0.1:51234/api/runtime/generations" && Http.LastHeader("Authorization") == Bearer);
+	Http.Answer("/api/runtime/generations", 200, R"({"id":"request_2","status":"succeeded","output":"[practice] hello","source":"practice"})");
+	Models->Poll();
+	const FModelsEnd* Answer = Find(Asked);
+	const FModelsEnd* Single = Find(OneTime);
+	TestTrue(TEXT("the call settles with the helper's answer"), Answer != nullptr && !Answer->bRejected && Answer->Body.Contains(TEXT("[practice] hello")));
+	TestTrue(TEXT("and so does the one-time call"), Single != nullptr && !Single->bRejected && Single->Body.Contains(TEXT("\"status\":\"succeeded\"")));
+	for (const genex::HttpRequest& Request : Http.Sent)
+	{
+		TestTrue(TEXT("every request of a practice play goes to this computer"), Request.url.rfind("http://127.0.0.1:51234/", 0) == 0);
+	}
+	FGenexMultiplayerModule::SetLaunchTicketForTests(TOptional<FString>());
+	return true;
+}
+
 #endif  // WITH_DEV_AUTOMATION_TESTS

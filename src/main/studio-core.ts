@@ -148,6 +148,7 @@ import { PluginServices } from "../substrate/plugins/services.ts";
 import { createEngineLinks, type EngineLinks } from "../substrate/plugins/engine-links.ts";
 import type { PreviewInputAction } from "../substrate/preview-input.ts";
 import { DEFAULT_POOL_MAX, LIVE_HANDLE } from "../substrate/preview-pool.ts";
+import { unrealGameCallsPlayTimeModels } from "../substrate/project-shape.ts";
 import type { PreviewConsoleEntry, PreviewPixelStats, PreviewPort } from "../substrate/preview-port.ts";
 import { SnapshotEngine, SnapshotIndex, HARNESS_WORKSPACE } from "../substrate/snapshots.ts";
 import { gitMissingProblem, SandboxUnavailableError } from "../substrate/sandbox-unavailable.ts";
@@ -180,6 +181,7 @@ import {
   standCredentialFile,
 } from "./core/genex-cli.ts";
 import { GenexRoomService } from "./core/genex-room.ts";
+import { EditorPractice } from "./core/practice-handoff.ts";
 import { PreviewAiService } from "./core/preview-ai.ts";
 import { answerOnPlan, planModels, readyPlans } from "./core/preview-ai-plans.ts";
 import { PreviewMicService } from "./core/preview-mic.ts";
@@ -603,6 +605,8 @@ export class StudioCore {
   readonly design: DesignBoardService = new DesignBoardService(this);
   /** Play-time models in the previews: practice helpers, and real models in Live once the person approved a cap. */
   readonly previewAi: PreviewAiService;
+  /** Live's helper named to the Unreal editor, for the game whose Unreal card Live shows. */
+  readonly editorPractice: EditorPractice;
   /** The microphone in Live: for a game that declares it, once the person allowed it. */
   readonly previewMic: PreviewMicService;
   readonly journal: UpdateJournal;
@@ -781,6 +785,7 @@ export class StudioCore {
     });
     this.#previews = new PreviewService(this, this.#x);
     this.previewAi = this.#createPreviewAi();
+    this.editorPractice = this.#createEditorPractice();
     this.previewMic = new PreviewMicService({
       declares: (project) => declaresMicrophone(this.games.dirFor(project)),
       access: () => this.options.microphoneAccess?.() ?? Promise.resolve(false),
@@ -1451,11 +1456,42 @@ export class StudioCore {
         planModels: (engine) => planModels(this.engines.get(engine)),
         answer: (engine, ask, signal) => answerOnPlan(this.engines.get(engine), ask, signal),
         liveAllowed: () => this.options.previewAiLive === true,
-        emit: (state) => this.emit(UiEvent.PreviewAi, state),
-        reloadLive: (project) => this.#previews.reloadLiveFor(project),
+        emit: (state) => {
+          this.emit(UiEvent.PreviewAi, state);
+          this.editorPractice.heard(state);
+        },
+        // A web game's page loads again with the new helper's key; an Unreal game's handoff names it.
+        reloadLive: async (project) => {
+          await this.#previews.reloadLiveFor(project);
+          await this.editorPractice.rekey(project);
+        },
       },
       LIVE_HANDLE,
     );
+  }
+
+  /** Live's helper for the game whose Unreal card Live shows, named to the Unreal editor (`practice-handoff.ts`). */
+  #createEditorPractice(): EditorPractice {
+    return new EditorPractice({
+      ai: {
+        keyFor: (project) => this.previewAi.keyFor(LIVE_HANDLE, project),
+        noModels: (project) => this.previewAi.noModels(LIVE_HANDLE, project),
+        release: () => this.previewAi.release(LIVE_HANDLE),
+      },
+      gameDir: (project) => this.games.dirFor(project),
+      callsModels: unrealGameCallsPlayTimeModels,
+      page: { keyed: () => this.#previews.liveKeyedGame(), stop: () => this.#previews.stopLivePage() },
+      serial: (op) => this.#previews.inLiveQueue(op),
+      log: (line) => this.options.onLog?.(line, "stderr"),
+    });
+  }
+
+  /**
+   * Live shows this game's Unreal card (`shown`), or shows it no longer: while it does, a game whose
+   * Unreal project calls Genex's models has Live's practice helper named to the Unreal editor.
+   */
+  async showEditorGame(project: string, shown: boolean): Promise<void> {
+    await (shown ? this.editorPractice.show(project) : this.editorPractice.leave(project));
   }
 
   #genexCli(): GenexCliService {
@@ -1986,6 +2022,8 @@ export class StudioCore {
     this.#autoResume.dispose();
     // No practice helper outlives the app, started or not.
     await this.previewAi.stopAll().catch(() => {});
+    // Nor is a stopped helper left named in a game's folder.
+    await this.editorPractice.stopAll();
     // `init()` opened the sandbox and the job registry, so a core that never started still stops
     // the jobs it was handed and gives the sandbox back.
     if (!this.#started) {

@@ -22,48 +22,17 @@ import {
 } from "../../src/shared/preview-ai.ts";
 import { withGenexSdkImport } from "../../src/shared/genex-page.ts";
 import { codeCallsPlayTimeModels, gameCallsPlayTimeModels } from "../../src/substrate/project-shape.ts";
+import { HEX, hostProgram, listening, program, type Script } from "../helpers/practice-helper.ts";
 import { running } from "../helpers/processes.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const LIVE = "live";
 const TEMPLATE_PAGE = path.resolve(import.meta.dirname, "../../src/game-template/index.html");
 const AGENT = "game-preview-facet-1";
-const HEX = "0123456789abcdef0123456789abcdef";
-
-/** What a helper of each kind prints first; later lines follow after `after` ms. */
-interface Script {
-  first: Record<string, unknown>;
-  later?: Record<string, unknown>[];
-}
-
-/** A program printing `script` as JSON lines that runs until it is told to stop. */
-const program = (script: Script) =>
-  `const lines=${JSON.stringify([script.first, ...(script.later ?? [])].map((line) => JSON.stringify(line)))};` +
-  `let i=0;const next=()=>{if(i<lines.length){process.stdout.write(lines[i++]+"\\n");setTimeout(next,20);}};next();` +
-  `process.on("SIGTERM",()=>{process.stdout.write(JSON.stringify({event:"stopped"})+"\\n");process.exit(0);});setInterval(()=>{},1000);`;
 
 /** The person's plan in these tests, and the models it answers as. */
 const CLAUDE: PreviewAiPlan = { engine: "claude-code", label: "Claude Code" };
 const PLAN_MODELS = [{ id: "claude-code/sonnet", label: "Sonnet", vendor: "anthropic" }];
-
-/**
- * A helper in host mode, as `genex llm practice --host` behaves: it listens only once its host said
- * who answers, then asks for the words of each of `asks`, and prints every answer it is given.
- */
-const hostProgram = (asks: HostAsk[]) =>
-  `const first=${JSON.stringify(JSON.stringify({ ...listening(41002, "host") }))};const asks=${JSON.stringify(asks.map((ask) => JSON.stringify({ event: "ask", outputFormat: "text", ...ask })))};` +
-  `let hello=false;require("node:readline").createInterface({input:process.stdin}).on("line",(text)=>{let line;try{line=JSON.parse(text)}catch{return}` +
-  `if(!hello&&line.host){hello=true;process.stdout.write(JSON.stringify({event:"hello",host:line.host})+"\\n"+first+"\\n");for(const ask of asks)process.stdout.write(ask+"\\n");return}` +
-  `if(line.answer)process.stdout.write(JSON.stringify({event:"answered",answer:line.answer})+"\\n")});` +
-  `process.on("SIGTERM",()=>{process.stdout.write(JSON.stringify({event:"stopped"})+"\\n");process.exit(0);});setInterval(()=>{},1000);`;
-
-const listening = (port: number, mode: "mock" | "live" | "host") => ({
-  command: "llm practice",
-  status: "listening",
-  port,
-  key: `genex_llm_practice=${port}.${HEX}`,
-  mode,
-});
 
 /** What the service is told when it asks Genex for a game's project: an outcome, or the error thrown. */
 type Hosting = GenexHosting | Error;

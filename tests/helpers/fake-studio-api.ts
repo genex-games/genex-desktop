@@ -291,6 +291,7 @@ const METHODS = [
   "previewAiReal",
   "previewAiPlan",
   "previewAiPractice",
+  "previewAiEditor",
   "previewMicAnswer",
   "previewCoverStill",
   "buildProblem",

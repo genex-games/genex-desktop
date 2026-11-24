@@ -39,6 +39,7 @@ export default {
   "A card battler where your deck is a stack of recipes": "卡组是一叠食谱的卡牌对战游戏",
   "A castle siege where you defend with catapults and bad jokes": "用投石机和冷笑话守城的攻城战",
   "A cave diving game where your light slowly runs out": "灯光会慢慢耗尽的洞穴潜水游戏",
+  "A change here applies from the next Play in Unreal.": "这里的更改从 Unreal 的下一次 Play 开始生效。",
   "A chess variant where pieces level up after each capture": "棋子每吃一子就升级的国际象棋变体",
   "A city builder on the back of a giant walking turtle": "在一只行走的巨型海龟背上建造城市",
   "A clockwork tower where you fix gears to reach the top": "修好齿轮、登上塔顶的发条塔",

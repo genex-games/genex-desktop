@@ -36,6 +36,7 @@ export const MESSAGES = [
   "A card battler where your deck is a stack of recipes",
   "A castle siege where you defend with catapults and bad jokes",
   "A cave diving game where your light slowly runs out",
+  "A change here applies from the next Play in Unreal.",
   "A chess variant where pieces level up after each capture",
   "A city builder on the back of a giant walking turtle",
   "A clockwork tower where you fix gears to reach the top",

@@ -312,6 +312,7 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:preview-ai.real": "previewAiReal",
   "studio:preview-ai.plan": "previewAiPlan",
   "studio:preview-ai.practice": "previewAiPractice",
+  "studio:preview-ai.editor": "previewAiEditor",
   "studio:preview-ai.mic": "previewMicAnswer",
   "studio:preview.cover-still": "previewCoverStill",
   "studio:build.problem": "buildProblem",
@@ -655,6 +656,7 @@ export interface StudioInvokePayloads {
   "studio:preview-ai.real": { project: string; capCredits: number };
   "studio:preview-ai.plan": { project: string; engine: string };
   "studio:preview-ai.practice": { project: string };
+  "studio:preview-ai.editor": { project: string; shown: boolean };
   "studio:preview-ai.mic": { project: string; allow: boolean };
   "studio:preview.cover-still": undefined;
   "studio:build.problem": { project: string };

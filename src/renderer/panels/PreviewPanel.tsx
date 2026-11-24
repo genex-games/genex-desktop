@@ -78,7 +78,7 @@ import { useNativeViewBounds } from "./stage/native-bounds.ts";
 import { PluginCardStage } from "./stage/PluginCardStage.tsx";
 import { resolveStageView, stageFlags, stageHas } from "./stage/stage-flags.ts";
 import { EmptyGame, LiveLoading, NoGame, PlanningBuild, StoppedGame } from "./stage/StageBody.tsx";
-import { PreviewAiBar } from "./stage/PreviewAiBar.tsx";
+import { StageAiBar, useEditorPlayAi } from "./stage/EditorPlayAi.tsx";
 import { StageStrip } from "./stage/StageStrip.tsx";
 import { keptViews, type StageTabKey, tabChoice, webBuildView } from "./stage/stage-tabs.ts";
 import { StillsStage } from "./stage/StillsStage.tsx";
@@ -748,6 +748,8 @@ function useLiveTabs(
   const { remembered, remember } = useChosenLiveViews(project);
   const { views, liveView, preview } = useLiveView(game, plugins, remembered);
   useWebBuildShown(project, views, remember);
+  // Whichever stage tab is open: a play in the Unreal editor is answered from Live's helper meanwhile.
+  useEditorPlayAi(project, liveView.live === ObserverLive.UnrealCard);
   const chooseTab = useCallback(
     (key: StageTabKey) => {
       const choice = tabChoice(key, views);
@@ -959,7 +961,7 @@ export function PreviewPanel({
       />
 
       {previewOnStage ? <StageBanners trouble={trouble} /> : null}
-      {previewOnStage ? <PreviewAiBar project={project} /> : null}
+      <StageAiBar project={project} on={flags} />
       <div className="relative min-h-0 flex-1 overflow-hidden bg-base">
         <div ref={slot} data-preview-slot className="absolute inset-0" />
         <StageContents

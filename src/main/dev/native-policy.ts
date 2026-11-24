@@ -276,6 +276,8 @@ const FIXTURE_SAFE = [
   "studio:preview-ai.real",
   "studio:preview-ai.plan",
   "studio:preview-ai.practice",
+  // Names the same loopback helper to the Unreal editor, in a file in the game's own folder.
+  "studio:preview-ai.editor",
   // The answer to a game's microphone ask in Live; a fixture's preview has no microphone to open.
   "studio:preview-ai.mic",
   "studio:build.preview",

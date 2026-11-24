@@ -135,6 +135,11 @@ export function registerPreviewIpc(
     return core.previewAi.startPlan(projectOf(payload), payload.engine);
   });
   handle("studio:preview-ai.practice", async (payload) => core.previewAi.backToPractice(projectOf(payload)));
+  // Live's view of the game is its Unreal card, or is so no longer: the core checks the game itself.
+  handle("studio:preview-ai.editor", async (payload) => {
+    await core.showEditorGame(projectOf(payload), payload?.shown === true);
+    return true;
+  });
   handle("studio:preview-ai.mic", async (payload) =>
     core.answerPreviewMic(projectOf(payload), payload?.allow === true),
   );

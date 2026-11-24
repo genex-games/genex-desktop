@@ -518,6 +518,7 @@ function previewCalls(bridge: BridgeCalls) {
     previewAiReal: (project, capCredits) => invoke("studio:preview-ai.real", { project, capCredits }),
     previewAiPlan: (project, engine) => invoke("studio:preview-ai.plan", { project, engine }),
     previewAiPractice: (project) => invoke("studio:preview-ai.practice", { project }),
+    previewAiEditor: (project, shown) => invoke("studio:preview-ai.editor", { project, shown }),
     previewMicAnswer: (project, allow) => invoke("studio:preview-ai.mic", { project, allow }),
     previewCoverStill: () => invoke("studio:preview.cover-still"),
   } satisfies Partial<StudioApi>;
