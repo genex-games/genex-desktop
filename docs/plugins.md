@@ -4229,7 +4229,7 @@ working dot; none for a game Genex doesn't know) comes from
   browser's speech recognition, which hears nothing in Studio's preview. Such a game is whole
   where the catalog answers `enabled: false`: it takes typed input and shows its lines as text.
   It always declares `microphone` in its `package.json`, the line Live reads to ask the person
-  for it. The embed SDK Studio serves to games is 0.38.0, the first with those calls, and the
+  for it. The embed SDK Studio serves to games is 0.39.0 (0.38.0 was the first with those calls), and the
   pinned CLI (1.45.2) answers voice in the preview's practice helper: made-up words for a
   recording and a placeholder spoken voice, or real ones once the person presses Use real AI. That advice, reworded as optional, is the bundled
   `genex-recommendations` plugin (skills only: multiplayer patterns, cover craft, asset sources, shop

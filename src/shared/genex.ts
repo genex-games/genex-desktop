@@ -104,11 +104,12 @@ export type GenexHosting = (typeof GenexHosting)[keyof typeof GenexHosting];
  * server-authoritative card for an embed SDK with `getAuthorityRegions` and `getAuthorityHome` (0.36.0);
  * the play-time model card for one with `system`, `messages` and `features` (0.37.0), and its
  * voice reference for one with `getVoiceCatalog`, `transcribe`, `speak`, `createVoiceRecorder` and
- * `createSpeaker` (0.38.0).
+ * `createSpeaker` (0.38.0). A game's analytics page needs one that counts the page's plays and has
+ * `track` and `setPlayer` (0.39.0).
  */
 export const GENEX_GAME_PACKAGES = {
   "@genex-ai/multiplayer": "0.17.21",
-  "@genex-ai/embed-sdk": "0.38.0",
+  "@genex-ai/embed-sdk": "0.39.0",
 } as const;
 /** A Genex SDK package a game may add. */
 export type GenexGamePackage = keyof typeof GENEX_GAME_PACKAGES;
