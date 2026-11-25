@@ -27,6 +27,8 @@ export const GenexCliCommand = {
   LlmCancel: "llm cancel",
   LlmBench: "llm bench",
   LlmBudget: "llm budget",
+  LlmUsage: "llm usage",
+  LlmCalls: "llm calls",
   ShopList: "shop list",
   ShopAdd: "shop add",
   ShopSet: "shop set",
@@ -193,6 +195,12 @@ const itemType = { kind: OptionKind.Choice, values: ["consumable", "durable"] } 
 const Positional = { None: "none", Text: "text", ItemId: "item-id", Choice: "choice" } as const;
 type Positional = (typeof Positional)[keyof typeof Positional];
 
+/** A command some pinned CLIs do not know yet: the first release that does, and the refusal on an older one. */
+export interface NewerCommand {
+  first: readonly [number, number, number];
+  refusal: string;
+}
+
 /**
  * One command's row: what it costs, whether it needs the hosted project, and what it takes. A
  * paid row declares the option that sets what it spends first: the consent card lists options in
@@ -227,6 +235,8 @@ interface CommandRow {
   freeOn?: readonly string[];
   /** The declaration of the game's folder it reads, which Studio copies into the run folder. */
   declaration?: GameDeclaration;
+  /** A command newer than some pinned CLIs: the first release that has it, and what to say on an older one. */
+  newer?: NewerCommand;
   /**
    * It works on the game's local drafts too: Studio copies them into the run folder (and carries a
    * change back), and it runs without a hosted project while the game has none.
@@ -269,6 +279,12 @@ const sharedItem = (delivers: boolean): CommandRow => ({
 export const PICTURE_OPTION = "image";
 /** The option setting the most credits one bench attempt may spend, as the pinned CLI names it. */
 const BENCH_CEILING_OPTION = "max-credits";
+/** The longest window `llm usage` reads, in days (the CLI's and the API's own limit). */
+const MAX_USAGE_DAYS = 90;
+/** The most calls `llm calls` lists at once (the CLI's own limit). */
+const MAX_CALLS_LISTED = 100;
+/** The first Genex CLI that knows `llm calls`. */
+const CALLS_FIRST_CLI = [1, 46, 4] as const;
 
 /**
  * Every command Studio runs. `budget` only reads: its `--assets` allowance lives in the run folder,
@@ -280,6 +296,16 @@ const GENEX_CLI_COMMANDS: Readonly<Record<GenexCliCommand, CommandRow>> = {
   [GenexCliCommand.LlmModels]: free(false, { all: flag }),
   [GenexCliCommand.LlmStatus]: free(true),
   [GenexCliCommand.LlmCancel]: free(true, {}, Positional.Text),
+  // The owner's read of the published game's model calls: counts per day and model, and each
+  // failed call's code. No player is named and no prompt or answer is in it; it spends nothing.
+  [GenexCliCommand.LlmUsage]: free(true, { days: wholeNumber(1, MAX_USAGE_DAYS) }),
+  // The same game's recent calls one by one (time, model, code, ceiling, charge, tokens, cut off or
+  // not) and, under a fixable code, what to change: the first read after a published game's call
+  // failed. Owner only, no player named, nothing spent.
+  [GenexCliCommand.LlmCalls]: {
+    ...free(true, { failed: flag, limit: wholeNumber(1, MAX_CALLS_LISTED) }),
+    newer: { first: CALLS_FIRST_CLI, refusal: GENEX_CLI_PROMPT.CallsNeedUpdate },
+  },
   [GenexCliCommand.LlmBench]: {
     paid: true,
     project: true,
@@ -407,6 +433,8 @@ export interface GenexCliRequest {
    * copies into the run folder first (`genex-game-declaration.ts`); absent when it reads none.
    */
   declaration?: GameDeclaration;
+  /** Set when the pinned CLI may be too old to know the command: Studio refuses instead of running it. */
+  newer?: NewerCommand;
 }
 
 /**
@@ -658,6 +686,7 @@ export function genexCliRequest(
     ...(row.delivers ? { delivers: String(args.args) } : {}),
     ...(row.localItems ? { localItems: row.localItems } : {}),
     ...(row.declaration ? { declaration: row.declaration } : {}),
+    ...(row.newer ? { newer: row.newer } : {}),
   };
 }
 

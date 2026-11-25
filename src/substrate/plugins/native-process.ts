@@ -645,6 +645,34 @@ export interface NativeGameRequest {
    * API's own https address.
    */
   genex?: { ports: readonly number[]; datagramPorts?: readonly number[]; env: GameGenexEnv };
+  /**
+   * A game being made only (`main/play/local-play-ai.ts`): the practice helper on this computer its
+   * play-time model calls go to. Its port is opened to the game and its key told; a key that is not
+   * one opens and tells nothing. Never set for a game a player installed, and ignored on Windows,
+   * whose AppContainer reaches no port on this computer.
+   */
+  practice?: GamePractice;
+}
+
+/** The practice helper a game being made is handed: its key, `<port>.<32 hex>` (`genex llm practice`). */
+export interface GamePractice {
+  key: string;
+}
+
+/** The variable Genex's engine kits read a practice helper's key from. Never rename it. */
+export const PRACTICE_KEY_ENV = "GENEX_LLM_PRACTICE";
+/** A helper's key: a port written as a plain number with no leading zero, a dot, 32 lowercase hex characters. */
+const PRACTICE_KEY = /^([1-9]\d{3,4})\.[0-9a-f]{32}$/;
+
+/**
+ * What a game being made is told of its practice helper, and the port to open for it: the key,
+ * checked, under {@link PRACTICE_KEY_ENV}. Null for no key and for anything that is not one, so a
+ * value that names another host, a path or a privileged port opens and tells nothing.
+ */
+export function gamePractice(practice: GamePractice | undefined): { port: number; env: Record<string, string> } | null {
+  const port = Number(PRACTICE_KEY.exec(practice?.key ?? "")?.[1]);
+  if (!practice || !isGatewayPort(port)) return null;
+  return { port, env: { [PRACTICE_KEY_ENV]: practice.key } };
 }
 
 /**
@@ -709,11 +737,13 @@ export async function spawnNativeGame(p: NativeGameRequest): Promise<ChildProces
   );
   const reads = await aliases([binaryRoot, ...SYSTEM_READS, ...GAME_SYSTEM_READS]);
   const writes = await aliases([p.saves, p.scratch, ...extensions]);
+  const practice = gamePractice(p.practice);
   const game = {
     bundleId: p.bundleId,
     bundleName: p.bundleName,
     userTemp,
-    genexPorts: p.genex?.ports ?? [],
+    // A game being made also reaches its practice helper's port, and nothing else on this Mac.
+    genexPorts: [...(p.genex?.ports ?? []), ...(practice ? [practice.port] : [])],
     genexDatagramPorts: p.genex?.datagramPorts ?? [],
   };
   const profile = path.join(p.scratch, "game.sb");
@@ -733,6 +763,7 @@ export async function spawnNativeGame(p: NativeGameRequest): Promise<ChildProces
       PATH: JOB_PATH,
       LANG: "en_US.UTF-8",
       ...gameGenexEnv(p.genex?.env),
+      ...practice?.env,
     },
     detached: true,
     stdio: ["ignore", "pipe", "pipe"],

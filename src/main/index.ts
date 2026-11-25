@@ -201,6 +201,7 @@ import { type InstallOutcome, type NativeInstaller, nativeInstalls } from "./pla
 import { checkNativeUpdates } from "./play/native-updates.ts";
 import { runTool } from "./play/native-unpack.ts";
 import { type GameGenex, type NativeSessions, type NativeSessionsDeps, nativeSessions } from "./play/native-launch.ts";
+import { type LocalPlayAiDeps, localPlayAi } from "./play/local-play-ai.ts";
 import { LocalPlays } from "./play/local-plays.ts";
 import { findNativeBuilds } from "./core/native-builds.ts";
 import { isStaleBuild, lastChange } from "./core/publish-platforms.ts";
@@ -1527,6 +1528,11 @@ function localPlaysFor(core: () => StudioCore): StudioCoreOptions["localPlays"] 
           root: path.join(studio.options.paths.userData, LOCAL_PLAYS_FOLDER),
           ...placing,
           ...gameLauncher(),
+          // A game being made is handed Live's practice helper; an installed game's launcher has no such step.
+          practice: async (slug) => {
+            const project = placing.project(slug);
+            return project === null ? null : localPlayAi(localPlayAiDeps(studio), project);
+          },
           killTree: (pid) => killProcessTree(pid),
           probe: psProbe(),
           clock: SYSTEM_CLOCK,
@@ -1539,6 +1545,15 @@ function localPlaysFor(core: () => StudioCore): StudioCoreOptions["localPlays"] 
     return localPlays;
   };
   return { play: (project, engine) => plays().play(project, engine) };
+}
+
+/** What handing a game folder's own app its practice helper needs, from the running studio. */
+function localPlayAiDeps(studio: StudioCore): LocalPlayAiDeps {
+  return {
+    platform: process.platform,
+    heldKey: (project) => studio.editorPractice.keyOf(project),
+    log: (line) => studioLog.write("main", line),
+  };
 }
 
 /**

@@ -23,7 +23,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { Readable } from "node:stream";
 import { ownBubblewrap } from "../linux-bubblewrap.ts";
-import { gameGenexEnv, type NativeGameRequest, treeKiller } from "./native-process.ts";
+import { gameGenexEnv, gamePractice, type NativeGameRequest, treeKiller } from "./native-process.ts";
 
 /** Where the gateway's unix sockets are inside the sandbox, one per port, named by it. */
 export const GAME_NET_DIR = "/run/genex-net";
@@ -175,7 +175,9 @@ function bridgePorts(host: LinuxGameHost, request: NativeGameRequest): { tcp: nu
   if (!bridge || !isPlainAbsolute(bridge.dir) || !isPlainAbsolute(bridge.socat)) return { tcp: [], udp: [] };
   const given = (bridged: readonly number[], asked: readonly number[] | undefined) =>
     bridged.filter((port) => isGatewayPort(port) && (asked ?? []).includes(port));
-  const tcp = given(bridge.ports, request.genex?.ports);
+  const practice = gamePractice(request.practice);
+  // A game being made reaches its practice helper's port through the same bridge.
+  const tcp = given(bridge.ports, [...(request.genex?.ports ?? []), ...(practice ? [practice.port] : [])]);
   // A datagram port goes with the gateway it belongs to: none without a TCP port to reach Genex by.
   return { tcp, udp: tcp.length ? given(bridge.datagramPorts ?? [], request.genex?.datagramPorts) : [] };
 }
@@ -190,6 +192,7 @@ export function linuxGameCommand(request: NativeGameRequest, host: LinuxGameHost
   const shown = display(host);
   const heard = sound(host);
   const { tcp: ports, udp: datagramPorts } = bridgePorts(host, request);
+  const practice = gamePractice(request.practice);
   const runtime = host.runtimeDir && isPlainAbsolute(host.runtimeDir) ? host.runtimeDir : null;
   const game = [request.binary, ...(request.args ?? [])];
   const bridge = host.bridge;
@@ -254,6 +257,8 @@ export function linuxGameCommand(request: NativeGameRequest, host: LinuxGameHost
     ...shown.env,
     ...heard.env,
     ...(ports.length ? gameGenexEnv(request.genex?.env) : {}),
+    // Told only when its port is bridged: a key the game could not reach would only make its calls fail.
+    ...(practice && ports.includes(practice.port) ? practice.env : {}),
   };
   return { file: host.bubblewrap, args, env, cwd: path.dirname(request.binary) };
 }
@@ -422,7 +427,8 @@ export async function spawnLinuxGame(p: NativeGameRequest): Promise<ChildProcess
     saves: await realpath(p.saves),
     scratch: await realpath(p.scratch),
   };
-  const ports = (p.genex?.ports ?? []).filter(isGatewayPort);
+  const practice = gamePractice(p.practice);
+  const ports = [...(p.genex?.ports ?? []).filter(isGatewayPort), ...(practice ? [practice.port] : [])];
   const datagramPorts = (p.genex?.datagramPorts ?? []).filter(isGatewayPort);
   const socat = ports.length ? await firstProgram(SOCAT_PATHS) : null;
   const datagrams = socat && datagramPorts.length ? { socat, ports: datagramPorts } : null;

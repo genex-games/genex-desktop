@@ -113,7 +113,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Genex|Models")
 	bool Cancel(int32 Request);
 	/** The platform's player-facing sentence for an error code (empty: none): show it, or an in-fiction line keyed
-	 *  off the same code, never the raw code. */
+	 *  off the same code, never the raw code. Every code Genex answers a call with has the sentence a web game
+	 *  shows for it; a code this plugin does not know reads as the general one. */
 	UFUNCTION(BlueprintPure, Category = "Genex|Models")
 	FString GenerationErrorMessage(const FString& Code) const;
 	/** Hands over what settled or arrived since the last call. Runs once per frame by itself. */

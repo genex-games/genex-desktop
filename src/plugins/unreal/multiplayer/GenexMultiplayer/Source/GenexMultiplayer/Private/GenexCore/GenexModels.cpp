@@ -9,11 +9,6 @@ namespace genex::models {
 
 namespace {
 
-// The platform's sentence for native_unsupported, and for a code it has no better one for (embed-sdk's
-// generationErrorMessage; genex_models_check holds them equal to it through the shared vectors).
-constexpr std::string_view kModelsNativeUnsupportedMessage = "In-game generation isn\xE2\x80\x99t available in the app yet.";
-constexpr std::string_view kModelsDefaultMessage = "Generation isn\xE2\x80\x99t available right now. Try again in a moment.";
-
 /** The calls whose JavaScript promise never rejects: they settle as a result with a `status`. */
 constexpr std::string_view kModelsSettlingCalls[] = {"generate", "generateStream", "judge", "requestSpendGrant", "waitForGeneration"};
 
@@ -78,10 +73,6 @@ class NativeModelsBridge final : public Bridge {
 }  // namespace
 
 Bridge::~Bridge() = default;
-
-std::string NativeErrorMessage(const std::string* code) {
-  return std::string(code != nullptr && *code == kNativeUnsupported ? kModelsNativeUnsupportedMessage : kModelsDefaultMessage);
-}
 
 std::vector<Event> ReadEvents(std::string_view drainJson) {
   std::vector<Event> events;

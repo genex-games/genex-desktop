@@ -5,6 +5,7 @@
 #include "GenexCore/GenexLog.h"
 #include "GenexCore/GenexPhysicsNative.h"
 #include "GenexCore/GenexPump.h"
+#include "GenexKeptLog.h"
 #include "HAL/PlatformProcess.h"
 #include "Interfaces/IPluginManager.h"
 #include "Misc/CoreDelegates.h"
@@ -119,6 +120,13 @@ void FGenexMultiplayerModule::StartupModule()
 #endif
 	genex::SetLogSink([](genex::LogLevel Level, const std::string& Message) {
 		const FString Text = UTF8_TO_TCHAR(Message.c_str());
+#if NO_LOGGING
+		// This build keeps no UE_LOG line (a Shipping build whose target does not turn logging on). What the plugin
+		// warns of still has to be readable afterwards, a refused model call's code above all: GenexKeptLog.h.
+		static FGenexKeptLog Kept(FGenexKeptLog::DefaultPath());
+		if (Level == genex::LogLevel::Error) Kept.Append(TEXT("Error"), Text);
+		if (Level == genex::LogLevel::Warning) Kept.Append(TEXT("Warning"), Text);
+#endif
 		switch (Level)
 		{
 		case genex::LogLevel::Error: UE_LOG(LogGenex, Error, TEXT("%s"), *Text); break;

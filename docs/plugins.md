@@ -2869,10 +2869,26 @@ running, which the bar's own line says. Genex removes the file when Live leaves 
 Stop, when no helper runs and when the app quits; a file left behind names a port that no longer
 answers and is ignored, and with no file a play asks Genex as a published game does. Live has one
 helper, so a web game's page that ran in Live with a helper's key stops when an Unreal game takes
-the helper, and its Play loads it again. Not covered: the packaged app the game's Play starts from
-its folder (`main/play/local-plays.ts`) and any game a player installed. Only an editor build of the
-plugin takes a key, so a packaged game reaches no helper whatever its environment says, and Genex
-hands none to one.
+the helper, and its Play loads it again. The packaged app the game's Play starts from
+its folder (`main/play/local-plays.ts`) is handed the same helper on a Mac and on Linux
+(`main/play/local-play-ai.ts`): while Live holds a helper for the game, the launcher of game
+folders' own apps sets the key in the app's environment (`GENEX_LLM_PRACTICE`) and opens the
+helper's port in its sandbox, and nothing else of Genex's (no API address, no sign-in), so the app
+reaches its helper and no more; a key that is not `<port>.<32 hex>` opens and tells nothing. The
+plugin takes a key from the environment in any build (since genex-demo's 2026-11-25 kit), so the
+game must be packaged with that plugin. A game a player installed goes through another launcher
+that has no such step and is never handed one. On Windows a game's AppContainer reaches no port on
+this computer: no key is handed, the log says so, and the game's AI is checked in the editor's
+play. Someone who starts a published game themselves with that variable set gets their own
+helper's answers in place of Genex's; no credits are spent or taken that way.
+A published game's call that Genex refuses or fails settles with the reason's code in `error` (and,
+when Genex says so beside it, which rule broke in `reason` and where in `at`), and the plugin's `GenerationErrorMessage` reads
+the code as the sentence a web game shows (the browser SDK's whole table, since genex-demo's
+2026-11-25 kit; two sentences before). The plugin also writes one line per failed call with the
+call, the code, the HTTP status and those two: to Unreal's log, and in a Shipping build, which
+keeps none, to `Genex.log` in the game's log folder. The owner's agent reads which admitted calls
+failed, by code, with `genex__cli {"command":"llm calls"}` or `{"command":"llm usage"}`
+([connections](connections-and-context.md)).
 Any Unreal game also gets `unreal__package-game {stop?, system?}` and `unreal__package-status {system?}`
 (`game-package.ts`): the app players install, for this computer's own system, on Windows a Linux
 one with `system: "linux"`, or the game's web version with `system: "web"` (`PackageSystem`, `HOST_SYSTEMS`; Unreal makes a Mac app only on a Mac and a
@@ -4126,6 +4142,9 @@ working dot; none for a game Genex doesn't know) comes from
   ProcessSandbox in a fresh `<userData>/genex-cli/<id>` folder (also its `HOME`), never a game
   folder, so the CLI's skill sync and contract healing touch only that folder, which is removed
   afterwards. `main/core/genex-cli-policy.ts` allows doctor, budget, `llm models|status|cancel`,
+  `llm usage` (the owner's read of the published game's model calls and each failed call's code,
+  with `days` 1 to 90), `llm calls` (the same game's recent calls one by one, with `failed` and
+  `limit` 1 to 100; a pinned CLI older than 1.46.4 is refused in words),
   `llm budget status` (and `llm budget set|clear` behind the card: they change what a native game's
   page offers its players; the game's declaration is copied into the run folder,
   `genex-game-declaration.ts`; a pinned CLI older than 1.46.2 is refused in words),

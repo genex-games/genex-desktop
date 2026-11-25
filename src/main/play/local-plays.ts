@@ -49,6 +49,8 @@ export interface LocalPlaysDeps {
 
 /** The launcher's view of what it plays: each game's record and where its app and saves are. */
 export interface LocalPlacing {
+  /** The game a launch's name stands for, or null for one this launcher never started. */
+  project(slug: string): string | null;
   record(slug: string): Promise<InstallRecord | null>;
   place(slug: string, record: InstallRecord): { app: string; saves: string };
 }
@@ -97,12 +99,13 @@ async function recordOf(slug: string, dir: string, build: FoundBuild, platform: 
 /** The games being made that Genex plays from their own folders (module comment). */
 export class LocalPlays {
   readonly #deps: LocalPlaysDeps;
-  readonly #records = new Map<string, { record: InstallRecord; app: string }>();
+  readonly #records = new Map<string, { record: InstallRecord; app: string; project: string }>();
   readonly #sessions: NativeSessions;
 
   constructor(deps: LocalPlaysDeps) {
     this.#deps = deps;
     this.#sessions = deps.sessions({
+      project: (slug) => this.#records.get(slug)?.project ?? null,
       record: async (slug) => this.#records.get(slug)?.record ?? null,
       place: (slug, record) => ({
         app: this.#records.get(slug)?.app ?? record.entry,
@@ -141,7 +144,7 @@ export class LocalPlays {
     if (this.#deps.stale(build, await this.#deps.lastChange(dir, builds)))
       return { state: LocalPlayState.Stale, app: build.entry };
     const placed = await recordOf(slug, dir, build, host.platform);
-    this.#records.set(slug, { ...placed, record: { ...placed.record, engine } });
+    this.#records.set(slug, { ...placed, project, record: { ...placed.record, engine } });
     await this.#sessions.launch(slug);
     const state = this.#running(slug) ? LocalPlayState.Launched : LocalPlayState.Failed;
     return { state, app: build.entry };

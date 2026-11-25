@@ -469,11 +469,61 @@
 .game-text-button:hover {
   color: var(--hero-ink);
 }
-/* The AI budget's line under the primary block's own: its words, then what can be pressed. */
+/* The AI budget under the primary block's own line: its state and what can be pressed, then,
+   while a budget runs, its numbers. A block, not one line: Used and Left each need their word. */
 .game-budget {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 32px;
+}
+.game-budget-head {
+  display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px 12px;
   min-height: 32px;
+}
+/* The state is the block's title: the art's own ink, a step over the links beside it. */
+.game-budget-state {
+  color: var(--hero-ink);
+}
+.game-budget-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  inline-size: min(100%, 440px);
+}
+.game-budget-numbers {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+.game-budget-numbers > div {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.game-budget-numbers dd {
+  color: var(--hero-ink);
+  font-variant-numeric: tabular-nums;
+}
+/* The bar repeats the two numbers beside it and is hidden from a screen reader: its filled part is
+   what is used or on hold, its empty part what is left. */
+.game-budget-bar {
+  block-size: 4px;
+  border-radius: 2px;
+  background: color-mix(in oklab, var(--hero-ink) 24%, transparent);
+  overflow: hidden;
+}
+.game-budget-bar > span {
+  display: block;
+  block-size: 100%;
+  border-radius: inherit;
+  background: var(--hero-ink);
+}
+.game-budget-limit {
+  opacity: 0.85;
 }
 /* Set AI budget over the art: the glass the other second buttons wear. */
 .game-budget .game-budget-set {
@@ -894,4 +944,35 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+/* The sheet that turns a game's AI on (AiBudget.tsx). The limit is its largest thing. */
+.ai-budget-amount {
+  color: var(--foreground);
+  font-size: 2rem;
+  font-weight: 500;
+  line-height: 1.1;
+  /* Proportional figures: this font's tabular ones are its mono cut, which reads as two typefaces at this size. */
+  letter-spacing: -0.02em;
+}
+/* An unusual fact as a short tag; its whole sentence is under Details. */
+.ai-budget-tag {
+  align-self: flex-start;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--foreground);
+  font-size: var(--t-xs);
+}
+/* Details in a sheet: the app's disclosure, a step quieter than a settings section's. */
+.ai-budget-details {
+  padding-block-start: 12px;
+}
+.settings-disclosure.ai-budget-details > summary {
+  color: var(--muted-foreground);
+  font-size: inherit;
+  font-weight: 500;
+}
+.settings-disclosure.ai-budget-details > summary:hover {
+  color: var(--foreground);
 }

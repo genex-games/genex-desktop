@@ -1,7 +1,7 @@
 // Genex.Multiplayer.Models and Genex.Multiplayer.UObject.Models: in-game model calls as Unreal Build Tool compiles
 // them. The first holds GenexCore/GenexModels.h to the TypeScript bridge's shared vectors (packages/multiplayer/
 // test/vectors/models-bridge.json), as genex_models_check does in the CMake build: every drain read back, the
-// hostile drains, and the two sentences a build with no bridge carries. The second runs the subsystem in a game
+// hostile drains, and the sentence for every code of the SDK's table. The second runs the subsystem in a game
 // instance of its own, the API answered by a fake HTTP transport: Init signs the player in with the launcher's
 // ticket, the budget they approved is found, a call under it settles, and what needs the approval window answers
 // by code with no request. The calls' shapes, the waits and the hostile inputs are GenexCore's offline suite
@@ -220,6 +220,22 @@ bool FGenexModelsTest::RunTest(const FString&)
 		TestTrue(TEXT("the sentence for native_unsupported is the SDK's"), Unsupported != nullptr && genex::models::NativeErrorMessage(&Code) == Unsupported->AsString());
 		TestTrue(TEXT("any other code reads as the SDK's general sentence"),
 			General != nullptr && genex::models::NativeErrorMessage(nullptr) == General->AsString() && genex::models::NativeErrorMessage(&Later) == General->AsString());
+		// The SDK's whole table, code by code, as this engine's compiler built it.
+		const genex::Json* Sentences = Native->Find("sentences");
+		if (TestTrue(TEXT("the vectors carry the SDK's sentence table"), Sentences != nullptr && Sentences->IsObject() && General != nullptr))
+		{
+			int32 Rows = 0;
+			for (const genex::JsonMember& Member : Sentences->Members())
+			{
+				++Rows;
+				const std::string Said = genex::models::NativeErrorMessage(&Member.key);
+				if (!Member.value.IsString() || Said != Member.value.AsString() || Said == General->AsString())
+				{
+					AddError(FString::Printf(TEXT("the sentence for %s is not the SDK's"), UTF8_TO_TCHAR(Member.key.c_str())));
+				}
+			}
+			TestTrue(TEXT("every code of the SDK's table was read"), Rows > 100);
+		}
 	}
 	return true;
 }
