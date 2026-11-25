@@ -82,8 +82,34 @@ describe("Live's AI bar", () => {
       /at most 300 credits \(\$3\).* added to your Genex account as a private draft; none of its files are uploaded/,
       "a game that is not on Genex: the confirmation says what Start does about it",
     );
-    assert.equal(PREVIEW_AI_WORDS.live(12, 100), "Real AI · 12 of 100 credits");
+    // Never a bare pair of numbers: the one that is used says so, and credits on hold are named.
+    assert.equal(PREVIEW_AI_WORDS.live(12, 100), "Real AI is on · used 12 of 100 credits");
+    assert.equal(PREVIEW_AI_WORDS.live(12, 100, 3), "Real AI is on · used 12 of 100 credits · 3 on hold");
     assert.equal(PREVIEW_AI_WORDS.addMore(100), "Add 100 more");
+  });
+
+  it("speaks for Unreal's own Play on the Unreal card, and never calls it a preview there", () => {
+    const editor = [
+      PREVIEW_AI_WORDS.practice(true),
+      PREVIEW_AI_WORDS.confirm(300, true, true),
+      PREVIEW_AI_WORDS.confirm(300, false, true),
+      PREVIEW_AI_WORDS.planConfirm("Codex", true),
+    ];
+    for (const words of editor) {
+      assert.match(words, /Play in Unreal/, words);
+      assert.doesNotMatch(words, /preview/i, words);
+    }
+    assert.match(PREVIEW_AI_WORDS.practice(true), /practice answers \(free, made up\)/);
+    assert.match(PREVIEW_AI_WORDS.confirm(300, true, true), /at most 300 credits \(\$3\) for this play session\.$/);
+    assert.match(PREVIEW_AI_WORDS.confirm(300, false, true), /private draft; none of its files are uploaded\.$/);
+    assert.match(
+      PREVIEW_AI_WORDS.planConfirm("Codex", true),
+      /Your own Codex plan answers.*No Genex credits are spent/,
+    );
+    // A web game's preview keeps its words.
+    assert.equal(PREVIEW_AI_WORDS.practice(), "Practice answers (free, made up)");
+    assert.match(PREVIEW_AI_WORDS.confirm(300), /answer in this preview/);
+    assert.match(PREVIEW_AI_WORDS.planConfirm("Codex"), /answers in this preview/);
   });
 
   it("says why real models are not available, and offers a retry only where one can help", () => {

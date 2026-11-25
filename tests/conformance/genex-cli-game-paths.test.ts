@@ -1002,4 +1002,59 @@ describe("a native game's AI budget declaration, from the game into the run fold
     assert.equal((await service(p, sandbox).run({ command: "llm status" }, bound(p), FREE)).ok, true);
     assert.deepEqual(sandbox.folders, [{ package: null, settings: null }]);
   });
+
+  // `genex llm calls` (the game's recent AI calls one by one, and why each failed) came with CLI
+  // 1.46.4: an older pinned CLI does not know the word, so Studio says so instead of running it.
+  const beforeCalls: Array<[string, string | null]> = [
+    ["the release before it", "1.46.3"],
+    ["a prerelease that may predate it", "1.46.4-dev.1"],
+    ["a version that does not read as one", "next"],
+    ["a CLI whose package cannot be read", null],
+  ];
+  for (const [name, version] of beforeCalls) {
+    it(`says the game's calls cannot be listed yet, and runs nothing, when the pinned CLI is ${name}`, async () => {
+      const p = await profile();
+      await pinnedCli(p, version);
+      const sandbox = budgetSandbox();
+      const refused = (error: unknown) => {
+        assert.ok(error instanceof GenexCliRefusal, String(error));
+        assert.equal(error.code, GenexCliRefusalCode.Unavailable);
+        assert.match(error.message, /cannot list a game's AI calls yet/);
+        assert.match(error.message, /after an update of Genex/);
+        assert.match(error.message, /llm usage/);
+        return true;
+      };
+      await assert.rejects(service(p, sandbox).run({ command: "llm calls" }, bound(p), FREE), refused);
+      await assert.rejects(
+        service(p, sandbox).run({ command: "llm calls", options: { failed: true, limit: 5 } }, bound(p), FREE),
+        refused,
+      );
+      assert.equal(sandbox.seen.length, 0, "nothing ran");
+      assert.deepEqual(await readdir(path.join(p.userData, "genex-cli")).catch(() => []), []);
+    });
+  }
+
+  for (const version of ["1.46.4", "1.47.0", "2.0.0"]) {
+    it(`lists the game's calls on pinned CLI ${version}`, async () => {
+      const p = await profile();
+      await pinnedCli(p, version);
+      const sandbox = budgetSandbox();
+      const answer = await service(p, sandbox).run(
+        { command: "llm calls", options: { failed: true, limit: 5 } },
+        bound(p),
+        FREE,
+      );
+      assert.equal(answer.ok, true);
+      const command = sandbox.seen[0]?.request.command ?? "";
+      assert.ok(command.includes("'llm' 'calls' '--failed' '--limit' '5'"), command);
+      assert.ok(command.endsWith("--no-auth --json"), command);
+    });
+  }
+
+  it("leaves `llm usage` to a CLI older than the one that lists calls", async () => {
+    const p = await profile();
+    await pinnedCli(p, "1.46.3");
+    const sandbox = budgetSandbox();
+    assert.equal((await service(p, sandbox).run({ command: "llm usage" }, bound(p), FREE)).ok, true);
+  });
 });

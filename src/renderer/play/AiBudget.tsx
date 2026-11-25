@@ -1,15 +1,19 @@
 /**
- * A native game's AI budget on its page (docs/play.md, "AI budget"): one line under the primary
- * block, and the sheet that sets a budget before Play. A game that uses AI says so with Set AI
- * budget; a running budget shows what is left of it, with Stop, and Change while the game is not
- * played. A game that declared nothing, or whose budget could not be read, shows nothing. Every
- * number is genex.games' own, and nothing reads as approved before genex.games says it is
- * (`ai-budget-model.ts` decides, `state/ai-budget.ts` reads and sends).
+ * A native game's AI budget on its page (docs/play.md, "AI budget"): its block under the primary
+ * one, and the sheet that turns AI on before Play. Every state has one shape, the website's
+ * (genex.games' "A game's AI budget"): the state or the question as words ("AI is off in this
+ * game", "AI is on", "Let {game} use AI?"), at most one sentence, the amount as the largest thing,
+ * everything else behind one closed Details, one button that leads and one quiet one. A running
+ * budget's numbers are never a bare pair: Used and Left stand under their own words over one bar,
+ * and credits on hold for calls still running are named under it. A game that declared nothing, or
+ * whose budget could not be read, shows nothing. Every number is genex.games' own, and nothing
+ * reads as approved before genex.games says it is (`ai-budget-model.ts` decides,
+ * `state/ai-budget.ts` reads and sends).
  */
 import type { JSX } from "react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { PlayGameDetail } from "../../shared/play.ts";
-import type { AiBudgetDeclared, AiBudgetView } from "../../shared/play-ai-budget.ts";
+import { type AiBudgetDeclared, AiBudgetStatus, type AiBudgetView } from "../../shared/play-ai-budget.ts";
 import { useAiBudget, usePeople } from "../state/hooks.ts";
 import { studio } from "../state/studio.ts";
 import { ToastTone } from "../state/toasts.ts";
@@ -102,7 +106,7 @@ function SheetProblem({ sheet, onTryAgain }: { sheet: BudgetSheet; onTryAgain: (
   );
 }
 
-/** The limit: a slider over what the quote offers, its value in credits beside its label. */
+/** The limit, the sheet's centre: the amount as its largest thing, the slider that chooses it under it. */
 function LimitControl({
   sheet,
   onChoose,
@@ -116,14 +120,12 @@ function LimitControl({
   const value = WORDS.limitValue(sheet.limitCredits);
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-baseline justify-between gap-3 text-dialog-body">
-        <label htmlFor={id} className="text-muted-foreground">
-          {WORDS.limit}
-        </label>
-        <output htmlFor={id} className="font-medium text-foreground" data-ai-budget-value>
-          {value}
-        </output>
-      </div>
+      <label htmlFor={id} className="text-dialog-sub text-muted-foreground">
+        {WORDS.limit}
+      </label>
+      <output htmlFor={id} className="ai-budget-amount" data-ai-budget-value>
+        {value}
+      </output>
       <input
         id={id}
         type="range"
@@ -141,27 +143,42 @@ function LimitControl({
   );
 }
 
-/** What the quote costs: the most one call may, and the game's own estimate when it gave one. */
-function QuotePrice({ sheet, declared }: { sheet: BudgetSheet; declared: AiBudgetDeclared }): JSX.Element | null {
-  const { quote } = sheet;
-  if (!quote) return null;
-  const estimate = quote.estimate ?? declared.estimate;
+/** Under the limit, the one fact that helps choose it: the game's own estimate, when it gave one. */
+function QuoteEstimate({ sheet, declared }: { sheet: BudgetSheet; declared: AiBudgetDeclared }): JSX.Element | null {
+  const estimate = sheet.quote?.estimate ?? declared.estimate;
+  if (!sheet.quote || !estimate) return null;
   return (
-    <p>
-      {WORDS.perCall(quote.perCallMaxCredits)}
-      {estimate && ` ${WORDS.estimate[estimate.period](estimate.credits)}`}
+    <p className="text-dialog-sub" data-ai-budget-estimate>
+      {WORDS.estimate[estimate.period](estimate.credits)}
     </p>
   );
 }
 
-/** Under the limit: what approving replaces, and when the budget ends. */
-function QuoteTerms({ sheet }: { sheet: BudgetSheet }): JSX.Element | null {
-  if (!sheet.quote) return null;
+/** The unusual fact as a short tag; its whole sentence is under Details. */
+function QuoteTags({ sheet }: { sheet: BudgetSheet }): JSX.Element | null {
+  if (!sheet.quote?.replaces) return null;
   return (
-    <>
-      {sheet.quote.replaces && <p data-ai-budget-replaces>{WORDS.replaces}</p>}
-      <p>{WORDS.ends}</p>
-    </>
+    <p className="ai-budget-tag" data-ai-budget-replaces>
+      {WORDS.replacesTag}
+    </p>
+  );
+}
+
+/** Everything the sheet used to open with, closed under one word: what it uses, one call's most, what it replaces, when it ends. */
+function QuoteDetails({ sheet, declared }: { sheet: BudgetSheet; declared: AiBudgetDeclared }): JSX.Element | null {
+  const { quote } = sheet;
+  if (!quote) return null;
+  const uses = WORDS.uses(declared.models, declared.judge);
+  return (
+    <details className="settings-disclosure ai-budget-details" data-ai-budget="details">
+      <summary>{WORDS.details}</summary>
+      <div className="flex flex-col gap-2 pt-2">
+        {uses && <p>{uses}</p>}
+        <p>{WORDS.perCall(quote.perCallMaxCredits)}</p>
+        {quote.replaces && <p>{WORDS.replaces}</p>}
+        <p>{WORDS.ends}</p>
+      </div>
+    </details>
   );
 }
 
@@ -203,7 +220,7 @@ function useBudgetSheet(slug: string, onApproved: () => void) {
   return { sheet, open, approve, choose };
 }
 
-/** The sheet that sets a game's AI budget: what it is, what it costs, the limit, Approve and Cancel. */
+/** The sheet that turns a game's AI on: the question, who pays, the limit, Details, Allow and Not now. */
 function AiBudgetSheet({
   game,
   declared,
@@ -228,7 +245,6 @@ function AiBudgetSheet({
     if (before !== undefined && account && account !== before) open();
   }, [account, sheet.failure, open]);
   const approving = sheet.step === SheetStep.Approving;
-  const uses = WORDS.uses(declared.models, declared.judge);
   return (
     <DialogSurface
       title={WORDS.title(game.title)}
@@ -243,20 +259,20 @@ function AiBudgetSheet({
         data-ai-budget="sheet"
         data-ai-budget-step={sheet.step}
       >
-        {uses && <p>{uses}</p>}
         {sheet.step === SheetStep.Loading && <p role="status">{WORDS.loading}</p>}
-        <QuotePrice sheet={sheet} declared={declared} />
         <LimitControl sheet={sheet} onChoose={choose} />
-        <QuoteTerms sheet={sheet} />
+        <QuoteEstimate sheet={sheet} declared={declared} />
+        <QuoteTags sheet={sheet} />
         <SheetProblem sheet={sheet} onTryAgain={open} />
+        <QuoteDetails sheet={sheet} declared={declared} />
       </div>
       <div className="flex justify-end gap-2">
         <Button variant="ghost" disabled={approving} data-ai-budget="cancel" onClick={onClose}>
-          {WORDS.cancel}
+          {WORDS.notNow}
         </Button>
         {sheet.quote ? (
           <Button variant="play-fill" busy={approving} data-ai-budget="approve" onClick={approve}>
-            {approving ? WORDS.approving : WORDS.approve}
+            {approving ? WORDS.allowing : WORDS.allow(sheet.limitCredits)}
           </Button>
         ) : (
           // With no quote to approve, the way on is the sheet's second button.
@@ -267,7 +283,34 @@ function AiBudgetSheet({
   );
 }
 
-/** A running budget's line: what is left, Stop (asked once, on the line) and Change. */
+/** A running budget's numbers: Used and Left under their own words over one bar, the limit and what is on hold under it. */
+function BudgetMeter({ current }: { current: AiBudgetView }): JSX.Element {
+  const { limitCredits, spentCredits, heldCredits, remainingCredits } = current;
+  // The bar's empty part is what is left, so the picture and the Left number cannot disagree.
+  const taken = limitCredits > 0 ? Math.min(1, Math.max(0, (limitCredits - remainingCredits) / limitCredits)) : 0;
+  return (
+    <div className="game-budget-meter" data-ai-budget="meter">
+      <dl className="game-budget-numbers">
+        <div>
+          <dt>{WORDS.used}</dt>
+          <dd data-ai-budget-used>{WORDS.amount(spentCredits)}</dd>
+        </div>
+        <div>
+          <dt>{WORDS.left}</dt>
+          <dd data-ai-budget-left>{WORDS.amount(remainingCredits)}</dd>
+        </div>
+      </dl>
+      <div className="game-budget-bar" aria-hidden>
+        <span style={{ inlineSize: `${taken * 100}%` }} />
+      </div>
+      <p className="game-budget-limit" data-ai-budget-limit>
+        {WORDS.limitLine(limitCredits, heldCredits)}
+      </p>
+    </div>
+  );
+}
+
+/** A running budget: its state as words, Turn AI off (asked once, in place) and Change limit, then its numbers. */
 function LiveLine({
   slug,
   current,
@@ -280,6 +323,7 @@ function LiveLine({
 }): JSX.Element {
   const [asking, setAsking] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const getCredits = useGetCredits();
   const stop = (): void => {
     setAsking(false);
     setStopping(true);
@@ -293,32 +337,44 @@ function LiveLine({
   if (stopping || current.stopping) return <span role="status">{WORDS.stopping}</span>;
   if (asking)
     return (
-      <>
-        <span>{WORDS.stopAsk}</span>
+      <div className="game-budget-head">
+        <span className="game-budget-state">{WORDS.stopAsk}</span>
         <button type="button" className="game-budget-link" data-ai-budget="stop-confirm" onClick={stop}>
-          {WORDS.stop}
+          {WORDS.turnOff}
         </button>
         <button type="button" className="game-budget-link" data-ai-budget="stop-keep" onClick={() => setAsking(false)}>
           {WORDS.stopKeep}
         </button>
-      </>
+      </div>
     );
+  // Out of credits: one way forward, and no meter, whose limit beside an empty balance would read as credits to spend.
+  const paused = current.status === AiBudgetStatus.SuspendedInsufficientFunds;
   return (
     <>
-      <span data-ai-budget-left>{WORDS.left(current.remainingCredits, current.limitCredits)}</span>
-      <button type="button" className="game-budget-link" data-ai-budget="stop" onClick={() => setAsking(true)}>
-        {WORDS.stop}
-      </button>
-      {onChange && (
-        <button type="button" className="game-budget-link" data-ai-budget="change" onClick={onChange}>
-          {WORDS.change}
+      <div className="game-budget-head">
+        <span className="game-budget-state" data-ai-budget-state={paused ? "paused" : "on"}>
+          {paused ? WORDS.paused : WORDS.on}
+        </span>
+        {paused && (
+          <button type="button" className="game-budget-link" data-ai-budget="get-credits" onClick={getCredits}>
+            {WORDS.getCredits}
+          </button>
+        )}
+        <button type="button" className="game-budget-link" data-ai-budget="stop" onClick={() => setAsking(true)}>
+          {WORDS.turnOff}
         </button>
-      )}
+        {onChange && (
+          <button type="button" className="game-budget-link" data-ai-budget="change" onClick={onChange}>
+            {WORDS.change}
+          </button>
+        )}
+      </div>
+      {!paused && <BudgetMeter current={current} />}
     </>
   );
 }
 
-/** The AI budget of the game on this page: its line under the primary block, and its sheet. */
+/** The AI budget of the game on this page: its block under the primary one, and its sheet. */
 export function AiBudget({ game, standing }: { game: PlayGameDetail; standing: GameStanding }): JSX.Element | null {
   const read = useAiBudget((s) => s.games[game.slug]);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -332,10 +388,10 @@ export function AiBudget({ game, standing }: { game: PlayGameDetail; standing: G
   const declared = read?.declared ?? null;
   return (
     <>
-      <p className="game-primary-note game-budget" data-ai-budget="line" data-ai-budget-line={view.line}>
+      <div className="game-primary-note game-budget" data-ai-budget="line" data-ai-budget-line={view.line}>
         {view.line === BudgetLine.Offer && (
-          <>
-            <span>{WORDS.offer}</span>
+          <div className="game-budget-head">
+            <span className="game-budget-state">{WORDS.off}</span>
             <Button
               variant="secondary"
               className="game-budget-set"
@@ -343,9 +399,9 @@ export function AiBudget({ game, standing }: { game: PlayGameDetail; standing: G
               data-ai-budget="set"
               onClick={view.signIn ? signIn : () => setSheetOpen(true)}
             >
-              {WORDS.set}
+              {WORDS.turnOn}
             </Button>
-          </>
+          </div>
         )}
         {view.line === BudgetLine.Unavailable && <span>{WORDS.unavailable}</span>}
         {view.line === BudgetLine.Voice && <span>{WORDS.voice}</span>}
@@ -356,7 +412,7 @@ export function AiBudget({ game, standing }: { game: PlayGameDetail; standing: G
             {...(view.canChange ? { onChange: () => setSheetOpen(true) } : {})}
           />
         )}
-      </p>
+      </div>
       {sheetOpen && declared && <AiBudgetSheet game={game} declared={declared} onClose={() => setSheetOpen(false)} />}
     </>
   );

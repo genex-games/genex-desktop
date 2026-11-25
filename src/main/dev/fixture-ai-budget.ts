@@ -16,6 +16,8 @@ export const FIXTURE_BUDGET_TTL_MS = DAY_MS;
 /** An approved budget spends one call's credits this often, until it is used up. */
 export const FIXTURE_SPEND_EVERY_MS = 20 * SECOND_MS;
 export const FIXTURE_CALL_CREDITS = 3;
+/** Once a budget has spent anything, a call is always still running: this much is on hold for it. */
+export const FIXTURE_HELD_CREDITS = 2;
 
 /** The fixture games' budgets, one per case of the page. Values name the cases in tests. */
 export const FixtureBudgetCase = {
@@ -141,6 +143,12 @@ function spentBy(grant: FixtureGrant, now: number): number {
   return Math.min(grant.limitCredits, Math.max(0, calls) * FIXTURE_CALL_CREDITS);
 }
 
+/** What a running budget holds for a call whose bill is not final: nothing before its first call, never past what is unspent. */
+function heldBy(grant: FixtureGrant, now: number): number {
+  const spent = spentBy(grant, now);
+  return spent > 0 ? Math.min(FIXTURE_HELD_CREDITS, grant.limitCredits - spent) : 0;
+}
+
 /** Where a budget stands now: a running one that spent its limit is used up, one past its day has lapsed. */
 function statusNow(grant: FixtureGrant, now: number): AiBudgetStatus {
   if (!isLiveBudget(grant.status)) return grant.status;
@@ -152,6 +160,7 @@ function statusNow(grant: FixtureGrant, now: number): AiBudgetStatus {
 function view(grant: FixtureGrant, now: number, replaces: unknown[] = []): Record<string, unknown> {
   const spec = SPECS[grant.kase];
   const spentCredits = spentBy(grant, now);
+  const heldCredits = heldBy(grant, now);
   const disclosure = {
     periodLabel: AiBudgetPeriod.Session,
     estimatedCallsPerPeriod: Math.round(spec.estimate / FIXTURE_CALL_CREDITS),
@@ -172,8 +181,8 @@ function view(grant: FixtureGrant, now: number, replaces: unknown[] = []): Recor
     },
     limitCredits: grant.limitCredits,
     spentCredits,
-    heldCredits: 0,
-    remainingCredits: grant.limitCredits - spentCredits,
+    heldCredits,
+    remainingCredits: grant.limitCredits - spentCredits - heldCredits,
     expiresAt: new Date(grant.expiresAt).toISOString(),
     replaces,
   };
