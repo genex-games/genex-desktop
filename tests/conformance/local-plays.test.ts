@@ -64,7 +64,14 @@ class FakeGame extends EventEmitter implements GameProcess {
 
 /** Local plays over a temporary game folder with one Mac app, every outside call recorded. */
 async function plays(
-  options: { builds?: FoundBuild[]; changed?: number; host?: NativeHost | null; spawnFails?: boolean } = {},
+  options: {
+    builds?: FoundBuild[];
+    changed?: number;
+    host?: NativeHost | null;
+    spawnFails?: boolean;
+    /** The practice helper Live holds, by game. */
+    practice?: Record<string, string>;
+  } = {},
 ) {
   const base = await realpath(await tmpDir("local-plays-"));
   const game = path.join(base, "games", "dust");
@@ -85,6 +92,11 @@ async function plays(
       nativeSessions({
         root,
         ...placing,
+        // As the app composes it: the helper Live holds for the game a launch's name stands for.
+        practice: async (slug) => {
+          const key = options.practice?.[placing.project(slug) ?? ""];
+          return key ? { key } : null;
+        },
         spawn: async (request) => {
           if (options.spawnFails) throw new Error("sandbox-exec refused the profile");
           requests.push(request);
@@ -247,5 +259,17 @@ describe("the core's Play for a game being made", () => {
         await close();
       }
     }
+  });
+
+  it("hands the folder's own app the helper Live holds for that game, by the game's own name", async () => {
+    const key = `41000.${"b".repeat(32)}`;
+    // A name that is no slug is launched under a made-up one: the helper is still found by the game's name.
+    const { local, requests } = await plays({ practice: { "Dust Runners!": key } });
+    assert.equal((await local.play("Dust Runners!")).state, LocalPlayState.Launched);
+    assert.deepEqual(requests[0]?.practice, { key });
+    assert.equal(requests[0]?.genex, undefined, "and nothing of Genex's own: no address, no sign-in");
+    const other = await plays({ practice: { "another game": key } });
+    assert.equal((await other.local.play("dust")).state, LocalPlayState.Launched);
+    assert.equal(other.requests[0]?.practice, undefined, "a game Live holds no helper for is handed none");
   });
 });

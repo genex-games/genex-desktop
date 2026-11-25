@@ -2869,10 +2869,18 @@ running, which the bar's own line says. Genex removes the file when Live leaves 
 Stop, when no helper runs and when the app quits; a file left behind names a port that no longer
 answers and is ignored, and with no file a play asks Genex as a published game does. Live has one
 helper, so a web game's page that ran in Live with a helper's key stops when an Unreal game takes
-the helper, and its Play loads it again. Not covered: the packaged app the game's Play starts from
-its folder (`main/play/local-plays.ts`) and any game a player installed. Only an editor build of the
-plugin takes a key, so a packaged game reaches no helper whatever its environment says, and Genex
-hands none to one.
+the helper, and its Play loads it again. The packaged app the game's Play starts from
+its folder (`main/play/local-plays.ts`) is handed the same helper on a Mac and on Linux
+(`main/play/local-play-ai.ts`): while Live holds a helper for the game, the launcher of game
+folders' own apps sets the key in the app's environment (`GENEX_LLM_PRACTICE`) and opens the
+helper's port in its sandbox, and nothing else of Genex's (no API address, no sign-in), so the app
+reaches its helper and no more; a key that is not `<port>.<32 hex>` opens and tells nothing. The
+plugin takes a key from the environment in any build (since genex-demo's 2026-11-25 kit), so the
+game must be packaged with that plugin. A game a player installed goes through another launcher
+that has no such step and is never handed one. On Windows a game's AppContainer reaches no port on
+this computer: no key is handed, the log says so, and the game's AI is checked in the editor's
+play. Someone who starts a published game themselves with that variable set gets their own
+helper's answers in place of Genex's; no credits are spent or taken that way.
 Any Unreal game also gets `unreal__package-game {stop?, system?}` and `unreal__package-status {system?}`
 (`game-package.ts`): the app players install, for this computer's own system, on Windows a Linux
 one with `system: "linux"`, or the game's web version with `system: "web"` (`PackageSystem`, `HOST_SYSTEMS`; Unreal makes a Mac app only on a Mac and a

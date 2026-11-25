@@ -120,6 +120,8 @@ async function rig(
     endsOnShow?: boolean;
     /** What the program to start is resolved to (Windows: Unreal's game binary past its launcher). */
     program?: NativeSessionsDeps["program"];
+    /** The launcher of game folders' own apps: the practice helper it hands a game. */
+    practice?: NativeSessionsDeps["practice"];
   } = {},
 ) {
   const root = await realpath(await tmpDir("native-launch-"));
@@ -152,6 +154,7 @@ async function rig(
   const sessions = nativeSessions({
     ...(options.genex ? { genex } : {}),
     ...(options.program ? { program: options.program } : {}),
+    ...(options.practice ? { practice: options.practice } : {}),
     root,
     record: async (slug) =>
       (options.installed ?? ["dust-runners"]).includes(slug) ? { ...record(slug), ...options.record } : null,
@@ -491,6 +494,40 @@ describe("what a game's sandbox and environment take of its way to Genex", () =>
     assert.equal(/llm_practice/i.test(JSON.stringify(requests[0])), false, "nothing in its launch names one");
     games[0]?.exit(0);
     await until(() => gateways.closed === 1);
+  });
+
+  it("hands a game being made the practice helper its launcher names, and an installed game's launcher none", async () => {
+    const key = `41000.${"a".repeat(32)}`;
+    const asked: string[] = [];
+    const made = await rig({
+      practice: async (slug) => {
+        asked.push(slug);
+        return { key };
+      },
+    });
+    await made.sessions.launch("dust-runners");
+    assert.deepEqual(asked, ["dust-runners"]);
+    assert.deepEqual(made.requests[0]?.practice, { key });
+    assert.equal(made.requests[0]?.genex, undefined, "a helper is not a way to Genex: no address, no sign-in");
+    made.games[0]?.exit(0);
+    // The launcher of installed games is given no such step, so nothing can name a helper to one.
+    const installed = await rig({ genex: "open" });
+    await installed.sessions.launch("dust-runners");
+    assert.equal(installed.requests[0]?.practice, undefined);
+    installed.games[0]?.exit(0);
+    await until(() => installed.gateways.closed === 1);
+  });
+
+  it("starts a game with no helper when naming one fails", async () => {
+    const { sessions, games, requests, logs } = await rig({
+      practice: async () => {
+        throw new Error("the helper is gone");
+      },
+    });
+    await sessions.launch("dust-runners");
+    assert.equal(requests[0]?.practice, undefined);
+    assert.ok(logs.some((line) => /dust-runners plays with no practice helper: the helper is gone/.test(line)));
+    games[0]?.exit(0);
   });
 
   it("drops a game name Genex would never give", () => {

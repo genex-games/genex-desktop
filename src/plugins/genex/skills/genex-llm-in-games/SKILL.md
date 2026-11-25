@@ -111,17 +111,25 @@ disagrees with this preface, this preface wins.
   `GenexModelsSubsystem` (Genex looks every few seconds, so a first call you have just written and
   compiled is found before your next play). If a play in the editor still ends
   `budget_not_approved`, the helper was not there: say so, and do not work around it.
-- The packaged app is the published game. Started by Genex's Play, by a player or by you, it asks
+- The packaged app that Genex's Play starts from the game's own folder is answered by the same
+  helper on a Mac and on Linux, once the game holds the plugin Genex ships now and was packaged
+  again with it (`unreal__package-game`): Genex hands that app the helper's key and it can reach
+  nothing else. An app packaged with an older plugin gets no answer there (it is given no way to
+  genex.games either), so package again before reading that as a fault. So the person can press Play in Genex and
+  hear the game's AI answer with no Unreal editor open. On Windows the packaged app cannot reach
+  the helper: check the AI in the editor's play there.
+- The same app, once published and installed by a player, or started outside Genex, asks
   genex.games, where a budget exists only after the game is published with a declared budget
-  (`llm budget set`, above) and a player approved it on the game's page in the Genex app before
+  (`llm budget set`, above) and that player approved it on the game's page in the Genex app before
   Play. `budget_not_approved` there is the correct answer for a game nobody approved a budget for,
   and a one-time call is `native_unsupported`: the game plays its written lines with its label.
-  Never test the AI through the packaged app while the game is being made, and never report that
-  answer as a broken feature.
+  Never start the packaged app yourself from a shell to test its AI, and never report that answer
+  as a broken feature.
 - The final message for an Unreal game that calls a model says in one line that a Play in the
   Unreal editor answers with practice answers until the person presses Use my plan or Use real AI
-  above the game in Live, and that the published game needs its budget declared and each player's
-  approval on its Genex page.
+  above the game in Live (Genex's own Play of the packaged app is answered the same way on a Mac
+  and on Linux), and that the published game needs its budget declared and each player's approval
+  on its Genex page.
 
 ## Never a provider's key
 
@@ -195,8 +203,6 @@ These parts of Genex CLI 1.45.2 are left out of the card below because Studio ca
 - Unity, Godot and Rust games have no model-call binding in Studio.
 - Voice and the judge in an Unreal game: `UGenexModelsSubsystem` has no voice calls, and under Use
   my plan the judge stays practice.
-- The app that Genex's Play starts from an Unreal game's folder is the packaged, published game: it
-  does not use the practice helper (see An Unreal game).
 
 `system`, `messages`, the controls and `features` work: Studio ships the SDK that has them.
 

@@ -243,12 +243,18 @@ describe("Live's helper named to the Unreal editor", () => {
       const inn = await add("inn");
       await editor.show("inn");
       assert.equal(await handoff(inn), `{"key":"${MOCK_KEY}"}`);
+      assert.deepEqual(
+        [editor.keyOf("inn"), editor.keyOf("mill")],
+        [MOCK_KEY, null],
+        "the key held for this game alone",
+      );
       assert.equal(ai.state("inn").mode, PreviewAiMode.Practice, "Live's bar speaks for the editor's play");
       assert.equal(ai.runningPids().length, 1);
       await editor.show("inn");
       assert.equal(ai.runningPids().length, 1, "shown again, the same helper");
       await editor.leave("inn");
       assert.equal(await handoff(inn), null);
+      assert.equal(editor.keyOf("inn"), null, "no key is held once Live left");
       assert.deepEqual(ai.runningPids(), []);
       for (const pid of pids) assert.equal(running(pid), false, `helper ${pid} is gone`);
     } finally {
@@ -281,6 +287,7 @@ describe("Live's helper named to the Unreal editor", () => {
       await editor.show("inn");
       await ai.startPlan("inn", PLAN.engine);
       assert.equal(await handoff(inn), `{"key":"${PLAN_KEY}"}`, "the next Play in Unreal is answered on the plan");
+      assert.equal(editor.keyOf("inn"), PLAN_KEY, "and so is the next Play of the game folder's own app");
       assert.deepEqual([ai.state("inn").mode, ai.state("inn").plan], [PreviewAiMode.Plan, PLAN]);
       await ai.backToPractice("inn");
       assert.equal(await handoff(inn), `{"key":"${MOCK_KEY}"}`);

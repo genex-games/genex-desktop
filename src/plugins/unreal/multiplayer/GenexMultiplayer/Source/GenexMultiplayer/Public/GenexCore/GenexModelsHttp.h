@@ -47,7 +47,9 @@
 //
 // The helper is named by a key, `<port>.<32 hex>` (the SDK's `genex_llm_practice` value): a port on
 // this computer and nothing else, so a key can point nowhere but 127.0.0.1. Only the program that
-// starts a game hands it one (kPracticeEnv); Genex never does for a game a player installed.
+// starts a game hands it one (kPracticeEnv): the editor for a play in the editor, Genex's desktop app
+// for the packaged app it starts from the game's own folder. Genex never does for a game a player
+// installed. No credits are spent or taken through a helper.
 //
 // ASYNCHRONOUS and single-threaded, like the rest of GenexCore: a call answers its request id at
 // once and settles as an event at a later drain. The waits (the 750 ms cadence, a call's timeout)
