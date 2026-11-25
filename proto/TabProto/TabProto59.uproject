@@ -1,0 +1,15 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "5.9",
+	"Category": "",
+	"Description": "Throwaway prototype, Unreal 5.9 entry: same Content and plugin as TabProto.uproject; 5.9 has no UMGToolSet plugin (its UMG tools live in the UMG editor itself).",
+	"Plugins": [
+		{ "Name": "PythonScriptPlugin", "Enabled": true },
+		{ "Name": "EditorScriptingUtilities", "Enabled": true },
+		{ "Name": "WebBrowserWidget", "Enabled": true },
+		{ "Name": "ToolsetRegistry", "Enabled": true },
+		{ "Name": "EditorToolset", "Enabled": true },
+		{ "Name": "SlateInspectorToolset", "Enabled": true },
+		{ "Name": "GenexTabProto", "Enabled": true }
+	]
+}

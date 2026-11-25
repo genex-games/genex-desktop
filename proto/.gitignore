@@ -1,0 +1,12 @@
+# Unreal's own caches and per-machine files
+TabProto/Saved/
+TabProto/Intermediate/
+TabProto/DerivedDataCache/
+TabProto/Binaries/
+TabProto/Config/
+__pycache__/
+# Raw run logs carry local paths; RESULTS.md quotes what matters
+out/findings.jsonl
+out/toolset-schemas-*.json
+out/slate-*.txt
+out/skip-button

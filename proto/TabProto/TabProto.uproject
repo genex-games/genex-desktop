@@ -1,0 +1,16 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "5.8",
+	"Category": "",
+	"Description": "Throwaway prototype: Genex toolbar button and docked web tab from Python only.",
+	"Plugins": [
+		{ "Name": "PythonScriptPlugin", "Enabled": true },
+		{ "Name": "EditorScriptingUtilities", "Enabled": true },
+		{ "Name": "WebBrowserWidget", "Enabled": true },
+		{ "Name": "ToolsetRegistry", "Enabled": true },
+		{ "Name": "EditorToolset", "Enabled": true },
+		{ "Name": "SlateInspectorToolset", "Enabled": true },
+		{ "Name": "UMGToolSet", "Enabled": true },
+		{ "Name": "GenexTabProto", "Enabled": true }
+	]
+}
