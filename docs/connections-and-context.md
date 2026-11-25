@@ -1011,8 +1011,8 @@ game master or narrator, a judge of free-form input, quests or items made per sa
 worded any of those ways finds them.
 
 With an unlocked account, agents also reach Studio's pinned Genex CLI: `genex__cli` for free
-commands (doctor, budget, LLM models, job status and cancel, shop list, a store item's draft) and, after a consent card,
-`genex__cli-paid` for commands that spend or change what the game sells. Studio runs every command
+commands (doctor, budget, LLM models, job status and cancel, a declared AI budget's status, shop list, a store item's draft) and, after a consent card,
+`genex__cli-paid` for commands that spend or change what the game sells or offers its players on Genex. Studio runs every command
 in a throwaway folder of its own, never the game, with only the Genex API reachable (and Genex's
 object storage while a store item's picture, model or package moves); setup,
 sign-in, publishing and generation commands are refused and point to the matching Genex tool.
@@ -1023,6 +1023,20 @@ copies in. `llm price` is refused: it rereads a file from the CLI's folder, whic
 after every command, so the benchmark's answer is the record. A benchmark is not a gate: until one
 runs, a game declares provisional ceilings and ships with its model calls on (the play-time model
 card's preface, [plugins](plugins.md)).
+A native game (an Unreal game, a downloaded one) declares the AI budget its players approve on its
+Genex page before Play: `llm budget` takes its action in `args`. `status` is free and shows what the
+game declares on Genex; `set` (send the game's declaration) and `clear` (withdraw it) change what
+that public page offers, so they run through `genex__cli-paid` and its consent card, although they
+spend nothing and take no options. The CLI reads the declaration from the folder it runs in, so
+Studio copies it alone into the run folder (`main/core/genex-game-declaration.ts`): `genex.modelBudget`
+of the bound game's `package.json`, else `modelBudget` of its `genex.json`, under the same file name,
+in whatever shape it is written (the CLI judges it). Each file is read as a plain file of the game's
+own folder, never through a link and never past 256 KB; a file that is there and cannot be read that
+way stops the reading, nothing is copied, and the answer's `note` says why. A declaration larger than
+16 KB is refused before any card. Nothing is written into the game. The command needs Genex CLI
+1.46.2: on an older pinned CLI Studio refuses it before anything runs and says that this version of
+Genex cannot declare a budget yet, and that the game still plays in the Unreal editor, where Genex
+answers its AI calls.
 `genex__package` adds `@genex-ai/multiplayer` or `@genex-ai/embed-sdk` at Studio's pin to a
 build game after consent, opening the npm registry for that one install. A Studio-template game
 gets player identity by mapping Studio's copy in its import map instead, and Studio then calls

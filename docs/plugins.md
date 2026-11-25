@@ -2854,7 +2854,10 @@ and `genex.json`'s `authority` block, the `Genex Authority Subsystem` client, `g
 (Play joins it through `.studio/authority.json`) and publish, which stages the room as for any game.
 A game whose own work names the plugin's `GenexModelsSubsystem` (`unrealGameCallsPlayTimeModels`: a
 `.h` or `.cpp` under the project's `Source/`, or the bytes of a `.uasset` or `.umap` under its
-`Content/`, the project being `unreal/` or the game folder itself, no link followed) has its plays in the editor answered as a web game's page is in Live. While Live's
+`Content/`, the project being `unreal/` or the game folder itself, no link followed) has its plays in the editor answered as a web game's page is in Live. Genex
+looks when the game's card is shown and, while it found no call, again every five seconds
+(reading only files that changed), so a first call an agent has just written is answered at its
+next play. While Live's
 view of the game is its Unreal card, Genex names Live's practice helper in the game's
 `.studio/llm-practice.json` (`{"key":"<port>.<token>"}`, `main/core/practice-handoff.ts`), written and
 removed as `authority.json` is and only in a folder that holds `studio.json`. The plugin's editor
@@ -4123,6 +4126,9 @@ working dot; none for a game Genex doesn't know) comes from
   ProcessSandbox in a fresh `<userData>/genex-cli/<id>` folder (also its `HOME`), never a game
   folder, so the CLI's skill sync and contract healing touch only that folder, which is removed
   afterwards. `main/core/genex-cli-policy.ts` allows doctor, budget, `llm models|status|cancel`,
+  `llm budget status` (and `llm budget set|clear` behind the card: they change what a native game's
+  page offers its players; the game's declaration is copied into the run folder,
+  `genex-game-declaration.ts`; a pinned CLI older than 1.46.2 is refused in words),
   `shop list`, `shop add` (a draft spends and sells nothing, so no card asks; it requires `image`,
   since no item is listed without its picture), `shop set|remove` on a
   local draft (`freeOnLocalDraft`) and `items list|search` free, and `llm bench`, `shop set|remove`

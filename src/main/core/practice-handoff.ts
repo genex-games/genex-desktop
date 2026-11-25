@@ -13,6 +13,10 @@
  * file exists only while Live shows the game's Unreal card and a helper runs: it is rewritten when
  * the helper changes and removed when Live leaves the game, Live stops, no helper runs, or the app
  * quits. It is written and removed as every handoff is (`editor-handoff.ts`).
+ *
+ * A game is checked for model calls when its card is shown, and again every little while as long as
+ * the card stays and none were found: an agent that has just written the game's first call gets
+ * the helper for the play it starts next, with no need to open the game again.
  */
 import { lstat } from "node:fs/promises";
 import path from "node:path";
@@ -95,6 +99,11 @@ export interface EditorPracticeDeps {
   };
   /** Run `op` in Live's queue, so a load of Live's page and a change here never cross. */
   serial: <T>(op: () => Promise<T>) => Promise<T>;
+  /**
+   * Call `check` every little while until the answer is called: how a shown game that called no
+   * model is looked at again. Absent, a game is looked at only when its card is shown.
+   */
+  again?: (check: () => void) => () => void;
   log: (line: string) => void;
 }
 
@@ -108,6 +117,10 @@ interface Held {
 export class EditorPractice {
   readonly #deps: EditorPracticeDeps;
   #held: Held | null = null;
+  /** The game whose Unreal card Live shows, whether or not it calls a model. */
+  #shown: string | null = null;
+  /** Ends the looking-again while a game is shown. */
+  #stopLooking: (() => void) | null = null;
   /** A key is being asked for here: a failure the service reports meanwhile is this ask's own. */
   #asking = false;
 
@@ -121,11 +134,13 @@ export class EditorPractice {
    * its helper goes. A game that calls none gets no file, and its bar goes.
    */
   show(project: string): Promise<void> {
+    this.#watch(project);
     return this.#queued(project, () => this.#show(project));
   }
 
   /** Live shows `project`'s Unreal card no longer: its handoff goes, and the helper unless Live's page runs the game. */
   leave(project: string): Promise<void> {
+    if (this.#shown === project) this.#unwatch();
     return this.#queued(project, async () => {
       if (this.#held?.project !== project) return;
       await this.#forget();
@@ -163,17 +178,45 @@ export class EditorPractice {
 
   /** Live stopped and let go of its helper, in Live's queue already: the handoff goes. */
   async liveStopped(): Promise<void> {
+    this.#unwatch();
     await this.#forget();
   }
 
   /** The app quits: no handoff is left behind. */
   async stopAll(): Promise<void> {
+    this.#unwatch();
     await this.#forget();
   }
 
   /** Every change asked for so far has been made. */
   idle(): Promise<void> {
     return this.#deps.serial(async () => {});
+  }
+
+  /** Live shows `project`'s card from now: it is looked at again every little while until it leaves. */
+  #watch(project: string): void {
+    this.#shown = project;
+    this.#stopLooking ??= this.#deps.again?.(() => void this.#lookAgain()) ?? null;
+  }
+
+  /** Live shows no Unreal card: nothing is looked at again. */
+  #unwatch(): void {
+    this.#shown = null;
+    this.#stopLooking?.();
+    this.#stopLooking = null;
+  }
+
+  /**
+   * The shown game, which called no model when it was last looked at, is looked at again: one that
+   * calls a model now (its first call was just written) gets Live's helper as a game shown anew does.
+   */
+  #lookAgain(): Promise<void> {
+    const project = this.#shown;
+    if (project === null || this.#held !== null) return Promise.resolve();
+    return this.#queued(project, async () => {
+      const waits = this.#shown === project && this.#held === null;
+      if (waits && (await this.#deps.callsModels(this.#deps.gameDir(project)))) await this.#show(project);
+    });
   }
 
   /** One change at a time, in Live's queue; a failure is logged, never thrown. */

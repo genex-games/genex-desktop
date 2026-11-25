@@ -98,6 +98,13 @@ Never write a local room's address into the game.
 
 Say what you saw. Never report the game as online before a published draft of it passed.
 
+## In-game AI comes with this plugin
+
+`UGenexModelsSubsystem` (Blueprint category Genex|Models) is the plugin's way to call a model from
+the running game. Read `genex__skill {"name":"genex-llm-in-games"}`, section An Unreal game, before
+writing a call: a play in the editor is answered by Genex's practice helper while the game is made,
+and the published game answers under a budget each player approves on its Genex page.
+
 ## 5. Publish
 
 Players install an Unreal game as an app, so the person publishes it from the stage strip's

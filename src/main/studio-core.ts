@@ -148,7 +148,7 @@ import { PluginServices } from "../substrate/plugins/services.ts";
 import { createEngineLinks, type EngineLinks } from "../substrate/plugins/engine-links.ts";
 import type { PreviewInputAction } from "../substrate/preview-input.ts";
 import { DEFAULT_POOL_MAX, LIVE_HANDLE } from "../substrate/preview-pool.ts";
-import { unrealGameCallsPlayTimeModels } from "../substrate/project-shape.ts";
+import { type UnrealFilesSeen, unrealGameCallsPlayTimeModels } from "../substrate/project-shape.ts";
 import type { PreviewConsoleEntry, PreviewPixelStats, PreviewPort } from "../substrate/preview-port.ts";
 import { SnapshotEngine, SnapshotIndex, HARNESS_WORKSPACE } from "../substrate/snapshots.ts";
 import { gitMissingProblem, SandboxUnavailableError } from "../substrate/sandbox-unavailable.ts";
@@ -305,6 +305,8 @@ const ENGINE_SCRATCH_PREFIX = "genex-play-";
 const ACTIVITY_WARMUP_DELAY_MS = 5 * SECOND_MS;
 /** The Publish dialog has a game's review read again at most this often. */
 const REVIEW_REFRESH_MS = 30 * SECOND_MS;
+/** How often a shown Unreal game that called no model is looked at again (`practice-handoff.ts`). */
+const EDITOR_MODELS_RECHECK_MS = 5 * SECOND_MS;
 
 /** Whether an appended record ends a chat's work: a turn, or a build that closed. */
 const endsWork = (event: EventEnvelope): boolean =>
@@ -607,6 +609,8 @@ export class StudioCore {
   readonly previewAi: PreviewAiService;
   /** Live's helper named to the Unreal editor, for the game whose Unreal card Live shows. */
   readonly editorPractice: EditorPractice;
+  /** What the model-call checks of the Unreal game Live shows have read (`#unrealFilesSeen`). */
+  #unrealSeen: { dir: string; files: UnrealFilesSeen } | null = null;
   /** The microphone in Live: for a game that declares it, once the person allowed it. */
   readonly previewMic: PreviewMicService;
   readonly journal: UpdateJournal;
@@ -1480,11 +1484,22 @@ export class StudioCore {
         release: () => this.previewAi.release(LIVE_HANDLE),
       },
       gameDir: (project) => this.games.dirFor(project),
-      callsModels: unrealGameCallsPlayTimeModels,
+      callsModels: (dir) => unrealGameCallsPlayTimeModels(dir, this.#unrealFilesSeen(dir)),
+      again: (check) => {
+        const timer = setInterval(check, EDITOR_MODELS_RECHECK_MS);
+        timer.unref();
+        return () => clearInterval(timer);
+      },
       page: { keyed: () => this.#previews.liveKeyedGame(), stop: () => this.#previews.stopLivePage() },
       serial: (op) => this.#previews.inLiveQueue(op),
       log: (line) => this.options.onLog?.(line, "stderr"),
     });
+  }
+
+  /** What the checks of the Unreal game in `dir` read so far; another game's is forgotten. */
+  #unrealFilesSeen(dir: string): UnrealFilesSeen {
+    if (this.#unrealSeen?.dir !== dir) this.#unrealSeen = { dir, files: new Map() };
+    return this.#unrealSeen.files;
   }
 
   /**

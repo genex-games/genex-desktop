@@ -13,11 +13,11 @@ export type GenexStudioTool = (typeof GenexStudioTool)[keyof typeof GenexStudioT
 /** Refusals and failures of a Studio-run Genex CLI command or package install. */
 export const GENEX_CLI_PROMPT = {
   Unavailable: (command: string) =>
-    `\`genex ${command}\` is not available in Studio. Available: doctor, budget, llm models, llm status, llm cancel, shop list, shop add, shop set|remove on a local draft, items list and items search through genex__cli; llm bench, shop set|remove on an item in the store, shop test and items add|remove through genex__cli-paid. Studio puts the game's items on sale when it is published; items made before the game is on Genex wait as local drafts, and Studio uploads them after the publish. Say so rather than work around it.`,
+    `\`genex ${command}\` is not available in Studio. Available: doctor, budget, llm models, llm status, llm cancel, llm budget status, shop list, shop add, shop set|remove on a local draft, items list and items search through genex__cli; llm bench, llm budget set|clear, shop set|remove on an item in the store, shop test and items add|remove through genex__cli-paid. Studio puts the game's items on sale when it is published; items made before the game is on Genex wait as local drafts, and Studio uploads them after the publish. Say so rather than work around it.`,
   UseTool: (command: string, tool: GenexStudioTool) =>
     `\`genex ${command}\` is ${tool} in Studio: call that tool instead.`,
   PaidTool: (command: string) =>
-    `\`genex ${command}\` spends Nex or credits or changes what the game sells: call genex__cli-paid, which asks the user first.`,
+    `\`genex ${command}\` spends Nex or credits, or changes what the game sells or offers its players on Genex: call genex__cli-paid, which asks the user first.`,
   FreeTool: (command: string) => `\`genex ${command}\` spends nothing: call genex__cli.`,
   ReservedFlag: (name: string) => `--${name} is set by Studio and cannot be passed.`,
   UnknownOption: (command: string, name: string, allowed: readonly string[]) =>
@@ -34,6 +34,20 @@ export const GENEX_CLI_PROMPT = {
   InvalidValue: (name: string, rule: string) => `${name} ${rule}.`,
   NoPositional: (command: string) => `\`genex ${command}\` takes no positional argument; leave args out.`,
   NeedsPositional: (command: string) => `\`genex ${command}\` needs its positional argument in args.`,
+  /** A command whose positional is one of its own words (`llm budget`), given another or none. */
+  NeedsChoice: (command: string, choices: readonly string[]) =>
+    `\`genex ${command}\` takes exactly one of these in args: ${choices.join(", ")}.`,
+  /** The pinned CLI is older than `llm budget`: what is true, and what to tell the person. */
+  BudgetNeedsUpdate:
+    "This version of Genex cannot declare an AI budget yet: it will after an update of Genex, and until then nothing needs declaring for the game to be played in the Unreal editor, where Genex answers its AI calls. Tell the person so; nothing was run.",
+  /** A file the game's AI budget is read from that Studio does not read: the command ran without it. */
+  BudgetFileNotPlain: (file: string) =>
+    `Studio read no AI budget from this game: its ${file} is not a plain file of the game's own folder (it is a link, a folder or a file Studio may not open). The command ran as if the game's folder declared none. Make ${file} a plain file there, then run the command again.`,
+  BudgetFileTooLarge: (file: string, kilobytes: number) =>
+    `Studio read no AI budget from this game: its ${file} is larger than ${kilobytes} KB, the most Studio reads for it. The command ran as if the game's folder declared none. Shorten ${file}, then run the command again.`,
+  /** A declaration that holds more than Studio copies. */
+  BudgetTooLarge: (key: string, file: string, kilobytes: number) =>
+    `${key} in ${file} is larger than ${kilobytes} KB, the most Studio takes for a game's AI budget. Shorten it; nothing was run.`,
   NeedsOption: (command: string, name: string) => `\`genex ${command}\` needs the ${name} option.`,
   NeedsPicture:
     "A store item is listed with its picture, never without: a square PNG of at least 768 × 768 (1024 × 1024 is best) that the item fills edge to edge, made by any means (genex__asset image among them), saved under .genex/scratch/; then call shop add again with the image option.",
