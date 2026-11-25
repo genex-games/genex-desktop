@@ -2974,16 +2974,23 @@ function claimTheMac(): boolean {
 
 /**
  * The real studio answers `genex://` links: the system starts it, or hands it, each one, and one it
- * was started with waits for the page. A developer or test launch leaves the system's handler alone.
+ * was started with waits for the page. A developer or test launch leaves the system's handler alone;
+ * a fixture launch takes only the link its launch names.
  */
 function answerGameLinks(): void {
-  if (isSmoke || dev) return;
-  // An unpackaged Mac build is Electron's own app, which declares no scheme: it would take the
-  // links from an installed Genex, so only Windows and Linux name it with this folder.
-  if (app.isPackaged) app.setAsDefaultProtocolClient(GAME_LINK_SCHEME);
-  else if (process.platform !== "darwin")
-    app.setAsDefaultProtocolClient(GAME_LINK_SCHEME, process.execPath, [path.resolve(process.argv[1] ?? ".")]);
-  gameLinkQueue.arrive(gameLinkIn(process.argv));
+  // A fixture launch may name one link (`STUDIO_FIXTURE_GAME_LINK`), so what a link opens can be
+  // checked through dev control on any system without touching the system's handler.
+  const fixtureLink = fixtureProviders ? process.env.STUDIO_FIXTURE_GAME_LINK : undefined;
+  if (isSmoke || (dev && !fixtureLink)) return;
+  if (dev) gameLinkQueue.arrive(fixtureLink);
+  else {
+    // An unpackaged Mac build is Electron's own app, which declares no scheme: it would take the
+    // links from an installed Genex, so only Windows and Linux name it with this folder.
+    if (app.isPackaged) app.setAsDefaultProtocolClient(GAME_LINK_SCHEME);
+    else if (process.platform !== "darwin")
+      app.setAsDefaultProtocolClient(GAME_LINK_SCHEME, process.execPath, [path.resolve(process.argv[1] ?? ".")]);
+    gameLinkQueue.arrive(gameLinkIn(process.argv));
+  }
   gameLinkQueue.listen({
     show: () => void showForLink(),
     announce: () => pushUiEvent({ type: UiEvent.PlayGameLink, payload: {} }),
