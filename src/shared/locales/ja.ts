@@ -124,7 +124,12 @@ export default {
     "モデルをダウンロード中です。ダウンロードが終わってから、このモデルを削除してください。",
   "A mountain rescue game with a dog and a sled": "犬とそりで山の救助をするゲーム",
   "A museum guard game where the exhibits come alive": "展示品が動き出す博物館の警備員ゲーム",
+  "AI is off in this game": "このゲームのAIはオフです",
+  "AI is on": "AIはオンです",
+  "AI is paused: not enough Genex credits": "AIは一時停止中：Genexのクレジットが足りません",
   "Agents get Unreal {to}’s tools.": "エージェントが Unreal {to} のツールを使えるようになります。",
+  "Allow {n, plural, one {{shown} credit} other {{shown} credits}}": "{n, plural, other {{shown}クレジット}}を許可",
+  "Allowing…": "許可中…",
   "An arcade shooter where your bullets bounce off the walls": "弾が壁で跳ね返るアーケードシューティング",
   "A new build is ready to play.": "新しいビルドをプレイできます。",
   "A new build is ready — reload to play it": "新しいビルドができました。再読み込みでプレイできます",
@@ -518,9 +523,11 @@ export default {
   "Build with the Cursor plan you already have.": "すでに契約しているCursorのプランでつくります。",
   "Build with the Google AI plan you already have.": "すでに契約しているGoogle AIのプランでつくります。",
   "Build with the Grok account you already have.": "すでに持っているGrokアカウントでつくります。",
+  "Change limit": "上限を変更",
   "Changes Harness made to its own instructions. Undo any of them.":
     "Harnessが自分の指示に加えた変更です。どれでも元に戻せます。",
   "Checking that Microsoft signed the installer…": "インストーラーにMicrosoftの署名があるか確認しています…",
+  "Couldn’t turn AI off. Try again.": "AIをオフにできませんでした。もう一度試してください。",
   "Downloading the Visual Studio Build Tools installer from Microsoft…":
     "MicrosoftからVisual Studio Build Toolsのインストーラーをダウンロードしています…",
   "Genex keeps a copy of the project file first. What Unreal {to} saves won’t open in {from}.":
@@ -535,6 +542,13 @@ export default {
     "MicrosoftのVisual Studio Build Tools 2022を「C++ によるデスクトップ開発」と .NET Framework 4.8 SDK 付きでインストールしてください。",
   "Installing Visual Studio Build Tools. Choose Yes when Windows asks; Microsoft's installer shows its progress.":
     "Visual Studio Build Toolsをインストールしています。Windowsに聞かれたら「はい」を選んでください。進み具合はMicrosoftのインストーラーに表示されます。",
+  "Keep it on": "オンのままにする",
+  Left: "残り",
+  "Let {game} use AI?": "{game}にAIの使用を許可しますか？",
+  "Limit {limit, plural, one {{shown} credit} other {{shown} credits}}":
+    "上限 {limit, plural, other {{shown}クレジット}}",
+  "Limit {limit, plural, one {{shown} credit} other {{shown} credits}} · {held} on hold for requests still running":
+    "上限 {limit, plural, other {{shown}クレジット}} · 実行中のリクエスト用に {held} を確保中",
   "Microsoft's download led somewhere other than Microsoft, so Genex stopped.":
     "Microsoftのダウンロードが Microsoft 以外の場所につながっていたため、Genexは中止しました。",
   "Microsoft's download link wasn't secure, so Genex didn't download it.":
@@ -552,14 +566,29 @@ export default {
   "Move {project} to Unreal {to}": "{project} を Unreal {to} に移行",
   "Play in browser": "ブラウザでプレイ",
   "Play {title} in the browser": "{title}をブラウザでプレイ",
+  "Press Play in Unreal: AI gives practice answers (free, made up)":
+    "UnrealでPlayを押してください：AIが練習用の回答を返します（無料・作り物）",
+  "Real AI is on · used {spent} of {cap} credits": "本物の AI がオン · {cap} クレジット中 {spent} を使用",
+  "Real AI is on · used {spent} of {cap} credits · {held} on hold":
+    "本物の AI がオン · {cap} クレジット中 {spent} を使用 · {held} を確保中",
+  "Real models answer your next Play in Unreal, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
+    "Unrealでの次のPlayでは本物のモデルが答え、Genex のクレジットから支払われます: このプレイで最大 {cap} クレジット ({dollars})。",
+  "Real models answer your next Play in Unreal, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session. The game is added to your Genex account as a private draft; none of its files are uploaded.":
+    "Unrealでの次のPlayでは本物のモデルが答え、Genex のクレジットから支払われます: このプレイで最大 {cap} クレジット ({dollars})。 ゲームは非公開の下書きとして Genex のアカウントに追加されます。ゲームのファイルはアップロードされません。",
   "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
     "おすすめ。Microsoftの無料のC++ツールです。これがあるとエージェントがゲームのロジックをC++で書けて、C++を使うゲームやプラグインをUnrealでパッケージできます。約7 GB。「おまかせ」でインストールできます。Windowsに聞かれたら「はい」を選んでください。",
   "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++ and the .NET Framework 4.8 SDK.":
     "おすすめ。Microsoftの無料のC++ツールです。これがあるとエージェントがゲームのロジックをC++で書けて、C++を使うゲームやプラグインをUnrealでパッケージできます。Visual Studio Build Toolsを「C++ によるデスクトップ開発」と .NET Framework 4.8 SDK 付きでインストールしてください。",
+  "Replaces the budget running now": "実行中の予算を置き換えます",
   "Self-improvement is off. Harness keeps its own instructions as they are.":
     "自己改善はオフです。Harnessは自分の指示をそのままにします。",
+  "Sign in to Genex to turn AI on.": "AIをオンにするにはGenexにサインインしてください。",
   "This project isn't on an older Unreal that Genex moves to {version}.":
     "このプロジェクトは、Genex が {version} に移行できる古い Unreal のものではありません。",
+  "Turn AI off": "AIをオフにする",
+  "Turn AI off in this game?": "このゲームのAIをオフにしますか？",
+  "Turn AI on": "AIをオンにする",
+  "Turning AI off…": "AIをオフにしています…",
   "Unreal can build C++ on this PC.": "このPCでUnrealがC++をビルドできます。",
   "Unreal {engine} doesn't build with the C++ tools on this PC. Do it for me updates them: choose Yes when Windows asks.":
     "Unreal {engine}はこのPCのC++ツールではビルドできません。「おまかせ」で更新できます。Windowsに聞かれたら「はい」を選んでください。",
@@ -568,6 +597,7 @@ export default {
   "Unreal {version} isn't on this computer yet. Install it first, then move the project.":
     "Unreal {version} はまだこのコンピューターにありません。先にインストールしてから、プロジェクトを移行してください。",
   "Update Visual Studio Build Tools": "Visual Studio Build Toolsを更新",
+  Used: "使用済み",
   "Visual Studio Build Tools are installed.": "Visual Studio Build Toolsをインストールしました。",
   "Visual Studio's C++ tools are ready": "Visual StudioのC++ツールの準備ができました",
   "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.":
@@ -1415,6 +1445,10 @@ export default {
   "Fit everything": "全体を表示",
   "Tidy up": "整える",
   "Genex is drawing": "Genex が描いています",
+  "You pay for what it uses from your Genex credits, up to this limit.":
+    "使った分だけGenexのクレジットから支払います。この上限を超えることはありません。",
+  "Your own {plan} plan answers your next Play in Unreal, on this computer. No Genex credits are spent; your plan's limits apply, answers come slower, and voices stay practice.":
+    "Unrealでの次のPlayでは、このコンピューター上であなた自身の {plan} のプランが答えます。Genex のクレジットは使いません。プランの上限が適用され、答えは遅くなり、声は練習用のままです。",
   "{title} · next": "{title} · 次",
   "{count, plural, one {# new pick} other {# new picks}}": "{count, plural, other {新しい選択 #件}}",
   "Use this": "これにする",
@@ -7166,7 +7200,6 @@ export default {
   "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
     "本物の AI を使うには Genex にサインインしてね。設定からサインインして、もう一度試してね。練習用の回答は続きます。",
   "Real AI stopped. Practice answers go on.": "本物の AI が止まりました。練習用の回答は続きます。",
-  "Real AI · {spent} of {cap} credits": "本物の AI · {cap} 中 {spent} クレジット",
   "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
     "このプレビューでは本物のモデルが答え、Genex のクレジットから支払われます: このプレイで最大 {cap} クレジット ({dollars})。",
   "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session. The game is added to your Genex account as a private draft; none of its files are uploaded.":
@@ -7193,26 +7226,18 @@ export default {
   "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
     "ローカルモデルにはAppleシリコン搭載のMac、または64ビットのWindowsかLinuxのPCが必要です",
   "{model} can't run on this computer.": "{model}はこのコンピュータでは動きません。",
-  "AI budget for {game}": "{game}のAI予算",
-  "AI budget: {remaining} of {limit, plural, one {{shown} credit} other {{shown} credits}} left":
-    "AI予算：残り{remaining}／{limit, plural, other {{shown}クレジット}}",
   "AI in games is paused right now. Try again later.": "ゲーム内のAIは今止まっています。あとでもう一度試してください。",
   "Approving replaces the AI budget already running for this game.":
     "承認すると、このゲームで使用中のAI予算と入れ替わります。",
   "At most {n, plural, one {{shown} credit} other {{shown} credits}} for one call.":
     "1回の呼び出しは最大{n, plural, other {{shown}クレジット}}です。",
   "Couldn’t set the budget. Try again.": "予算を設定できませんでした。もう一度試してください。",
-  "Couldn’t stop the AI budget. Try again.": "AI予算を停止できませんでした。もう一度試してください。",
   "It ends when you stop it, when you sign out of Genex, or after 24 hours.":
     "停止したとき、Genexからサインアウトしたとき、または24時間後に終了します。",
   "It uses {models}.": "{models}を使います。",
   "Keep it": "続ける",
   Limit: "上限",
   "Reading the AI budget…": "AI予算を読み込み中…",
-  "Set AI budget": "AI予算を設定",
-  "Sign in to Genex to set an AI budget.": "AI予算を設定するにはGenexにサインインしてください。",
-  "Stop this AI budget?": "このAI予算を停止しますか？",
-  "Stopping the AI budget…": "AI予算を停止中…",
   "That took too long, so the budget has to be read again.":
     "時間がかかりすぎたため、予算を読み込み直す必要があります。",
   "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per hour.":
@@ -7221,11 +7246,8 @@ export default {
     "ゲームの見積もりは1分あたり約{n, plural, other {{shown}クレジット}}です。",
   "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per session.":
     "ゲームの見積もりは1セッションあたり約{n, plural, other {{shown}クレジット}}です。",
-  "This game asks AI models for things while you play. You pay for what it uses from your Genex credits, up to the limit you set.":
-    "このゲームはプレイ中にAIモデルを使います。使った分は、設定した上限までGenexのクレジットで支払います。",
   "This game’s AI isn’t available right now.": "このゲームのAIは今使えません。",
   "This game’s voice AI isn’t available in the app yet.": "このゲームの音声AIは、アプリではまだ使えません。",
-  "Uses AI, paid from your Genex credits.": "AIを使います。支払いはGenexのクレジットです。",
   "Verify your Genex account’s email to pay with credits, then try again.":
     "クレジットで支払うにはGenexアカウントのメールを確認して、もう一度試してください。",
   "You don’t have enough Genex credits for this budget.": "この予算にはGenexのクレジットが足りません。",

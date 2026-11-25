@@ -153,7 +153,13 @@ export default {
   "A mountain rescue game with a dog and a sled": "Bergrettung mit Hund und Schlitten",
   "A museum guard game where the exhibits come alive":
     "Ein Museumswächter-Spiel, in dem die Ausstellungsstücke lebendig werden",
+  "AI is off in this game": "KI ist in diesem Spiel aus",
+  "AI is on": "KI ist an",
+  "AI is paused: not enough Genex credits": "KI pausiert: nicht genug Genex-Credits",
   "Agents get Unreal {to}’s tools.": "Agenten bekommen die Werkzeuge von Unreal {to}.",
+  "Allow {n, plural, one {{shown} credit} other {{shown} credits}}":
+    "{n, plural, one {{shown} Credit} other {{shown} Credits}} erlauben",
+  "Allowing…": "Wird erlaubt…",
   "An arcade shooter where your bullets bounce off the walls":
     "Ein Arcade-Shooter, in dem deine Kugeln von den Wänden abprallen",
   "A new build is ready to play.": "Ein neuer Build ist spielbereit.",
@@ -575,9 +581,11 @@ export default {
   "Build with the Cursor plan you already have.": "Bau mit dem Cursor-Tarif, den du schon hast.",
   "Build with the Google AI plan you already have.": "Bau mit dem Google-AI-Tarif, den du schon hast.",
   "Build with the Grok account you already have.": "Bau mit dem Grok-Konto, das du schon hast.",
+  "Change limit": "Limit ändern",
   "Changes Harness made to its own instructions. Undo any of them.":
     "Änderungen, die Harness an seinen eigenen Anweisungen gemacht hat. Du kannst jede rückgängig machen.",
   "Checking that Microsoft signed the installer…": "Prüfe, ob Microsoft das Installationsprogramm signiert hat…",
+  "Couldn’t turn AI off. Try again.": "KI konnte nicht ausgeschaltet werden. Versuch es noch mal.",
   "Downloading the Visual Studio Build Tools installer from Microsoft…":
     "Lade das Installationsprogramm der Visual Studio Build Tools von Microsoft herunter…",
   "Genex keeps a copy of the project file first. What Unreal {to} saves won’t open in {from}.":
@@ -592,6 +600,13 @@ export default {
     "Installiere die Visual Studio Build Tools 2022 von Microsoft mit „Desktopentwicklung mit C++“ und dem .NET Framework 4.8 SDK.",
   "Installing Visual Studio Build Tools. Choose Yes when Windows asks; Microsoft's installer shows its progress.":
     "Installiere die Visual Studio Build Tools. Wähle Ja, wenn Windows fragt; Microsofts Installationsprogramm zeigt den Fortschritt.",
+  "Keep it on": "Anlassen",
+  Left: "Übrig",
+  "Let {game} use AI?": "{game} die Nutzung von KI erlauben?",
+  "Limit {limit, plural, one {{shown} credit} other {{shown} credits}}":
+    "Limit {limit, plural, one {{shown} Credit} other {{shown} Credits}}",
+  "Limit {limit, plural, one {{shown} credit} other {{shown} credits}} · {held} on hold for requests still running":
+    "Limit {limit, plural, one {{shown} Credit} other {{shown} Credits}} · {held} reserviert für laufende Anfragen",
   "Microsoft's download led somewhere other than Microsoft, so Genex stopped.":
     "Microsofts Download führte woandershin als zu Microsoft, deshalb hat Genex abgebrochen.",
   "Microsoft's download link wasn't secure, so Genex didn't download it.":
@@ -609,14 +624,29 @@ export default {
   "Move {project} to Unreal {to}": "{project} auf Unreal {to} umziehen",
   "Play in browser": "Im Browser spielen",
   "Play {title} in the browser": "{title} im Browser spielen",
+  "Press Play in Unreal: AI gives practice answers (free, made up)":
+    "Drück Play in Unreal: Die KI gibt Übungsantworten (kostenlos, ausgedacht)",
+  "Real AI is on · used {spent} of {cap} credits": "Echte KI ist an · {spent} von {cap} Credits verbraucht",
+  "Real AI is on · used {spent} of {cap} credits · {held} on hold":
+    "Echte KI ist an · {spent} von {cap} Credits verbraucht · {held} reserviert",
+  "Real models answer your next Play in Unreal, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
+    "Bei deinem nächsten Play in Unreal antworten echte Modelle, bezahlt mit deinen Genex-Credits: höchstens {cap} Credits ({dollars}) für diese Spielsitzung.",
+  "Real models answer your next Play in Unreal, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session. The game is added to your Genex account as a private draft; none of its files are uploaded.":
+    "Bei deinem nächsten Play in Unreal antworten echte Modelle, bezahlt mit deinen Genex-Credits: höchstens {cap} Credits ({dollars}) für diese Spielsitzung. Das Spiel wird als privater Entwurf zu deinem Genex-Konto hinzugefügt; keine seiner Dateien wird hochgeladen.",
   "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
     "Empfohlen. Microsofts kostenlose C++-Werkzeuge: Damit schreibt der Agent die Logik deines Spiels in C++, und Unreal packt ein Spiel oder Plugin mit C++. Etwa 7 GB. „Mach das für mich“ installiert sie: Wähle Ja, wenn Windows fragt.",
   "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++ and the .NET Framework 4.8 SDK.":
     "Empfohlen. Microsofts kostenlose C++-Werkzeuge: Damit schreibt der Agent die Logik deines Spiels in C++, und Unreal packt ein Spiel oder Plugin mit C++. Installiere die Visual Studio Build Tools mit „Desktopentwicklung mit C++“ und dem .NET Framework 4.8 SDK.",
+  "Replaces the budget running now": "Ersetzt das laufende Budget",
   "Self-improvement is off. Harness keeps its own instructions as they are.":
     "Selbstverbesserung ist aus. Harness lässt seine Anweisungen, wie sie sind.",
+  "Sign in to Genex to turn AI on.": "Melde dich bei Genex an, um KI einzuschalten.",
   "This project isn't on an older Unreal that Genex moves to {version}.":
     "Dieses Projekt läuft nicht auf einem älteren Unreal, das Genex auf {version} umzieht.",
+  "Turn AI off": "KI ausschalten",
+  "Turn AI off in this game?": "KI in diesem Spiel ausschalten?",
+  "Turn AI on": "KI einschalten",
+  "Turning AI off…": "KI wird ausgeschaltet…",
   "Unreal can build C++ on this PC.": "Unreal kann auf diesem PC C++ bauen.",
   "Unreal {engine} doesn't build with the C++ tools on this PC. Do it for me updates them: choose Yes when Windows asks.":
     "Unreal {engine} baut nicht mit den C++-Werkzeugen auf diesem PC. „Mach das für mich“ aktualisiert sie: Wähle Ja, wenn Windows fragt.",
@@ -625,6 +655,7 @@ export default {
   "Unreal {version} isn't on this computer yet. Install it first, then move the project.":
     "Unreal {version} ist noch nicht auf diesem Computer. Installiere es zuerst, dann zieh das Projekt um.",
   "Update Visual Studio Build Tools": "Visual Studio Build Tools aktualisieren",
+  Used: "Verbraucht",
   "Visual Studio Build Tools are installed.": "Die Visual Studio Build Tools sind installiert.",
   "Visual Studio's C++ tools are ready": "Die C++-Werkzeuge von Visual Studio sind bereit",
   "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.":
@@ -1476,6 +1507,10 @@ export default {
   "Fit everything": "Alles einpassen",
   "Tidy up": "Aufräumen",
   "Genex is drawing": "Genex zeichnet",
+  "You pay for what it uses from your Genex credits, up to this limit.":
+    "Du zahlst, was es verbraucht, mit deinen Genex-Credits, höchstens bis zu diesem Limit.",
+  "Your own {plan} plan answers your next Play in Unreal, on this computer. No Genex credits are spent; your plan's limits apply, answers come slower, and voices stay practice.":
+    "Bei deinem nächsten Play in Unreal antwortet dein eigenes {plan}-Abo, auf diesem Computer. Es werden keine Genex-Credits ausgegeben; die Limits deines Abos gelten, Antworten kommen langsamer, und Stimmen bleiben Übung.",
   "{title} · next": "{title} · als Nächstes",
   "{count, plural, one {# new pick} other {# new picks}}":
     "{count, plural, one {# neue Auswahl} other {# neue Auswahlen}}",
@@ -7330,7 +7365,6 @@ export default {
   "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
     "Für echte KI musst du bei Genex angemeldet sein. Melde dich in den Einstellungen an und versuch es nochmal. Übungsantworten laufen weiter.",
   "Real AI stopped. Practice answers go on.": "Echte KI wurde gestoppt. Übungsantworten laufen weiter.",
-  "Real AI · {spent} of {cap} credits": "Echte KI · {spent} von {cap} Credits",
   "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
     "In dieser Vorschau antworten echte Modelle, bezahlt mit deinen Genex-Credits: höchstens {cap} Credits ({dollars}) für diese Spielsitzung.",
   "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session. The game is added to your Genex account as a private draft; none of its files are uploaded.":
@@ -7357,26 +7391,18 @@ export default {
   "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
     "Lokale Modelle brauchen einen Mac mit Apple Silicon oder einen 64-Bit-PC mit Windows oder Linux",
   "{model} can't run on this computer.": "{model} läuft nicht auf diesem Computer.",
-  "AI budget for {game}": "KI-Budget für {game}",
-  "AI budget: {remaining} of {limit, plural, one {{shown} credit} other {{shown} credits}} left":
-    "KI-Budget: noch {remaining} von {limit, plural, one {{shown} Credit} other {{shown} Credits}}",
   "AI in games is paused right now. Try again later.": "KI in Spielen ist gerade pausiert. Versuch es später noch mal.",
   "Approving replaces the AI budget already running for this game.":
     "Wenn du zustimmst, ersetzt das neue KI-Budget das, das in diesem Spiel schon läuft.",
   "At most {n, plural, one {{shown} credit} other {{shown} credits}} for one call.":
     "Höchstens {n, plural, one {{shown} Credit} other {{shown} Credits}} pro Aufruf.",
   "Couldn’t set the budget. Try again.": "Das Budget konnte nicht festgelegt werden. Versuch es noch mal.",
-  "Couldn’t stop the AI budget. Try again.": "Das KI-Budget konnte nicht gestoppt werden. Versuch es noch mal.",
   "It ends when you stop it, when you sign out of Genex, or after 24 hours.":
     "Es endet, wenn du es stoppst, dich bei Genex abmeldest oder nach 24 Stunden.",
   "It uses {models}.": "Es nutzt {models}.",
   "Keep it": "Behalten",
   Limit: "Limit",
   "Reading the AI budget…": "KI-Budget wird geladen…",
-  "Set AI budget": "KI-Budget festlegen",
-  "Sign in to Genex to set an AI budget.": "Melde dich bei Genex an, um ein KI-Budget festzulegen.",
-  "Stop this AI budget?": "Dieses KI-Budget stoppen?",
-  "Stopping the AI budget…": "KI-Budget wird gestoppt…",
   "That took too long, so the budget has to be read again.":
     "Das hat zu lange gedauert, das Budget muss neu geladen werden.",
   "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per hour.":
@@ -7385,11 +7411,8 @@ export default {
     "Das Spiel schätzt etwa {n, plural, one {{shown} Credit} other {{shown} Credits}} pro Minute.",
   "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per session.":
     "Das Spiel schätzt etwa {n, plural, one {{shown} Credit} other {{shown} Credits}} pro Sitzung.",
-  "This game asks AI models for things while you play. You pay for what it uses from your Genex credits, up to the limit you set.":
-    "Dieses Spiel fragt KI-Modelle, während du spielst. Du zahlst, was es verbraucht, mit deinen Genex-Credits, bis zu dem Limit, das du festlegst.",
   "This game’s AI isn’t available right now.": "Die KI dieses Spiels ist gerade nicht verfügbar.",
   "This game’s voice AI isn’t available in the app yet.": "Die Sprach-KI dieses Spiels gibt es in der App noch nicht.",
-  "Uses AI, paid from your Genex credits.": "Nutzt KI, bezahlt mit deinen Genex-Credits.",
   "Verify your Genex account’s email to pay with credits, then try again.":
     "Bestätige die E-Mail deines Genex-Kontos, um mit Credits zu zahlen, und versuch es dann noch mal.",
   "You don’t have enough Genex credits for this budget.": "Du hast nicht genug Genex-Credits für dieses Budget.",
