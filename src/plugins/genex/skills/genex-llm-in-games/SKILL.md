@@ -15,6 +15,15 @@ disagrees with this preface, this preface wins.
   calls Genex admitted. A call refused before that (low credits, a ceiling or a model outside the
   approved budget, an ended sign-in) is not in it, so no calls after a play that failed means the
   call was refused, not that it never arrived.
+- `npx genex llm calls`: `genex__cli {"command":"llm calls","options":{"failed":true,"limit":10}}`
+  (`failed` true for the calls that did not answer, `limit` 1 to 100, 20 when left out). The same
+  game's recent calls one by one: when, which model, how it ended and with which code, its ceiling
+  and what was charged, the token cap it ran with and the one it asked for, the tokens it used
+  (thinking counted apart), whether it was cut off, and the budget's per-call ceiling. A failed
+  call carries a `hint` saying what to change, and `refusedBeforeStart` lists the codes of calls
+  refused before they started, which leave no row here, each with what to change. Run it first
+  when the person reports a failed play of the published game. It comes with a Genex update:
+  where Studio answers that it cannot list calls yet, use `llm usage`.
 - `npx genex llm bench "<prompt>" --schema ./answer.schema.json --samples 3 --max-credits <n>`:
   `genex__cli-paid`, with the prompt in `args` and the flags in `options`:
   `{"command":"llm bench","args":"<prompt>","options":{"schema":"answer.schema.json","samples":3,"max-credits":5}}`.
@@ -39,7 +48,7 @@ disagrees with this preface, this preface wins.
 - `llm price` is not available: it reprints a file the CLI leaves in the folder it ran in, and
   Studio removes that folder after every command. Write the bench's numbers into the game when you
   read them, and bench again only when the prompt, the schema or the model changed.
-- Project commands (`llm bench`, `llm status`, `llm cancel`, `llm usage`) need the game's hosted project:
+- Project commands (`llm bench`, `llm status`, `llm cancel`, `llm usage`, `llm calls`) need the game's hosted project:
   publish a draft with `genex__publish {"operation":"draft"}` first. `init --convert` does not
   apply in Studio.
 
@@ -180,7 +189,7 @@ disagrees with this preface, this preface wins.
   as one line starting `genex models:` in Unreal's log, and in a packaged Shipping game, which
   keeps no Unreal log, in `Genex.log` in the game's log folder. So nobody rebuilds a game to learn
   a code: when the person reports a failed play of the published game, read the code before
-  changing anything. Ask what the screen said, ask for that file, and run `llm usage` (above).
+  changing anything. Run `llm calls` with `failed` true (above), ask what the screen said, and ask for that file.
   What the codes mean: `invalid_schema` the schema breaks a rule above (`reason` and `at` say which and where);
   `grant_insufficient_funds` the player's credits do not
   cover the call (they top up, the budget resumes); `grant_price_unreasonable` the call's

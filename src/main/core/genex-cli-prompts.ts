@@ -13,7 +13,7 @@ export type GenexStudioTool = (typeof GenexStudioTool)[keyof typeof GenexStudioT
 /** Refusals and failures of a Studio-run Genex CLI command or package install. */
 export const GENEX_CLI_PROMPT = {
   Unavailable: (command: string) =>
-    `\`genex ${command}\` is not available in Studio. Available: doctor, budget, llm models, llm status, llm cancel, llm usage, llm budget status, shop list, shop add, shop set|remove on a local draft, items list and items search through genex__cli; llm bench, llm budget set|clear, shop set|remove on an item in the store, shop test and items add|remove through genex__cli-paid. Studio puts the game's items on sale when it is published; items made before the game is on Genex wait as local drafts, and Studio uploads them after the publish. Say so rather than work around it.`,
+    `\`genex ${command}\` is not available in Studio. Available: doctor, budget, llm models, llm status, llm cancel, llm usage, llm calls, llm budget status, shop list, shop add, shop set|remove on a local draft, items list and items search through genex__cli; llm bench, llm budget set|clear, shop set|remove on an item in the store, shop test and items add|remove through genex__cli-paid. Studio puts the game's items on sale when it is published; items made before the game is on Genex wait as local drafts, and Studio uploads them after the publish. Say so rather than work around it.`,
   UseTool: (command: string, tool: GenexStudioTool) =>
     `\`genex ${command}\` is ${tool} in Studio: call that tool instead.`,
   PaidTool: (command: string) =>
@@ -40,6 +40,9 @@ export const GENEX_CLI_PROMPT = {
   /** The pinned CLI is older than `llm budget`: what is true, and what to tell the person. */
   BudgetNeedsUpdate:
     "This version of Genex cannot declare an AI budget yet: it will after an update of Genex, and until then nothing needs declaring for the game to be played in the Unreal editor, where Genex answers its AI calls. Tell the person so; nothing was run.",
+  /** `llm calls` on a pinned CLI that does not know it yet. */
+  CallsNeedUpdate:
+    "This version of Genex cannot list a game's AI calls yet: it will after an update of Genex. Until then `llm usage` (genex__cli) shows which of the game's calls failed, by code, and the game's own log holds each failed call's code (the lines starting `genex models:`; `Genex.log` in a packaged Unreal game). Tell the person so; nothing was run.",
   /** A file the game's AI budget is read from that Studio does not read: the command ran without it. */
   BudgetFileNotPlain: (file: string) =>
     `Studio read no AI budget from this game: its ${file} is not a plain file of the game's own folder (it is a link, a folder or a file Studio may not open). The command ran as if the game's folder declared none. Make ${file} a plain file there, then run the command again.`,

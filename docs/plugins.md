@@ -2887,7 +2887,7 @@ the code as the sentence a web game shows (the browser SDK's whole table, since 
 2026-11-25 kit; two sentences before). The plugin also writes one line per failed call with the
 call, the code, the HTTP status and those two: to Unreal's log, and in a Shipping build, which
 keeps none, to `Genex.log` in the game's log folder. The owner's agent reads which admitted calls
-failed, by code, with `genex__cli {"command":"llm usage"}`
+failed, by code, with `genex__cli {"command":"llm calls"}` or `{"command":"llm usage"}`
 ([connections](connections-and-context.md)).
 Any Unreal game also gets `unreal__package-game {stop?, system?}` and `unreal__package-status {system?}`
 (`game-package.ts`): the app players install, for this computer's own system, on Windows a Linux
@@ -4143,7 +4143,8 @@ working dot; none for a game Genex doesn't know) comes from
   folder, so the CLI's skill sync and contract healing touch only that folder, which is removed
   afterwards. `main/core/genex-cli-policy.ts` allows doctor, budget, `llm models|status|cancel`,
   `llm usage` (the owner's read of the published game's model calls and each failed call's code,
-  with `days` 1 to 90),
+  with `days` 1 to 90), `llm calls` (the same game's recent calls one by one, with `failed` and
+  `limit` 1 to 100; a pinned CLI older than 1.46.4 is refused in words),
   `llm budget status` (and `llm budget set|clear` behind the card: they change what a native game's
   page offers its players; the game's declaration is copied into the run folder,
   `genex-game-declaration.ts`; a pinned CLI older than 1.46.2 is refused in words),
