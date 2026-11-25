@@ -182,7 +182,7 @@ gets no such label.
 
 ## Not in Studio yet
 
-These parts of Genex CLI 1.45.2 are left out of the card below because Studio cannot run them yet:
+These parts of Genex CLI 1.46.2 are left out of the card below because Studio cannot run them yet:
 
 - `llm bench` takes no `system` or `messages` option here. Put the system text and a typical
   history into the bench prompt itself, so the measured size is the real call's.
@@ -211,7 +211,7 @@ player text) is `play-time-models` in the `genex-recommendations` plugin.
 
 Other commands map onto Studio tools as the `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-llm-in-games/SKILL.md v1.46.1 sha256 a82075f1266ce9225eaa99c7aa558f1d72e8cd3571efc8327bcafc9ca4060546 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-llm-in-games/SKILL.md v1.46.2 sha256 a82075f1266ce9225eaa99c7aa558f1d72e8cd3571efc8327bcafc9ca4060546 -->
 ---
 name: genex-llm-in-games
 description: Call a language model from a running game — NPCs that answer in their own words, AI opponents, teammates and agents that plan and act, a narrator or game master, a judge of what the player typed, quests written per save — and let players talk to characters that answer aloud. The PLAYER pays and approves on a Genex surface. Covers one-time calls and standing budgets, the ceiling, streaming, the judge, voice and every refusal.
