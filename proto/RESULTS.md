@@ -36,7 +36,8 @@ toolbar icons). A text-only button is not a way out either: the toolbar showed t
 and the label "Genex" appears only as the button's accessible name. For our own icon, the smallest C++
 is one editor module of about 30 lines that registers an `FSlateStyleSet` with one
 `FSlateVectorImageBrush` pointing at the plugin's `Resources/Genex.svg`. Python then uses that
-style name.
+style name. The indirect routes without C++ were tried on 2026-11-25: one shows our image but
+makes Unreal crash on every quit, so the answer stands (see "Own image on the button" below).
 
 **Q3. Dockable tab with a web page without C++? Yes.** The asset is an Editor Utility Widget
 Blueprint whose only widget is a WebBrowser. A script makes it in two steps:
@@ -128,8 +129,8 @@ asset should be made with the oldest supported engine.
   from inside a running Python callback, so the nested Python command did not run. Running the
   button's command string directly does open the tab. The inspector's clicks also move the real
   mouse pointer, so I stopped using it while the Mac was in use.
-- Typing, paste, focus, blur and wheel inside the page: the page logs them, but nothing typed
-  into it in these runs (0 event batches posted).
+- Typing, paste, focus, blur and wheel inside the page: done on the Mac on 2026-11-25 with the
+  real keyboard through screen control, see "Typing test" below.
 - Sharpness of the 13 px text: `devicePixelRatio` is 2. The editor's own pictures here are
   scaled down, so they cannot judge sharpness.
 - Docking the floating tab by hand, and whether the docked tab returns after a normal close.
@@ -149,3 +150,123 @@ asset should be made with the oldest supported engine.
   `Screenshot`. Both draw only the editor's own windows. A plain `screencapture` showed other
   apps on top of the editor, so it was not used.
 - Unreal was open about 15 minutes in total, over 10 starts (7 on 5.8, 3 on 5.9).
+
+## Typing test
+
+Tested on 2026-11-25 on this Mac with Unreal 5.9.0 (CL 60738873), run `typing-5.9`. Someone typed
+into the page with the real keyboard through screen control while my editor held the tab open.
+`scripts/hold_for_typing.py` opens the tab, sizes its floating window to 900×700 points and
+brings it to the front through Epic's Slate inspector (`Windows` list/resize/select; the
+inspector counts screen pixels, so 1800×1400 on this Retina screen). The page now posts every
+`keydown` (key and code), every `input` (field and value) and every `paste` (text) at once
+(`server/page.html`); `scripts/summarize_typing.mjs` turns the log into a timeline.
+
+**Typed text arrives as real text, with nothing doubled or lost.** 63 keydowns and 61 inputs,
+each letter once and in order. Final values:
+- text input: `Hello from Unreal 5.9, typing works!genex done`
+- textarea: `SecoPasted line: привет, Genex 123nd field. `
+
+**Paste works,** Cyrillic included: one `paste` event with `Pasted line: привет, Genex 123`,
+inserted as `insertFromPaste`. It landed 670 ms after the ⌘ key went down, in the middle of the
+next typed word ("Seco…nd field"), so a paste can arrive after keys typed later. The `v` of ⌘V
+never reached the page as a keydown; only `Meta` did.
+
+**Focus and blur arrive** (9 focus, 8 blur), including when focus moved from the input to the
+textarea and when the window lost focus. The very first click gave focus, blur 65 ms later, and
+focus again a second later. **Wheel events arrive** (20).
+
+**Odd things.**
+- `event.code` is wrong: every printable key reported `KeyA` (only ⌘ reported `MetaLeft`).
+  `event.key` is right. Page code must use `key`, never `code`.
+- ⌘A did not select all: the page saw `Meta` and then `a` as a plain keydown with no text, and the
+  next typed words were appended to the existing text instead of replacing it.
+- No key reached an Unreal shortcut: the editor log shows no command during the typing.
+- The floating tab window shows the editor's own title ("TabProto59 - Unreal Editor") for its
+  first seconds, then "EUW Genex Tab". A Message Log window also opens by itself on every start,
+  as on Windows.
+- Epic's MCP server started on port 8000 on the Mac too (`LogHttpListener ... Port 8000`).
+
+## Own image on the button
+
+Question: can the toolbar button show our own image (a PNG or SVG in the plugin) without any
+compiled C++ module? Stand-in image: `Resources/Icons/genex-logo-test.png`, a 64×64 orange
+square with a teal square inside (`scripts/make_test_icon.mjs`).
+
+**Answer: no route is shippable without C++.** One route does show our image on 5.8 and 5.9, but
+Epic's code behind it crashes Unreal every time the editor quits. The other routes cannot reach a
+toolbar button at all.
+
+**The route that shows the image: Epic's User Toolbox plugin (`UserToolBoxCore`).** It ships with
+5.8 and 5.9 (Experimental, prebuilt for Mac). At start it registers a Slate style set named
+`UserToolBoxStyle`, and for every `IconsTracker` data asset it finds, it adds one image brush per
+`.png` in the folders the asset lists, named `<prefix><file name>`. A content-only plugin can ship
+that asset. What I did (`scripts/own_icon.py`):
+1. The test plugin depends on `UserToolBoxCore`.
+2. Python makes `/GenexTabProto/GenexIcons`, an `IconsTracker` with prefix `Genex.` and one folder
+   entry `(FolderPath=(Path="Resources/Icons"),PrefixId="",IconSize=(X=20,Y=20))`. Python has no
+   `unreal.IconsTracker`, so the class is loaded by path (`/Script/UserToolBoxCore.IconsTracker`)
+   and made with Epic's `IconTrackerFactory`. The folder struct's fields are not exposed to
+   Python, so its text form is imported (`IconFolderInfo().import_text(...)`). The console `set`
+   command was refused ("Set commands not allowed in the editor"). The asset was saved by 5.8.
+3. A second toolbar button uses `set_icon("UserToolBoxStyle", "Genex.genex-logo-test")`.
+
+Evidence, all drawn by Unreal's Slate inspector: the button with our image on 5.8
+(`out/editor-5.8-own-icon-only-load-button1.png`) and on 5.9 loading the same 5.8 asset
+(`out/editor-5.9-own-icon-only-load-button1.png`); the same button before the asset had a folder,
+empty (`out/editor-5.9-own-icon-no-brush-button.png`). The inspector lists it as
+`button "Genex own icon"` right after `button "Genex"` in the play toolbar.
+
+**Why it cannot ship: Unreal crashes on every quit once one such brush exists,** on 5.8 and 5.9.
+The crash reports show `FSlateStyleSet::~FSlateStyleSet()` called from UserToolBoxCore's static
+style pointer at process exit. Cause, from the engine source: `FUserToolBoxStyle::AddExternalImageBrushes`
+keeps each brush in a `TUniquePtr` map and also hands the same pointer to the style set, and a
+style set deletes every brush that is not backed by a UObject, so the brush is freed twice. A run
+with User Toolbox enabled but no brush quit cleanly (exit 0). Making or saving the asset while the
+editor runs also crashed at once (SIGBUS in Slate's render batching) on 5.8 and 5.9, after its
+reload of all textures. A person would see Unreal's crash reporter each time they close the
+editor, so this route is out unless Epic fixes it.
+
+**Routes that do not work, with the reason from the engine source:**
+- Plugin `Resources/Icon128.png`: only the Plugins browser reads it, as a one-off dynamic brush
+  (`SPluginTile.cpp`); it never becomes a named style.
+- Class icons or thumbnails for a shipped asset or Blueprint class: `FSlateIconFinder` only looks
+  up `ClassIcon.<Class>` in style sets that already exist; nothing registers one from data.
+  Thumbnails are rendered textures, not style names.
+- `EditorUtilityToolMenuEntry` assets and `ToolMenuEntryScript` subclasses: their icon is a
+  `FScriptSlateIcon` (style set + name) and `GetIcon` returns the same type, so they need a
+  registered style just like Python does. Neither can host a widget.
+- A widget entry holding a UMG or Editor Utility widget with an image: toolbar widget entries
+  exist only in C++ (`FToolMenuEntry::InitWidget`); Python's `ToolMenuEntry` has no widget slot.
+- Slate theme or style files in Config or Content/Slate: Unreal's themes are colour-only JSON;
+  nothing loads image brushes from config. `SlateBrushAsset` and `SlateWidgetStyleAsset` are for
+  UMG; registering them as a style set needs `FSlateGameResources::New` from C++.
+- Scriptable Tools (`ScriptableToolsEditorMode`): a tool's `ToolIconTexture` becomes a clean,
+  texture-backed brush in `ScriptableToolsEditorModeStyle`, but only when a person enters the
+  Scriptable Tools mode. 5.9 can enter a mode from script (EditorToolset `SetEditorMode`); 5.8 has
+  no script call for it that I found. Not tried in the editor.
+- `SlateScripting` (`UICommandsScriptingSubsystem`) registers new commands but cannot run
+  existing ones or add brushes.
+
+**The smallest compiled module.** One editor module, for example `GenexEditorStyle`, in the Genex
+plugin:
+- `GenexEditorStyle.Build.cs` depending on `Core`, `SlateCore`, `Projects`.
+- `StartupModule()`: make `FSlateStyleSet("GenexStyle")`, set its content root to the plugin's
+  `Resources`, add `Genex.Logo` as an `FSlateVectorImageBrush` of `Genex.svg` at 20×20, and call
+  `FSlateStyleRegistry::RegisterSlateStyle`. `ShutdownModule()`: unregister and release it. About
+  30 lines. Python then calls `set_icon("GenexStyle", "Genex.Logo")`.
+- The `.uplugin` lists it as `{"Name": "GenexEditorStyle", "Type": "Editor", "LoadingPhase": "PostEngineInit"}`.
+- Shipped prebuilt per engine minor version, because a binary only loads in the engine build
+  whose BuildId is in its `UnrealEditor.modules`: for each of 5.8 and 5.9, run
+  `RunUAT BuildPlugin -Plugin=… -Package=…` on a Mac (Xcode; a universal arm64 + x86_64 dylib
+  in `Binaries/Mac`), on Windows (Visual Studio; `Binaries/Win64/UnrealEditor-GenexEditorStyle.dll`)
+  and for Linux (Epic's cross toolchain; `Binaries/Linux/libUnrealEditor-GenexEditorStyle.so`).
+  That is six binaries.
+- An engine built from source has another BuildId, and Unreal would then offer to rebuild the
+  module. So the compiled part should live in its own small plugin that Genex installs only for a
+  Launcher engine whose BuildId it has, while the Python button falls back to an editor icon
+  everywhere else.
+
+Unreal was open about 4½ minutes for this part, over 7 starts (5 on 5.9, 2 on 5.8). The typing
+test kept it open about 7 minutes over 2 starts on 5.9. The test plugin now depends on
+`UserToolBoxCore` and holds the `GenexIcons` asset, so every editor start of this test project
+ends with the quit crash above; remove both to go back to clean quits.

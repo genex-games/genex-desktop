@@ -64,6 +64,22 @@
 	for (const type of ["keydown", "input", "paste", "focus", "blur", "wheel"]) {
 		window.addEventListener(type, logEvent, { capture: true, passive: true });
 	}
+
+	// Typing test: keydown, input and paste each POST at once, with what they carried.
+	function fieldName(event) {
+		return event.target && event.target.id ? event.target.id : "other";
+	}
+	const now = () => Math.round(performance.now());
+	window.addEventListener("keydown", (event) => {
+		post({ kind: "keydown", field: fieldName(event), key: event.key, code: event.code, repeat: event.repeat, composing: event.isComposing, t: now() });
+	}, { capture: true, passive: true });
+	window.addEventListener("input", (event) => {
+		post({ kind: "input", field: fieldName(event), inputType: event.inputType, data: event.data, value: event.target.value, t: now() });
+	}, { capture: true, passive: true });
+	window.addEventListener("paste", (event) => {
+		const text = event.clipboardData ? event.clipboardData.getData("text/plain") : null;
+		post({ kind: "paste", field: fieldName(event), text, t: now() });
+	}, { capture: true, passive: true });
 	setInterval(() => {
 		if (pending.length === 0) return;
 		const events = pending;

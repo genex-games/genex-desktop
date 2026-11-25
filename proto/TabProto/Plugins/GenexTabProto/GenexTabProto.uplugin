@@ -13,6 +13,7 @@
 		{ "Name": "PythonScriptPlugin", "Enabled": true, "TargetAllowList": ["Editor"] },
 		{ "Name": "EditorScriptingUtilities", "Enabled": true, "TargetAllowList": ["Editor"] },
 		{ "Name": "WebBrowserWidget", "Enabled": true },
-		{ "Name": "ToolsetRegistry", "Enabled": true, "TargetAllowList": ["Editor"] }
+		{ "Name": "ToolsetRegistry", "Enabled": true, "TargetAllowList": ["Editor"] },
+		{ "Name": "UserToolBoxCore", "Enabled": true, "TargetAllowList": ["Editor"] }
 	]
 }
