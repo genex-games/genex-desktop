@@ -7277,4 +7277,6 @@ export default {
   "{n, plural, one {{shown} credit} other {{shown} credits}}":
     "{n, plural, one {{shown} кредит} few {{shown} кредита} many {{shown} кредитов} other {{shown} кредита}}",
   "an AI judge": "ИИ-судью",
+  "Full window": "Всё окно",
+  "Back to the full Genex window, with the game beside the chat": "Вернуть всё окно Genex, где игра рядом с чатом",
 } satisfies LocaleCatalog;

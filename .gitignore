@@ -50,3 +50,7 @@ out/
 *.certSigningRequest
 *.mobileprovision
 *.pfx
+
+# Python caches a test run of the editor helpers leaves behind
+__pycache__/
+*.pyc

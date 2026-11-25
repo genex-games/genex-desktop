@@ -16,6 +16,7 @@ const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 
 const MESSAGE = {
   invalidColors: "window controls must be two #rrggbb colours and a see-through flag",
+  invalidBeside: "the window is made small or full by true or false",
   invalidReport: "a setup report needs the error it is about",
   /** The report's words: the team reads it in the admin panel beside the person's feedback. */
   setupReport: "Windows setup didn't finish (sent from the setup screen).\n\n",
@@ -36,6 +37,8 @@ export interface BootIpcDeps {
   report(draft: FeedbackDraft): Promise<void>;
   /** Repaint the studio window's title-bar overlay; a no-op where there is none (macOS). */
   setWindowControls(controls: WindowControls): void;
+  /** Make the studio window the small chat beside an editor, or full again; answers whether it is small now. */
+  setWindowBeside(on: boolean): boolean;
   /** Quit the app, from the screen of a studio that would not start. */
   quit(): void;
 }
@@ -64,7 +67,10 @@ export function setupReportDraft(
   return { text, screen: FeedbackScreen.Home, appLogs: true, chatId: null };
 }
 
-export function registerBootIpc(handle: IpcHandle, { gate, report, setWindowControls, quit }: BootIpcDeps): void {
+export function registerBootIpc(
+  handle: IpcHandle,
+  { gate, report, setWindowControls, setWindowBeside, quit }: BootIpcDeps,
+): void {
   handle("studio:boot", () => gate.state());
   handle("studio:boot.retry", () => gate.retry());
   handle("studio:boot.setup", () => gate.setUp());
@@ -72,5 +78,9 @@ export function registerBootIpc(handle: IpcHandle, { gate, report, setWindowCont
   handle("studio:boot.quit", () => quit());
   handle("studio:window.controls", (payload) => {
     setWindowControls(windowControls(payload));
+  });
+  handle("studio:window.beside", (payload) => {
+    if (typeof payload !== "boolean") throw new Error(MESSAGE.invalidBeside);
+    return setWindowBeside(payload);
   });
 }

@@ -3,7 +3,8 @@
  * main announces after (`play.game-link`). A `genex://game/<slug>` link opens the game's page in Play;
  * a `genex://create/<slug>` link to a game of this library (a review on genex.games, its email) opens
  * that game with Publish, where its review card is, and opening it sends nothing. A link from the
- * Genex button in a game engine's editor opens that game's chat and nothing else. Main hands each
+ * Genex button in a game engine's editor opens that game's chat as the small window kept over the
+ * editor (`beside-window.ts`). Main hands each
  * link over once (`main/play/game-links.ts`).
  */
 import { useEffect } from "react";
@@ -14,6 +15,7 @@ import { UiEvent } from "../../shared/ui-events.ts";
 import { PlayModeVia } from "../analytics/workspace-vocabulary.ts";
 import { openPluginSetupFor } from "../plugin-setup.ts";
 import type { Studio } from "../state/studio.ts";
+import { setBesideWindow } from "./beside-window.ts";
 
 /** Open the link waiting now, and each one main announces; answers the unsubscribe. */
 export function followGameLinks(
@@ -39,12 +41,16 @@ export interface GameLinkShell {
   showInPlay(slug: string): void;
   openGame(project: string): void;
   openPublish(project: string): void;
+  /** Make the window the small chat kept over the editor the link came from. */
+  showBeside(): void;
 }
 
 /** Open what a link names: the library's own game with Publish when it names one, else the game's page in Play. */
 export function openGameLink(link: GameLinkOpen, shell: GameLinkShell): void {
   if (link.chat) {
-    if (link.project) shell.openGame(link.project);
+    if (!link.project) return;
+    shell.openGame(link.project);
+    shell.showBeside();
     return;
   }
   if (!link.project) {
@@ -72,6 +78,7 @@ export function useGameLinks(
       // Opening a game leaves Play and the other rooms itself.
       openGame: (project) => selectGame(project),
       openPublish: (project) => openPluginSetupFor(project, GENEX_PLUGIN_ID),
+      showBeside: () => void setBesideWindow(window.studio, app.layout, true),
     };
     return followGameLinks(window.studio, (link) => openGameLink(link, shell));
   }, [app, ready, openPlay, selectGame]);

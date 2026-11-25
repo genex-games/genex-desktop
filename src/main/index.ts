@@ -30,6 +30,7 @@ import {
   net,
   protocol,
   powerSaveBlocker,
+  screen,
   ShareMenu,
   shell,
   utilityProcess,
@@ -195,6 +196,7 @@ import {
   TicketDelivery,
 } from "./play/gallery.ts";
 import { authorityHostsOf, fastHostsOf, relayHostsOf, startGenexGateway } from "./play/genex-gateway.ts";
+import { type BesideWindowHost, besideWindow } from "./beside-window.ts";
 import { gameHoldingFolder } from "./play/editor-game.ts";
 import { GAME_LINK_SCHEME, gameLinkIn, gameLinks } from "./play/game-links.ts";
 import { thisComputer } from "./play/native-host.ts";
@@ -659,6 +661,8 @@ const runSharing = createRunSharing({
 /** Built with the core (it needs the plugins root and the app version); the Plugins dialog is its only caller. */
 let marketplace: PluginMarketplace | null = null;
 let window: BrowserWindow | null = null;
+/** Whether the studio window is the small chat beside an editor, and the shape it goes back to. */
+const studioBeside = besideWindow(MAIN_WINDOW);
 let preview: GamePreview | null = null;
 /** The Live game's full screen in the current window. */
 let gameScreen: GameFullScreen | null = null;
@@ -2178,6 +2182,7 @@ function watchWindowLifecycle(win: BrowserWindow): void {
   });
   win.on("closed", () => {
     window = null;
+    studioBeside.forget();
     void codexLogin.dismiss();
     void claudeLogin.cancel();
     void terminals.dispose();
@@ -2606,6 +2611,7 @@ async function main(): Promise<void> {
     gate: bootGate,
     report: (draft) => sendFeedback(draft, bootFeedbackSources()),
     setWindowControls: (controls) => windowControls.paint(window, controls),
+    setWindowBeside: (on) => setStudioWindowBeside(on),
     quit: () => app.quit(),
   });
   registerUpdateIpc(bootHandle, {
@@ -2742,6 +2748,31 @@ function holdOnMissingData(dir: string): void {
     app.relaunch();
     app.exit(0);
   });
+}
+
+/** The studio window as going beside an editor moves it, with the screen it is on. */
+function besideHostOf(win: BrowserWindow): BesideWindowHost {
+  return {
+    getBounds: () => win.getBounds(),
+    setBounds: (bounds) => win.setBounds(bounds),
+    setMinimumSize: (width, height) => win.setMinimumSize(width, height),
+    // Above other apps' windows, the editor's included, as a floating panel is.
+    setAlwaysOnTop: (on) => win.setAlwaysOnTop(on, "floating"),
+    isMaximized: () => win.isMaximized(),
+    unmaximize: () => win.unmaximize(),
+    isFullScreen: () => win.isFullScreen(),
+    workArea: () => screen.getDisplayMatching(win.getBounds()).workArea,
+  };
+}
+
+/** Make the studio window the small chat beside an editor, or full again; answers whether it is small now. */
+function setStudioWindowBeside(on: boolean): boolean {
+  if (!window || window.isDestroyed()) {
+    studioBeside.forget();
+    return false;
+  }
+  studioBeside.set(besideHostOf(window), on);
+  return studioBeside.on();
 }
 
 /** Is `event` from the studio window's own top frame (not a plugin page or a game)? */

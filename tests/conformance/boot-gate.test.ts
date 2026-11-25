@@ -504,12 +504,17 @@ function bootIpc(fixture: boolean, platform: string = StudioPlatform.Linux) {
     },
   });
   const painted: WindowControls[] = [];
+  const beside: boolean[] = [];
   const reports: FeedbackDraft[] = [];
   const quits: string[] = [];
   registerBootIpc(handle, {
     gate,
     report: async (draft) => void reports.push(draft),
     setWindowControls: (colors) => void painted.push(colors),
+    setWindowBeside: (on) => {
+      beside.push(on);
+      return on;
+    },
     quit: () => void quits.push("quit"),
   });
   const invoke = (channel: string, payload?: unknown) => {
@@ -517,7 +522,7 @@ function bootIpc(fixture: boolean, platform: string = StudioPlatform.Linux) {
     assert.ok(listener, `${channel} is not registered`);
     return listener({ sender: "studio", senderFrame: "main" }, payload);
   };
-  return { gate, painted, reports, invoke, installs, quits };
+  return { gate, painted, beside, reports, invoke, installs, quits };
 }
 
 describe("boot IPC", () => {
@@ -628,5 +633,21 @@ describe("boot IPC", () => {
       assert.equal(result.ok, false, JSON.stringify(payload));
     }
     assert.deepEqual(painted, []);
+  });
+
+  it("makes the window the small chat beside an editor, or full again, and says which it is", async () => {
+    const { beside, invoke } = bootIpc(true);
+    assert.deepEqual(await invoke("studio:window.beside", true), { ok: true, value: true });
+    assert.deepEqual(await invoke("studio:window.beside", false), { ok: true, value: false });
+    assert.deepEqual(beside, [true, false]);
+  });
+
+  it("refuses anything but true or false for the small chat, and leaves the window alone", async () => {
+    const { beside, invoke } = bootIpc(false);
+    for (const payload of [undefined, null, 1, 0, "true", "", {}, { on: true }, [true]]) {
+      const result = await invoke("studio:window.beside", payload);
+      assert.equal(result.ok, false, JSON.stringify(payload));
+    }
+    assert.deepEqual(beside, []);
   });
 });

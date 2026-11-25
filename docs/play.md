@@ -615,7 +615,12 @@ is.
   editor's toolbar ([plugins](plugins.md)): `<folder>` is the project's folder in unpadded
   base64url. Main finds the game of the library whose folder holds it by real path
   (`main/play/editor-game.ts`) and the page opens that game's chat, with no Publish and no Play;
-  a folder no game here holds brings the window forward and opens nothing.
+  a folder no game here holds brings the window forward and opens nothing. The chat opens as the
+  small window: `studio:window.beside` (`main/beside-window.ts`) makes the studio window narrow, at
+  the right edge of its screen and kept over other programs, and the page shows the chat alone
+  (`shell/beside-window.ts`, the layout store's `beside`). Full window in the chat's header
+  (`[data-full-window]`), or opening Play, Plugins, Create › Items or Settings, gives the window
+  its earlier size and the stage back. A full-screen window stays as it is.
 - A creator's own published game opens there too: Open on the chat's live card and on Publish's
   public link shows the game's page in Play (`openPlayGame` in `play/open-play.ts`; Publish closes
   first), for a game whose public address is on this Play's website (`playPageSlug` in

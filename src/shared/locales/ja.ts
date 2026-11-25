@@ -7231,4 +7231,7 @@ export default {
   "You don’t have enough Genex credits for this budget.": "この予算にはGenexのクレジットが足りません。",
   "{n, plural, one {{shown} credit} other {{shown} credits}}": "{n, plural, other {{shown}クレジット}}",
   "an AI judge": "AIジャッジ",
+  "Full window": "ウィンドウ全体",
+  "Back to the full Genex window, with the game beside the chat":
+    "Genex のウィンドウ全体に戻ります。チャットの横にゲームが表示されます",
 } satisfies LocaleCatalog;

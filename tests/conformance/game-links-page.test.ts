@@ -5,7 +5,9 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { setBesideWindow } from "../../src/renderer/shell/beside-window.ts";
 import { followGameLinks, openGameLink } from "../../src/renderer/shell/use-game-links.ts";
+import { createLayoutStore } from "../../src/renderer/state/layout.ts";
 import type { GameLinkOpen } from "../../src/shared/play.ts";
 import { UiEvent } from "../../src/shared/ui-events.ts";
 import { fakeStudioApi } from "../helpers/fake-studio-api.ts";
@@ -48,22 +50,28 @@ describe("genex:// links in the studio page", () => {
       showInPlay: (slug: string) => did.push(`play ${slug}`),
       openGame: (project: string) => did.push(`game ${project}`),
       openPublish: (project: string) => did.push(`publish ${project}`),
+      showBeside: () => did.push("beside"),
     };
     openGameLink({ slug: "midnight-asphalt", project: "midnight" }, shell);
     openGameLink({ slug: "iron-tide" }, shell);
     assert.deepEqual(did, ["game midnight", "publish midnight", "play iron-tide"]);
   });
 
-  it("opens only the game's chat for a link from an editor's Genex button", async () => {
+  it("opens the game's chat as the small window for a link from an editor's Genex button", async () => {
     const did: string[] = [];
     const shell = {
       showInPlay: (slug: string) => did.push(`play ${slug}`),
       openGame: (project: string) => did.push(`game ${project}`),
       openPublish: (project: string) => did.push(`publish ${project}`),
+      showBeside: () => did.push("beside"),
     };
     openGameLink({ slug: "", project: "forest", chat: true }, shell);
     openGameLink({ slug: "", chat: true }, shell);
-    assert.deepEqual(did, ["game forest"], "no Publish, and no page in Play for a link without a game");
+    assert.deepEqual(
+      did,
+      ["game forest", "beside"],
+      "no Publish, and neither a page in Play nor a small window for a link without a game",
+    );
     const fake = fakeStudioApi();
     const waiting: Array<GameLinkOpen | null> = [{ slug: "", project: "forest", chat: true }];
     fake.stub("playTakeGameLink", async () => waiting.shift() ?? null);
@@ -71,5 +79,26 @@ describe("genex:// links in the studio page", () => {
     followGameLinks(fake.api, (link) => opened.push(link));
     await settle();
     assert.deepEqual(opened, [{ slug: "", project: "forest", chat: true }], "a link with no slug still opens");
+  });
+
+  it("keeps the layout on what main did with the small window, and off when main refuses", async () => {
+    const layout = createLayoutStore(null);
+    const asked: boolean[] = [];
+    const api = {
+      setWindowBeside: async (on: boolean) => {
+        asked.push(on);
+        return on;
+      },
+    };
+    await setBesideWindow(api, layout, true);
+    assert.equal(layout.getState().beside, true);
+    await setBesideWindow(api, layout, false);
+    assert.equal(layout.getState().beside, false);
+    assert.deepEqual(asked, [true, false]);
+    // A full-screen window stays as it is: main answers false and the stage stays.
+    await setBesideWindow({ setWindowBeside: async () => false }, layout, true);
+    assert.equal(layout.getState().beside, false);
+    await setBesideWindow({ setWindowBeside: async () => Promise.reject(new Error("no window")) }, layout, true);
+    assert.equal(layout.getState().beside, false);
   });
 });

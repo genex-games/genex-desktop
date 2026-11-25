@@ -24,6 +24,9 @@ import { HarnessGuideButton } from "../chat/HarnessGuide.tsx";
 import { SidebarToggle } from "../shell/use-shell-chrome.ts";
 import { HEADER_BUTTON, setEngineSlot } from "./engine-slot.ts";
 import { StorageSurface } from "../analytics/workspace-vocabulary.ts";
+import { setBesideWindow } from "../shell/beside-window.ts";
+import { useLayout } from "../state/hooks.ts";
+import { studio } from "../state/studio.ts";
 
 interface Props {
   chatTitle: string;
@@ -86,6 +89,30 @@ export function ShowSidebarButton({ onToggle }: { onToggle: () => void }): JSX.E
       aria-expanded={false}
       onClick={onToggle}
     />
+  );
+}
+
+/** Full window, in the small chat kept over another program: the window gets its size and the stage back. */
+function FullWindowButton(): JSX.Element | null {
+  const beside = useLayout((s) => s.beside);
+  if (!beside) return null;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="pill"
+          data-full-window
+          onClick={() => void setBesideWindow(window.studio, studio().layout, false)}
+          className={`no-drag me-1 ${HEADER_BUTTON}`}
+        >
+          <Icon name="maximize" />
+          {t("Full window")}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-64">
+        {t("Back to the full Genex window, with the game beside the chat")}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -382,6 +409,7 @@ export function ChatHeader({
       {isStudio && <HarnessGuideButton />}
       <span className="min-w-2 flex-1 self-stretch" />
 
+      <FullWindowButton />
       {project && storage && <FreeSpaceButton storage={storage} game={chatTitle} />}
       {contextUsage && contextWindow ? (
         <ContextMeter usage={{ ...contextUsage, contextWindow }} compacting={compacting} onCompact={onCompact} />

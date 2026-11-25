@@ -27,6 +27,7 @@ import { useGuestSignIn } from "./play/use-genex-sign-in.ts";
 import { usePlayRemixes } from "./play/use-play-remixes.ts";
 import { AppSidebar } from "./shell/AppSidebar.tsx";
 import { PluginsRoom, Toasts } from "./shell/store-leaves.tsx";
+import { useBesideRoom } from "./shell/use-beside-room.ts";
 import { useChatWidthVariable } from "./shell/use-shell-chrome.ts";
 import { noticeState } from "./shell/use-shell-notices.ts";
 import { useShell } from "./shell/use-shell.ts";
@@ -104,6 +105,7 @@ export function App(): JSX.Element {
   const engines = useEngines((s) => s.list);
   const updateReady = useUpdate((s) => s.ready !== null);
   useChatWidthVariable(shell, app);
+  const beside = useBesideRoom(app, chrome.workspaceCovered || dialogs.state.settingsOpen);
   usePlayRemixes(navigation, chrome);
   useGuestSignIn();
   // While Play's game or its menu lies over the window, no drag region takes the pointer from them (play.css).
@@ -126,6 +128,7 @@ export function App(): JSX.Element {
       data-project={project ?? ""}
       data-sidebar-open={chrome.sidebarVisible}
       data-compact={chrome.compactWindow}
+      data-beside={beside || undefined}
       data-notices={noticeState(notices)}
       data-update-ready={updateReady || undefined}
       data-play-native={playNative || undefined}

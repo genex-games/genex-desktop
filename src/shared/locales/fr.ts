@@ -7355,4 +7355,7 @@ export default {
   "{n, plural, one {{shown} credit} other {{shown} credits}}":
     "{n, plural, one {{shown} crédit} other {{shown} crédits}}",
   "an AI judge": "un juge IA",
+  "Full window": "Fenêtre entière",
+  "Back to the full Genex window, with the game beside the chat":
+    "Reviens à la fenêtre entière de Genex, avec le jeu à côté du chat",
 } satisfies LocaleCatalog;

@@ -39,7 +39,7 @@ export const WorkspaceStage = memo(function WorkspaceStage({
   const stageVisible = room === Room.Build && !chrome.workspaceCovered && !welcoming && !covered;
   const { beside } = views;
   return (
-    <div className="relative min-h-0 min-w-0">
+    <div data-workspace-stage className="relative min-h-0 min-w-0">
       <div
         className="absolute inset-0 flex"
         inert={!stageVisible}
