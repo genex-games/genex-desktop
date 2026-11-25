@@ -1,8 +1,8 @@
 {
   "source": "me-ai-org/genex-demo",
   "path": "sdks/unreal/GenexMultiplayer",
-  "commit": "eaba9939380f991508c13e94d7adeed9ae799aea",
-  "tree": "262ed95b5b8eaa894fae2e9ec95dacd1cc2fadc3",
+  "commit": "e0f72acaa170aeb7bcf6e5d26088e768590c9dd3",
+  "tree": "6bafa4eb1e0a090880a2f07ea73fcbe363140e18",
   "executables": [
     "Source/ThirdParty/GenexPhysicsNative/lib/Linux/libgenex_physics_capi.so",
     "Source/ThirdParty/GenexPhysicsNative/lib/Mac/libgenex_physics_capi.dylib",

@@ -1,7 +1,7 @@
 // Genex.Multiplayer.Models and Genex.Multiplayer.UObject.Models: in-game model calls as Unreal Build Tool compiles
 // them. The first holds GenexCore/GenexModels.h to the TypeScript bridge's shared vectors (packages/multiplayer/
 // test/vectors/models-bridge.json), as genex_models_check does in the CMake build: every drain read back, the
-// hostile drains, and the two sentences a build with no bridge carries. The second runs the subsystem in a game
+// hostile drains, and the sentence for every code of the SDK's table. The second runs the subsystem in a game
 // instance of its own, the API answered by a fake HTTP transport: Init signs the player in with the launcher's
 // ticket, the budget they approved is found, a call under it settles, and what needs the approval window answers
 // by code with no request. The calls' shapes, the waits and the hostile inputs are GenexCore's offline suite

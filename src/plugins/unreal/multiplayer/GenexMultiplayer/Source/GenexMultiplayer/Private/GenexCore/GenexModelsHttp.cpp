@@ -393,10 +393,13 @@ std::string RandomUuid() {
   return out;
 }
 
-Json FailedResult(std::string_view code) {
+Json FailedResult(std::string_view code, std::string_view reason = {}, std::string_view at = {}) {
   Json result = Json::MakeObject();
   result.Set("status", "failed");
   result.Set("error", code);
+  // Which rule a refusal broke and where, when Genex said (`invalid_schema`): for the game's maker to read.
+  if (!reason.empty()) result.Set("reason", reason);
+  if (!at.empty()) result.Set("at", at);
   return result;
 }
 
@@ -616,6 +619,11 @@ void HttpBridge::Request(std::string method, std::string path, std::optional<Jso
       } else {
         const Json* error = json ? json->Find("error") : nullptr;
         if (error != nullptr && error->IsString()) answer.code = error->AsString();
+        // Optional, beside the code: which rule broke and where. Kept only in their own shape.
+        const Json* reason = json ? json->Find("reason") : nullptr;
+        if (reason != nullptr && reason->IsString() && IsRefusalReason(reason->AsString())) answer.reason = reason->AsString();
+        const Json* at = json ? json->Find("at") : nullptr;
+        if (at != nullptr && at->IsString() && IsRefusalReason(at->AsString())) answer.at = at->AsString();
         // The status only: an answer's body is the server's text, and is never logged.
         Log(LogLevel::Info, "genex models: " + verb + " " + route + " failed (" + std::to_string(answer.status) + ")");
       }
@@ -648,7 +656,11 @@ void HttpBridge::Resolve(int id, std::string_view call, Json result) {
   queue_.Push(std::move(event));
 }
 
-void HttpBridge::Reject(int id, std::string_view call, std::string_view code) {
+void HttpBridge::Reject(int id, std::string_view call, const Reply& refused) { Reject(id, call, refused.code, refused.status, refused.reason, refused.at); }
+
+void HttpBridge::Reject(int id, std::string_view call, std::string_view code, int httpStatus, std::string_view reason, std::string_view at) {
+  // Never lost: a read that failed says why in the log, as a call that failed does (Settle).
+  Log(LogLevel::Warning, FailureLogLine(call, code, httpStatus, reason, at, true));
   Json event = Json::MakeObject();
   event.Set("type", "rejected");
   event.Set("id", id);
@@ -662,7 +674,7 @@ HttpBridge::Op* HttpBridge::FindOp(int id) {
   return found != ops_.end() ? &found->second : nullptr;
 }
 
-void HttpBridge::Settle(int id, Json result) {
+void HttpBridge::Settle(int id, Json result, int httpStatus) {
   const auto found = ops_.find(id);
   if (found == ops_.end()) return;
   Op op = std::move(found->second);
@@ -679,18 +691,26 @@ void HttpBridge::Settle(int id, Json result) {
     delta.Set("soFar", *output);
     queue_.Push(std::move(delta));
   }
-  // One line for a call that ended with a code, so whoever reads the log can say why. The code is written only when
-  // it is one of the platform's own (or this plugin's `budget_not_approved`): anything else is a server's text.
+  // THE CODE IS NEVER LOST. A call that ended with one writes one Warning line: the call, the code, the HTTP status
+  // of a refusal, which rule broke when Genex said, and what the game's maker changes. A game that shows only a
+  // sentence, or nothing, still leaves why in the log. Nothing of the prompt, the token or an answer's text is in it
+  // (FailureLogLine keeps a code only in a code's shape and a reason only in a reason's).
   const Json* error = result.Find("error");
   if (!succeeded && error != nullptr && error->IsString()) {
-    const std::string& code = error->AsString();
-    const bool named = HasErrorSentence(code) || code == kBudgetNotApproved;
-    Log(LogLevel::Info, "genex models: " + op.call + " ended " + (named ? code : std::string("with a code this plugin has no sentence for")));
+    const auto said = [&result](std::string_view key) {
+      const Json* value = result.Find(key);
+      return value != nullptr && value->IsString() ? value->AsString() : std::string();
+    };
+    Log(LogLevel::Warning, FailureLogLine(op.call, error->AsString(), httpStatus, said("reason"), said("at")));
   }
   Resolve(id, op.call, std::move(result));
 }
 
 void HttpBridge::Fail(int id, std::string_view code) { Settle(id, models_http_detail::FailedResult(code)); }
+
+void HttpBridge::Fail(int id, const Reply& refused) {
+  Settle(id, models_http_detail::FailedResult(refused.code, refused.reason, refused.at), refused.status);
+}
 
 int HttpBridge::Pending() {
   Advance();
@@ -819,7 +839,7 @@ void HttpBridge::Read(int id, const std::string& call, std::string path, bool po
   namespace detail = models_http_detail;
   ReplyDone done = [this, id, call](Reply reply) {
     if (reply.ok) return Resolve(id, call, std::move(reply.body));
-    Reject(id, call, reply.code);
+    Reject(id, call, reply);
   };
   if (post) return Post(std::move(path), Json::MakeObject(), detail::kUnavailable, std::move(done));
   Get(std::move(path), detail::kUnavailable, std::move(done));
@@ -831,7 +851,7 @@ void HttpBridge::ActiveGrant(int id) {
     const std::string_view call = "getActiveSpendGrant";
     // `grant_not_found` is the answer "none".
     if (reply.status == 404) return Resolve(id, call, Json());
-    if (!reply.ok) return Reject(id, call, reply.code);
+    if (!reply.ok) return Reject(id, call, reply);
     if (!detail::IsId(reply.body.Find("id"))) return Reject(id, call, "invalid_grant_response");
     Resolve(id, call, std::move(reply.body));
   });
@@ -850,7 +870,7 @@ void HttpBridge::RequestGrant(int id, const Json& args) {
   // budget the player approved on the game's Genex page, or that there is none.
   Get("/grants/current", detail::kGrantUnavailable, [this, id](Reply reply) {
     if (reply.status == 404) return Fail(id, kBudgetNotApproved);
-    if (!reply.ok) return Fail(id, reply.code);
+    if (!reply.ok) return Fail(id, reply);
     if (!detail::IsId(reply.body.Find("id"))) return Fail(id, "invalid_grant_response");
     std::optional<Json> answer = detail::GrantOutcome(reply.body);
     if (!answer) return Fail(id, kBudgetNotApproved);
@@ -874,7 +894,7 @@ void HttpBridge::AskForGrant(int id, const Json& options) {
   Post("/grants", std::move(body), detail::kGrantUnavailable, [this, id, timeoutMs](Reply reply) {
     Op* op = FindOp(id);
     if (op == nullptr) return;
-    if (!reply.ok) return Fail(id, reply.code);
+    if (!reply.ok) return Fail(id, reply);
     if (!detail::IsId(reply.body.Find("id"))) return Fail(id, "invalid_grant_response");
     if (std::optional<Json> answer = detail::GrantOutcome(reply.body)) return Settle(id, std::move(*answer));
     op->grant = true;
@@ -943,7 +963,7 @@ void HttpBridge::SendGeneration(int id, const std::string& grantId, double timeo
   Post(path, std::move(body), detail::kUnavailable, [this, id, grantId, timeoutMs](Reply reply) {
     Op* op = FindOp(id);
     if (op == nullptr) return;
-    if (!reply.ok) return Fail(id, reply.code);
+    if (!reply.ok) return Fail(id, reply);
     const Json& view = reply.body;
     const bool ofBudget = grantId.empty() || detail::IsText(view.Find("grantId"), grantId);
     if (!detail::IsId(view.Find("id")) || !ofBudget) return Fail(id, "invalid_generation_response");
@@ -994,7 +1014,7 @@ void HttpBridge::Judge(int id, const Json& args) {
   Post("/grants/" + detail::EncodeSegment(grantId) + "/judgments", std::move(body), detail::kJudgeUnavailable, [this, id, grantId, waitMs](Reply reply) {
     Op* op = FindOp(id);
     if (op == nullptr) return;
-    if (!reply.ok) return Fail(id, reply.code);
+    if (!reply.ok) return Fail(id, reply);
     const Json& view = reply.body;
     if (!detail::IsId(view.Find("generationId")) || !detail::IsText(view.Find("grantId"), grantId)) return Fail(id, "invalid_judgment_response");
     if (detail::IsText(view.Find("status"), "dispatching")) {

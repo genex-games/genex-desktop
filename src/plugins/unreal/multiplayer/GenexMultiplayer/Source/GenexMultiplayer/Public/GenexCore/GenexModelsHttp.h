@@ -194,6 +194,10 @@ class GENEX_CORE_API HttpBridge final : public Bridge, public IPumped {
     Json body;
     /** When not ok: the body's `error`, else the caller's fallback code. */
     std::string code;
+    /** When not ok: the body's `reason` (which rule a refusal broke) and `at` (where, such as
+     *  `schema.properties.mood`), each kept only when it reads as one of Genex's own (IsRefusalReason); empty otherwise. */
+    std::string reason;
+    std::string at;
   };
   using ReplyDone = std::function<void(Reply)>;
 
@@ -222,10 +226,15 @@ class GENEX_CORE_API HttpBridge final : public Bridge, public IPumped {
   void Post(std::string path, Json body, std::string_view fallback, ReplyDone done);
 
   void Resolve(int id, std::string_view call, Json result);
-  void Reject(int id, std::string_view call, std::string_view code);
-  /** End an Op: the stream's text as one Delta when it succeeded, then its Result. */
-  void Settle(int id, Json result);
+  /** A read or Init that failed. `httpStatus`, `reason` and `at` are the refusing answer's, for the log line. */
+  void Reject(int id, std::string_view call, std::string_view code, int httpStatus = 0, std::string_view reason = {}, std::string_view at = {});
+  void Reject(int id, std::string_view call, const Reply& refused);
+  /** End an Op: the stream's text as one Delta when it succeeded, then its Result. A result that carries an `error`
+   *  is written to the log first; `httpStatus` is the refusing answer's, 0 when the call was admitted or never sent. */
+  void Settle(int id, Json result, int httpStatus = 0);
   void Fail(int id, std::string_view code);
+  /** A call the API refused: its code, reason and place in the result, its HTTP status in the log. */
+  void Fail(int id, const Reply& refused);
   Op* FindOp(int id);
 
   /** `run` now, or once every `init` still settling has settled. */

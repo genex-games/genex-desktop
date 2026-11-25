@@ -52,6 +52,17 @@ disagrees with this preface, this preface wins.
   (so a period's credits are its calls × 1). Each sits in a named constant whose comment says it is
   provisional, until `llm bench` measures it. This replaces the card's rule that only a benched
   figure is declared. When a bench runs, its figures replace the provisional ones.
+- The provisional 4 is right only for an inexpensive model. A ceiling must cover what the model's
+  input alone may cost, or the call is refused `provider_budget_insufficient` before it runs. The
+  rule, from the model's row in `llm models` (`inputUsdPerMillion`, `outputUsdPerMillion`) and the
+  catalog's `feeBps`:
+  `maxCredits` ≥ ((prompt bytes + schema bytes + 2048) × `inputUsdPerMillion` + `maxOutputTokens` × `outputUsdPerMillion`) × (1 + `feeBps` / 10000) / 10000, rounded up.
+  A model at 0.75 in and 3.75 out fits 1; one at 10 in and 50 out needs 8 for a 1.5 KB prompt and
+  512 tokens, so 4 is refused. Work the number out for the model the game names, set the call's
+  `maxCredits` to it and `perCallMaxCredits` to at least twice that, and write the sum in the
+  constant's comment. On `provider_budget_insufficient` raise both `maxCredits` and the declared
+  `perCallMaxCredits` (`llm budget set` again for a native game); never retry it unchanged. The
+  practice helper prices nothing, so only this sum, or a bench, shows the refusal before players do.
 - A ceiling also bounds how long an answer may be, so a provisional one needs short answers: the
   prompt states the answer's length, every string in the schema has a `maxLength`, and the call
   passes `maxOutputTokens`. Each ceiling is one named constant, so one edit raises it.
@@ -101,6 +112,18 @@ disagrees with this preface, this preface wins.
   ask with `RequestSpendGrant`: it is the one call that works both while the game is made and once
   it is published. Never write `GetActiveSpendGrant` alone, and never leave out `disclosure`: a
   request without it is refused `invalid_request`. `GenerateStream` hands its text over whole.
+- A call that wants fields back sends a schema, and the whole options text is one JSON object:
+  `{"grantId":"…","modelId":"<id>","prompt":"…","outputFormat":"json","maxOutputTokens":300,"maxCredits":<n>,"schema":{"type":"object","additionalProperties":false,"required":["line","mood"],"properties":{"line":{"type":"string","maxLength":240},"mood":{"type":"string","enum":["warm","wary","angry"]}}}}`.
+  Its answer is the result's `output`, an object. Write the schema exactly this way, because the
+  plugin sends it as written and a schema Genex cannot serve is refused `invalid_schema` before
+  the call runs (a published game's first call failed this way): `schema` is an object inside the
+  options, never JSON text (a quoted string); it goes with `outputFormat` `json`; every object, at
+  any depth, has `properties` and `additionalProperties: false`; and it uses only the dialect's
+  keywords: `type`, `description`, `title`, `properties`, `required`, `additionalProperties`,
+  `items`, `enum`, `minimum`, `maximum`, `minLength`, `maxLength`, `minItems`, `maxItems`, five
+  levels deep at most, with no `$ref`, `anyOf`, `pattern`, `format` or `default`. Build the
+  options with Unreal's JSON writer or one raw string literal, never by pasting a schema string
+  into another string.
 - While the game is being made, a play in the Unreal editor answers. Genex runs its practice
   helper for the game and the plugin sends that play's calls to it: `RequestSpendGrant` is approved
   at once and every call answers, free and made up, marked `[practice]`, exactly as in a web
@@ -136,15 +159,23 @@ disagrees with this preface, this preface wins.
   in the declaration's `models` and a `maxCredits` no higher than its `perCallMaxCredits`, and you
   change the declaration (`llm budget set`) whenever you change either in the code. A practice play
   cannot show a mismatch: the helper approves what the game asks for.
-- A call that fails settles `status` `failed` with the reason's code in `error`. The game shows
-  `GenerationErrorMessage(<error>)`, which is a sentence for that code, and writes the code itself
-  to its log (`UE_LOG`), never to the screen. When the person reports a failed play of the
-  published game, read the code before changing anything: ask what the screen said, and run
-  `llm usage` (above). What the codes mean: `grant_insufficient_funds` the player's credits do not
+- A call that fails settles `status` `failed` with the reason's code in `error`, and, when Genex
+  says so beside the code, which rule broke in `reason` and where in `at` (for `invalid_schema`,
+  such as `ref_not_supported` at `schema.properties.mood`). The game shows
+  `GenerationErrorMessage(<error>)`, a sentence for that code, and keeps the code readable: small
+  after the sentence or on a debug key, with `reason` and `at` beside it when the result has
+  them. The plugin also writes the code itself, with the HTTP status and those two,
+  as one line starting `genex models:` in Unreal's log, and in a packaged Shipping game, which
+  keeps no Unreal log, in `Genex.log` in the game's log folder. So nobody rebuilds a game to learn
+  a code: when the person reports a failed play of the published game, read the code before
+  changing anything. Ask what the screen said, ask for that file, and run `llm usage` (above).
+  What the codes mean: `invalid_schema` the schema breaks a rule above (`reason` and `at` say which and where);
+  `grant_insufficient_funds` the player's credits do not
   cover the call (they top up, the budget resumes); `grant_price_unreasonable` the call's
   `maxCredits` is above the declared `perCallMaxCredits`; `model_not_available` the `modelId` is
   not in the declared `models`, or Genex does not serve it; `provider_budget_insufficient` the
-  `maxCredits` is too small for this prompt on this model; `provider_token_limit` the answer was
+  `maxCredits` is below what this model's input may cost (the ceiling rule above: raise it and the
+  declared `perCallMaxCredits`); `provider_token_limit` the answer was
   cut off (raise `maxCredits` or pass `maxOutputTokens`; the attempt is charged);
   `session_revoked` the sign-in that approved the budget ended, so they approve again;
   `budget_not_approved` nobody approved a budget. Say which one it was, and never guess between them.

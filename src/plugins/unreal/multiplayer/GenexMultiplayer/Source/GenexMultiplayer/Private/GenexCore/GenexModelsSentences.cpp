@@ -219,6 +219,64 @@ const ModelsSentence* ModelsSentenceFor(std::string_view code) {
 
 bool HasErrorSentence(std::string_view code) { return ModelsSentenceFor(code) != nullptr; }
 
+bool IsErrorCode(std::string_view text) {
+  if (text.empty() || text.size() > 64 || text.front() < 'a' || text.front() > 'z') return false;
+  int digits = 0;
+  for (const char c : text) {
+    const bool digit = c >= '0' && c <= '9';
+    if (digit) ++digits;
+    if (!digit && c != '_' && (c < 'a' || c > 'z')) return false;
+  }
+  return digits <= 3;
+}
+
+bool IsRefusalReason(std::string_view text) {
+  if (text.empty() || text.size() > 300) return false;
+  for (const char c : text) {
+    const bool letter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+    if (!letter && std::string_view(" _.,:$#-").find(c) == std::string_view::npos) return false;
+  }
+  return true;
+}
+
+std::string_view ErrorMakerNote(std::string_view code) {
+  struct Note {
+    std::string_view code;
+    std::string_view text;
+  };
+  static constexpr Note kNotes[] = {
+      {"budget_not_approved", "no approved budget is running for this game and this player"},
+      {"grant_insufficient_funds", "the player's credits do not cover the call; the budget resumes when they top up"},
+      {"grant_price_unreasonable", "the call's maxCredits is above the perCallMaxCredits of the approved budget"},
+      {"invalid_schema", "the schema is not one Genex accepts, or was sent without outputFormat json"},
+      {"model_not_available", "the modelId is not one of the approved budget's models, or Genex does not serve it"},
+      {"provider_budget_insufficient",
+       "the call's maxCredits does not cover this model's input reserve; raise maxCredits and the declared perCallMaxCredits"},
+      {"provider_token_limit", "the answer was cut off at its length limit; raise maxCredits or pass maxOutputTokens"},
+      {"session_revoked", "the sign-in that approved the budget has ended; the player approves it again"},
+  };
+  for (const Note& note : kNotes) {
+    if (note.code == code) return note.text;
+  }
+  return {};
+}
+
+std::string FailureLogLine(std::string_view call, std::string_view code, int httpStatus, std::string_view reason, std::string_view at, bool rejected) {
+  std::string line = "genex models: ";
+  line.append(call).append(rejected ? " rejected: " : " failed: ");
+  const bool named = IsErrorCode(code);
+  line.append(named ? code : std::string_view("a code this plugin cannot read"));
+  if (httpStatus > 0) line.append(" (HTTP ").append(std::to_string(httpStatus)).append(")");
+  const bool why = IsRefusalReason(reason);
+  const bool where = IsRefusalReason(at);
+  if (why || where) line.append(":");
+  if (why) line.append(" ").append(reason);
+  if (where) line.append(" at ").append(at);
+  const std::string_view note = named ? ErrorMakerNote(code) : std::string_view();
+  if (!note.empty()) line.append(". For the game's maker: ").append(note);
+  return line;
+}
+
 std::string NativeErrorMessage(const std::string* code) {
   const ModelsSentence* row = code != nullptr ? ModelsSentenceFor(*code) : nullptr;
   return std::string(row != nullptr ? row->text : kModelsGeneralSentence);

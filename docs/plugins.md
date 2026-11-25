@@ -2881,10 +2881,13 @@ that has no such step and is never handed one. On Windows a game's AppContainer 
 this computer: no key is handed, the log says so, and the game's AI is checked in the editor's
 play. Someone who starts a published game themselves with that variable set gets their own
 helper's answers in place of Genex's; no credits are spent or taken that way.
-A published game's call that Genex refuses or fails settles with the reason's code in `error`, and
-the plugin's `GenerationErrorMessage` reads it as the sentence a web game shows (the browser SDK's
-whole table, since genex-demo's 2026-11-25 kit; two sentences before). The owner's agent reads which
-calls failed, by code, with `genex__cli {"command":"llm usage"}`
+A published game's call that Genex refuses or fails settles with the reason's code in `error` (and,
+when Genex says so beside it, which rule broke in `reason` and where in `at`), and the plugin's `GenerationErrorMessage` reads
+the code as the sentence a web game shows (the browser SDK's whole table, since genex-demo's
+2026-11-25 kit; two sentences before). The plugin also writes one line per failed call with the
+call, the code, the HTTP status and those two: to Unreal's log, and in a Shipping build, which
+keeps none, to `Genex.log` in the game's log folder. The owner's agent reads which admitted calls
+failed, by code, with `genex__cli {"command":"llm usage"}`
 ([connections](connections-and-context.md)).
 Any Unreal game also gets `unreal__package-game {stop?, system?}` and `unreal__package-status {system?}`
 (`game-package.ts`): the app players install, for this computer's own system, on Windows a Linux

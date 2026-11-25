@@ -77,6 +77,25 @@ GENEX_CORE_API std::string NativeErrorMessage(const std::string* code);
 /** Whether the table has a sentence of its own for `code`: it is one of the platform's codes, not a server's free text. */
 GENEX_CORE_API bool HasErrorSentence(std::string_view code);
 
+/** Whether `text` has a code's shape: lower-case words joined by underscores, at most 64 characters and three digits
+ *  (`provider_http_429`). What a log may repeat of an answer's `error`: a prompt, a token or a sentence never has it. */
+GENEX_CORE_API bool IsErrorCode(std::string_view text);
+
+/** Whether `text` reads as what Genex says beside a refusal's code: its `reason` (a short fixed code or phrase, such as
+ *  `ref_not_supported`) or its `at` (a place, such as `schema.properties.mood`): 1 to 300 characters of letters,
+ *  digits, spaces and `_.,:$#-`. Anything else in an answer is not kept and never logged. */
+GENEX_CORE_API bool IsRefusalReason(std::string_view text);
+
+/** For the game's MAKER, never for a player: what to change when a call ends with `code`, or empty for a code nobody
+ *  fixes in the game. Written after the code in the log line of a failed call. */
+GENEX_CORE_API std::string_view ErrorMakerNote(std::string_view code);
+
+/** The log line of a call that ended with a code: the call, the code (when it has a code's shape), the HTTP status
+ *  (0: none), the reason and the place (each when it reads as Genex's) and the maker's note. Nothing else of a request
+ *  or an answer. */
+GENEX_CORE_API std::string FailureLogLine(std::string_view call, std::string_view code, int httpStatus, std::string_view reason, std::string_view at = {},
+                                          bool rejected = false);
+
 /** How the calls reach a page. This build's is the native one; a test passes its own. */
 class GENEX_CORE_API Bridge {
  public:
