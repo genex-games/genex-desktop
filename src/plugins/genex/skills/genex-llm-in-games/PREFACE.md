@@ -22,8 +22,9 @@ disagrees with this preface, this preface wins.
   (thinking counted apart), whether it was cut off, and the budget's per-call ceiling. A failed
   call carries a `hint` saying what to change, and `refusedBeforeStart` lists the codes of calls
   refused before they started, which leave no row here, each with what to change. Run it first
-  when the person reports a failed play of the published game. It comes with a Genex update:
-  where Studio answers that it cannot list calls yet, use `llm usage`.
+  when the person reports a failed play of the published game; for a cut-off answer it says
+  which limit cut it. Where Studio answers that it cannot list calls yet (an older Genex), use
+  `llm usage`.
 - `npx genex llm bench "<prompt>" --schema ./answer.schema.json --samples 3 --max-credits <n>`:
   `genex__cli-paid`, with the prompt in `args` and the flags in `options`:
   `{"command":"llm bench","args":"<prompt>","options":{"schema":"answer.schema.json","samples":3,"max-credits":5}}`.
@@ -79,9 +80,10 @@ disagrees with this preface, this preface wins.
   which. When the result's `maxCredits` is lower than the `maxCredits` the call declared, the
   length cut it, not the ceiling, and raising `maxCredits` changes nothing. Most current models
   think before they write (Gemini 3.8 Flash, GPT-6 Astra and Claude Fable 5.1 always do), the
-  thinking is counted against the call's `maxOutputTokens`, and a game cannot turn it down: there
-  is no thinking setting to pass. So a cap sized for the answer alone (the stand's default is
-  512) can end with no answer at all. Give such a call room: `maxOutputTokens` 2000 to 4000 for a
+  thinking is counted against the call's `maxOutputTokens`, and a game can turn it down only
+  where `llm models` lists `reasoningEffort` for that model; where it lists none, there is no
+  setting to pass. So a cap sized for the answer alone (the stand's default is 512) can end with
+  no answer at all. Give such a call room: `maxOutputTokens` 2000 to 4000 for a
   short line on Gemini 3.8 Flash, with the answer's own length still stated in the prompt and the
   schema's `maxLength`, and work the ceiling rule above again with that number so the call's
   `maxCredits` and the declared `perCallMaxCredits` fund it. When the two are equal, the
@@ -266,7 +268,7 @@ gets no such label.
 
 ## Not in Studio yet
 
-These parts of Genex CLI 1.46.2 are left out of the card below because Studio cannot run them yet:
+These parts of Genex CLI 1.46.4 are left out of the card below because Studio cannot run them yet:
 
 - `llm bench` takes no `system` or `messages` option here. Put the system text and a typical
   history into the bench prompt itself, so the measured size is the real call's.
