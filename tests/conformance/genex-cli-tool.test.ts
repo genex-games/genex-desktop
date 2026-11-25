@@ -576,6 +576,17 @@ describe("what the user is asked about a host tool call", () => {
       version: GENEX_GAME_PACKAGES["@genex-ai/embed-sdk"],
     });
   });
+  it("asks about sending or withdrawing a game's AI budget by its command and action, never about reading it", () => {
+    for (const action of ["set", "clear"])
+      assert.deepEqual(
+        genexHostConsent("genex", PluginHostTool.GenexCliPaid, { command: "llm budget", args: action }),
+        { command: "llm budget", args: action },
+      );
+    assert.throws(
+      () => genexHostConsent("genex", PluginHostTool.GenexCliPaid, { command: "llm budget", args: "status" }),
+      GenexCliRefusal,
+    );
+  });
   it("refuses, before anyone is asked, a call the host would refuse", () => {
     assert.throws(() => genexHostConsent("genex", PluginHostTool.GenexCliPaid, { command: "auth" }), GenexCliRefusal);
     assert.throws(() => genexHostConsent("genex", PluginHostTool.GenexPackage, { package: "left-pad" }), /left-pad/);

@@ -18,7 +18,7 @@ import type { PluginBinding } from "../../src/shared/plugins.ts";
 import { PluginHostTool } from "../../src/shared/plugins.ts";
 import type { RunRequest, RunResult } from "../../src/substrate/spawn.ts";
 import { pngPicture, webpPicture } from "../helpers/picture.ts";
-import { tmpDir } from "../helpers/tmp.ts";
+import { removeTree, tmpDir } from "../helpers/tmp.ts";
 
 const ITEM = "sku_phoenix";
 const PICTURE = pngPicture(1024, 1024, "frost-axe");
@@ -646,4 +646,360 @@ describe("the network a run that moves an item's files opens", () => {
       assert.deepEqual(run.request.policy?.allowedDomains, domains);
     });
   }
+});
+
+/**
+ * A native game declares the AI budget its players approve on its Genex page (`genex llm budget`),
+ * and the CLI reads the declaration from the folder it runs in: `genex.modelBudget` in package.json,
+ * else `modelBudget` in genex.json. Studio never runs the CLI in the game, so it copies the
+ * declaration alone into the run folder, under the name of the file that held it, from a plain file
+ * of the game's own folder and never through a link. Nothing is ever written into the game.
+ */
+describe("a native game's AI budget declaration, from the game into the run folder (`llm budget`)", () => {
+  const DECLARED = {
+    models: ["genex/small"],
+    perCallMaxCredits: 2,
+    disclosure: { periodLabel: "session", estimatedCallsPerPeriod: 40, estimatedCreditsPerPeriod: 30 },
+  };
+  const OTHER = { models: ["genex/large"], perCallMaxCredits: 9 };
+  /** A game's package.json with a declaration among the rest of it. */
+  const packageWith = (modelBudget: unknown) =>
+    JSON.stringify({ name: "space-race", scripts: { build: "vite build" }, genex: { slug: "x", modelBudget } });
+  const FILE_MAX_BYTES = 256 * 1024;
+  const DECLARATION_MAX_BYTES = 16 * 1024;
+  const budget = (action: string) => ({ command: "llm budget", args: action });
+
+  /** The pinned CLI's own package, where Studio reads which release it is. */
+  async function pinnedCli(p: Profile, version: string | null = "1.46.2"): Promise<void> {
+    const dir = path.join(p.root, "resources", "plugins", "genex", "node_modules", "@genex-ai", "cli-demo");
+    await mkdir(dir, { recursive: true });
+    if (version !== null) await writeFile(path.join(dir, "package.json"), JSON.stringify({ version }));
+  }
+
+  /** A sandbox that records, for each run, the two declaration files as the CLI finds them in its folder. */
+  function budgetSandbox() {
+    const folders: Array<{ package: unknown; settings: unknown }> = [];
+    const parsed = async (file: string): Promise<unknown> => {
+      const text = await readFile(file, "utf8").catch(() => null);
+      return text === null ? null : JSON.parse(text);
+    };
+    const sandbox = fakeSandbox({
+      stdout: JSON.stringify({ command: "llm budget status", status: "ok" }),
+      write: async (cwd) => {
+        folders.push({
+          package: await parsed(path.join(cwd, "package.json")),
+          settings: await parsed(path.join(cwd, "genex.json")),
+        });
+      },
+    });
+    return { ...sandbox, folders };
+  }
+
+  it("copies package.json's declaration alone, which wins over genex.json's, and leaves the game as it was", async () => {
+    const p = await profile();
+    await pinnedCli(p);
+    await writeFile(path.join(p.game, "package.json"), packageWith(DECLARED));
+    await writeFile(path.join(p.game, "genex.json"), JSON.stringify({ modelBudget: OTHER }));
+    const before = await tree(p.gamesRoot);
+    const sandbox = budgetSandbox();
+    const cli = service(p, sandbox);
+    assert.deepEqual(await cli.preflight(budget("set"), bound(p), PAID), { command: "llm budget", args: "set" });
+    assert.equal(sandbox.seen.length, 0, "asking runs nothing");
+    const answer = await cli.run(budget("set"), bound(p), PAID);
+    assert.equal(answer.ok, true);
+    assert.equal(answer.note, undefined);
+    assert.deepEqual(sandbox.folders, [{ package: { genex: { modelBudget: DECLARED } }, settings: null }]);
+    const [run] = sandbox.seen;
+    assert.ok(run, "the CLI ran");
+    assert.match(run.request.command, /'llm' 'budget' 'set' --env /);
+    assert.doesNotMatch(run.request.command, /user-approved/, "it spends nothing: no approval flag");
+    assert.deepEqual(run.request.policy?.allowedDomains, ["api.genex.games"]);
+    const runs = path.join(p.userData, "genex-cli");
+    assert.ok(run.request.cwd.startsWith(`${runs}${path.sep}`), "never the game");
+    assert.deepEqual(await tree(p.gamesRoot), before, "the game is byte-identical");
+    assert.deepEqual(await readdir(runs), [], "the run folder and its copy are gone");
+  });
+
+  const fromSettings: Array<[string, (p: Profile) => Promise<void>]> = [
+    ["has no package.json", async () => undefined],
+    [
+      "has a package.json that declares none",
+      (p) => writeFile(path.join(p.game, "package.json"), JSON.stringify({ name: "space-race", genex: { slug: "x" } })),
+    ],
+    [
+      "has a package.json with no Genex settings",
+      (p) => writeFile(path.join(p.game, "package.json"), JSON.stringify({ name: "space-race", modelBudget: OTHER })),
+    ],
+    ["has a package.json that is not JSON", (p) => writeFile(path.join(p.game, "package.json"), "{ not json")],
+    ["has a package.json that is a list", (p) => writeFile(path.join(p.game, "package.json"), "[1]")],
+  ];
+  for (const [name, plant] of fromSettings) {
+    it(`copies genex.json's declaration when the game ${name}, as the CLI would read it there`, async () => {
+      const p = await profile();
+      await pinnedCli(p);
+      await plant(p);
+      await writeFile(path.join(p.game, "genex.json"), JSON.stringify({ title: "Space Race", modelBudget: DECLARED }));
+      const before = await tree(p.gamesRoot);
+      const sandbox = budgetSandbox();
+      const answer = await service(p, sandbox).run(budget("status"), bound(p), FREE);
+      assert.equal(answer.ok, true);
+      assert.deepEqual(sandbox.folders, [{ package: null, settings: { modelBudget: DECLARED } }]);
+      assert.deepEqual(await tree(p.gamesRoot), before);
+    });
+  }
+
+  it("copies nothing for a game that declares none, and the CLI answers for itself", async () => {
+    const p = await profile();
+    await pinnedCli(p);
+    await writeFile(path.join(p.game, "package.json"), JSON.stringify({ name: "space-race" }));
+    await writeFile(path.join(p.game, "genex.json"), JSON.stringify({ title: "Space Race" }));
+    const before = await tree(p.gamesRoot);
+    const sandbox = budgetSandbox();
+    const cli = service(p, sandbox);
+    for (const [action, tool] of [
+      ["status", FREE],
+      ["set", PAID],
+      ["clear", PAID],
+    ] as const) {
+      const answer = await cli.run(budget(action), bound(p), tool);
+      assert.equal(answer.ok, true);
+      assert.equal(answer.note, undefined);
+    }
+    assert.deepEqual(sandbox.folders, Array(3).fill({ package: null, settings: null }));
+    assert.deepEqual(await tree(p.gamesRoot), before);
+  });
+
+  for (const [name, value] of [
+    ["text", "cheap"],
+    ["a list", [DECLARED]],
+    ["null", null],
+    ["a number", 5],
+  ] as const) {
+    it(`passes on a declaration that is ${name}, so the CLI names the file that holds it`, async () => {
+      const p = await profile();
+      await pinnedCli(p);
+      await writeFile(path.join(p.game, "package.json"), packageWith(value));
+      await writeFile(path.join(p.game, "genex.json"), JSON.stringify({ modelBudget: OTHER }));
+      const sandbox = budgetSandbox();
+      await service(p, sandbox).run(budget("set"), bound(p), PAID);
+      assert.deepEqual(sandbox.folders, [{ package: { genex: { modelBudget: value } }, settings: null }]);
+    });
+  }
+
+  it("takes a file and a declaration of exactly the most it reads", async () => {
+    const p = await profile();
+    await pinnedCli(p);
+    const full = { note: "n".repeat(DECLARATION_MAX_BYTES - '{"note":""}'.length) };
+    const head = JSON.stringify({ modelBudget: full }).slice(0, -1);
+    const padded = `${head},"pad":"${"p".repeat(FILE_MAX_BYTES - head.length - ',"pad":""}'.length)}"}`;
+    assert.equal(Buffer.byteLength(padded), FILE_MAX_BYTES);
+    await writeFile(path.join(p.game, "genex.json"), padded);
+    const sandbox = budgetSandbox();
+    await service(p, sandbox).run(budget("status"), bound(p), FREE);
+    assert.deepEqual(sandbox.folders, [{ package: null, settings: { modelBudget: full } }]);
+  });
+
+  /** A declaration elsewhere on the disk, which no link or `..` may bring in. */
+  const plantOutside = (p: Profile, file: string) =>
+    writeFile(
+      path.join(p.outside, file),
+      file === "package.json" ? packageWith(OTHER) : JSON.stringify({ modelBudget: OTHER }),
+    );
+  const unread: Array<[string, (p: Profile) => Promise<void>, RegExp]> = [
+    [
+      "a package.json that is a link to a file outside the game",
+      async (p) => {
+        await plantOutside(p, "package.json");
+        await symlink(path.join(p.outside, "package.json"), path.join(p.game, "package.json"));
+      },
+      /package\.json.*not a plain file/,
+    ],
+    [
+      "a package.json that is a link reaching outside through ../",
+      async (p) => {
+        await plantOutside(p, "package.json");
+        await symlink("../../elsewhere/package.json", path.join(p.game, "package.json"));
+      },
+      /package\.json.*not a plain file/,
+    ],
+    [
+      "a package.json that is a link to another file of the game",
+      async (p) => {
+        await writeFile(path.join(p.game, "assets", "package.json"), packageWith(OTHER));
+        await symlink(path.join("assets", "package.json"), path.join(p.game, "package.json"));
+      },
+      /package\.json.*not a plain file/,
+    ],
+    [
+      "a package.json that is a link to nothing",
+      (p) => symlink(path.join(p.outside, "gone.json"), path.join(p.game, "package.json")),
+      /package\.json.*not a plain file/,
+    ],
+    [
+      "a package.json that is a folder",
+      async (p) => {
+        await mkdir(path.join(p.game, "package.json"));
+        await writeFile(path.join(p.game, "package.json", "genex.json"), JSON.stringify({ modelBudget: OTHER }));
+      },
+      /package\.json.*not a plain file/,
+    ],
+    [
+      "a package.json larger than 256 KB",
+      (p) =>
+        writeFile(
+          path.join(p.game, "package.json"),
+          `${packageWith(OTHER).slice(0, -1)},"pad":"${"p".repeat(FILE_MAX_BYTES)}"}`,
+        ),
+      /package\.json.*larger than 256 KB/,
+    ],
+    [
+      "a genex.json that is a link to a file outside the game",
+      async (p) => {
+        await plantOutside(p, "genex.json");
+        await symlink(path.join(p.outside, "genex.json"), path.join(p.game, "genex.json"));
+      },
+      /genex\.json.*not a plain file/,
+    ],
+    [
+      "a genex.json that is a link reaching outside through ../",
+      async (p) => {
+        await plantOutside(p, "genex.json");
+        await symlink("../../elsewhere/genex.json", path.join(p.game, "genex.json"));
+      },
+      /genex\.json.*not a plain file/,
+    ],
+    [
+      "a genex.json larger than 256 KB",
+      (p) =>
+        writeFile(
+          path.join(p.game, "genex.json"),
+          JSON.stringify({ modelBudget: OTHER, pad: "p".repeat(FILE_MAX_BYTES) }),
+        ),
+      /genex\.json.*larger than 256 KB/,
+    ],
+  ];
+  for (const [name, plant, told] of unread) {
+    it(`reads no declaration from ${name}: nothing is copied, and the agent is told why`, async () => {
+      const p = await profile();
+      await pinnedCli(p);
+      await plant(p);
+      // A declaration in the second file is not sent in place of one Studio could not read in the first.
+      const settings = path.join(p.game, "genex.json");
+      if (!(await lstat(settings).catch(() => null)))
+        await writeFile(settings, JSON.stringify({ modelBudget: DECLARED }));
+      const before = { games: await tree(p.gamesRoot), outside: await tree(p.outside) };
+      const sandbox = budgetSandbox();
+      const cli = service(p, sandbox);
+      const answer = await cli.run(budget("set"), bound(p), PAID);
+      assert.deepEqual(sandbox.folders, [{ package: null, settings: null }], "the CLI finds no declaration");
+      assert.match(String(answer.note), told);
+      assert.match(String(answer.note), /as if the game's folder declared none/);
+      assert.deepEqual(await tree(p.gamesRoot), before.games, "the game is byte-identical");
+      assert.deepEqual(await tree(p.outside), before.outside);
+      assert.deepEqual(await readdir(path.join(p.userData, "genex-cli")), [], "no copy outlives the run");
+    });
+  }
+
+  for (const file of ["package.json", "genex.json"]) {
+    it(`refuses a declaration in ${file} larger than 16 KB before anyone is asked, and runs nothing`, async () => {
+      const p = await profile();
+      await pinnedCli(p);
+      const large = { note: "n".repeat(DECLARATION_MAX_BYTES) };
+      const text = file === "package.json" ? packageWith(large) : JSON.stringify({ modelBudget: large });
+      await writeFile(path.join(p.game, file), text);
+      const before = await tree(p.gamesRoot);
+      const sandbox = budgetSandbox();
+      const cli = service(p, sandbox);
+      const refused = (error: unknown) => {
+        assert.ok(error instanceof GenexCliRefusal, String(error));
+        assert.equal(error.code, GenexCliRefusalCode.InvalidValue);
+        assert.match(error.message, new RegExp(`modelBudget in ${file.replace(".", "\\.")} is larger than 16 KB`));
+        return true;
+      };
+      await assert.rejects(cli.preflight(budget("set"), bound(p), PAID), refused, "nobody is asked");
+      await assert.rejects(cli.run(budget("set"), bound(p), PAID), refused);
+      await assert.rejects(cli.run(budget("status"), bound(p), FREE), refused);
+      assert.equal(sandbox.seen.length, 0, "nothing ran");
+      assert.deepEqual(await tree(p.gamesRoot), before);
+      assert.deepEqual(await readdir(path.join(p.userData, "genex-cli")).catch(() => []), []);
+    });
+  }
+
+  const foreign: Array<[string, (p: Profile) => string]> = [
+    ["a folder beside the games", (p) => p.outside],
+    ["a folder reached from the game through ../", (p) => `${p.game}/../../elsewhere`],
+  ];
+  for (const [name, directory] of foreign) {
+    it(`refuses a call bound to ${name}, whose declaration is not the game's`, async () => {
+      const p = await profile();
+      await pinnedCli(p);
+      await writeFile(path.join(p.outside, "package.json"), packageWith(OTHER));
+      const sandbox = budgetSandbox();
+      const cli = service(p, sandbox);
+      await assert.rejects(cli.preflight(budget("set"), bound(p, directory(p)), PAID), /not bound to the game/);
+      await assert.rejects(cli.run(budget("set"), bound(p, directory(p)), PAID), /not bound to the game/);
+      await assert.rejects(cli.run(budget("status"), bound(p, directory(p)), FREE), /not bound to the game/);
+      assert.equal(sandbox.seen.length, 0);
+    });
+  }
+
+  it("needs the game's hosted project, as every command on the game's Genex page does", async () => {
+    const p = await profile();
+    await pinnedCli(p);
+    await writeFile(path.join(p.game, "package.json"), packageWith(DECLARED));
+    await removeTree(path.join(p.genexStorage, "publish"));
+    const sandbox = budgetSandbox();
+    await assert.rejects(service(p, sandbox).run(budget("status"), bound(p), FREE), /no hosted Genex project/);
+    assert.equal(sandbox.seen.length, 0);
+  });
+
+  const tooOld: Array<[string, string | null]> = [
+    ["the release before it", "1.46.1"],
+    ["an older release", "1.35.3"],
+    ["a prerelease that may predate it", "1.46.2-dev.4"],
+    ["a version that does not read as one", "next"],
+    ["a CLI whose package cannot be read", null],
+  ];
+  for (const [name, version] of tooOld) {
+    it(`says so, and runs nothing, when the pinned CLI is ${name}`, async () => {
+      const p = await profile();
+      await pinnedCli(p, version);
+      await writeFile(path.join(p.game, "package.json"), packageWith(DECLARED));
+      const before = await tree(p.gamesRoot);
+      const sandbox = budgetSandbox();
+      const cli = service(p, sandbox);
+      const refused = (error: unknown) => {
+        assert.ok(error instanceof GenexCliRefusal, String(error));
+        assert.equal(error.code, GenexCliRefusalCode.Unavailable);
+        assert.match(error.message, /cannot declare an AI budget yet/);
+        assert.match(error.message, /after an update of Genex/);
+        assert.match(error.message, /Unreal editor/);
+        return true;
+      };
+      await assert.rejects(cli.run(budget("status"), bound(p), FREE), refused);
+      await assert.rejects(cli.preflight(budget("set"), bound(p), PAID), refused, "nobody is asked");
+      await assert.rejects(cli.run(budget("clear"), bound(p), PAID), refused);
+      assert.equal(sandbox.seen.length, 0, "nothing ran");
+      assert.deepEqual(await tree(p.gamesRoot), before);
+      assert.deepEqual(await readdir(path.join(p.userData, "genex-cli")).catch(() => []), []);
+    });
+  }
+
+  for (const version of ["1.46.2", "1.46.3", "1.47.0", "2.0.0"]) {
+    it(`runs on pinned CLI ${version}`, async () => {
+      const p = await profile();
+      await pinnedCli(p, version);
+      const sandbox = budgetSandbox();
+      assert.equal((await service(p, sandbox).run(budget("status"), bound(p), FREE)).ok, true);
+      assert.equal(sandbox.seen.length, 1);
+    });
+  }
+
+  it("leaves every other command to a CLI older than the budget's", async () => {
+    const p = await profile();
+    await pinnedCli(p, "1.46.1");
+    const sandbox = budgetSandbox();
+    assert.equal((await service(p, sandbox).run({ command: "llm status" }, bound(p), FREE)).ok, true);
+    assert.deepEqual(sandbox.folders, [{ package: null, settings: null }]);
+  });
 });

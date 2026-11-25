@@ -12,7 +12,7 @@ import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { GAME_PROJECT_FOLDER } from "../../src/plugins/unreal/game-folder.ts";
-import { unrealGameCallsPlayTimeModels } from "../../src/substrate/project-shape.ts";
+import { type UnrealFilesSeen, unrealGameCallsPlayTimeModels } from "../../src/substrate/project-shape.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const KIT = `${GAME_PROJECT_FOLDER}/Plugins/GenexMultiplayer/GenexMultiplayer.uplugin`;
@@ -221,6 +221,37 @@ describe("what a game folder cannot make the check do", () => {
       assert.equal(await unrealGameCallsPlayTimeModels(dir), true, "one unreadable file hides no other");
     } finally {
       await chmod(locked, 0o600);
+    }
+  });
+
+  it("reads a file again only when it changed, when told what an earlier check read", async () => {
+    const dir = await game({ [KIT]: "{}", "unreal/Source/Inn/Private/Npc.cpp": "void UNpc::Ask() {}" });
+    const npc = path.join(dir, "unreal", "Source", "Inn", "Private", "Npc.cpp");
+    const seen: UnrealFilesSeen = new Map();
+    assert.equal(await unrealGameCallsPlayTimeModels(dir, seen), false);
+    assert.deepEqual([...seen.keys()], [npc], "the file it read is remembered");
+    await writeFile(npc, CALL);
+    assert.equal(
+      await unrealGameCallsPlayTimeModels(dir, seen),
+      true,
+      "the agent wrote the call: the changed file is read",
+    );
+    await writeFile(path.join(dir, "unreal", "Source", "Inn", "Private", "Door.cpp"), "void UDoor::Open() {}");
+    assert.equal(await unrealGameCallsPlayTimeModels(dir, seen), true, "a new file beside it changes nothing");
+  });
+
+  it("does not read an unchanged file a second time", { skip: process.platform === "win32" }, async () => {
+    const dir = await game({ [KIT]: "{}", "unreal/Source/Inn/Private/Npc.cpp": CALL });
+    const npc = path.join(dir, "unreal", "Source", "Inn", "Private", "Npc.cpp");
+    const seen: UnrealFilesSeen = new Map();
+    assert.equal(await unrealGameCallsPlayTimeModels(dir, seen), true);
+    // Unreadable now, with the same size and change time: only a check that reads it again says no.
+    await chmod(npc, 0o000);
+    try {
+      assert.equal(await unrealGameCallsPlayTimeModels(dir, seen), true, "what was read stands");
+      if (process.getuid?.() !== 0) assert.equal(await unrealGameCallsPlayTimeModels(dir), false);
+    } finally {
+      await chmod(npc, 0o600);
     }
   });
 

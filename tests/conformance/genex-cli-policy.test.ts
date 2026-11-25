@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  GameDeclaration,
   GenexCliCommand,
   GenexCliRefusal,
   GenexCliRefusalCode,
@@ -635,4 +636,104 @@ describe("other creators' shared items (`genex items`)", () => {
       assert.equal(refusal({ command: "items add", args: id }, PAID).code, GenexCliRefusalCode.InvalidValue);
     });
   }
+});
+
+/**
+ * A native game (an Unreal game, a downloaded one) has no approval sheet of its own, so it declares
+ * the AI budget its players approve on its Genex page before Play. Reading what it declares asks
+ * nobody; sending or withdrawing it changes what that public page offers, so the person approves it,
+ * although it spends nothing.
+ */
+describe("the AI budget a native game declares (`genex llm budget`)", () => {
+  const budget = (action?: unknown, options?: Record<string, unknown>) => ({
+    command: "llm budget",
+    ...(action === undefined ? {} : { args: action }),
+    ...(options ? { options } : {}),
+  });
+
+  it("reads what the game declares through the free tool, with the game's declaration beside the call", () => {
+    assert.deepEqual(genexCliRequest(budget("status"), FREE), {
+      command: GenexCliCommand.LlmBudget,
+      argv: ["llm", "budget", "status"],
+      project: true,
+      paid: false,
+      declaration: GameDeclaration.ModelBudget,
+    });
+    const refused = refusal(budget("status"), PAID);
+    assert.equal(refused.code, GenexCliRefusalCode.FreeTool);
+    assert.match(refused.message, /`genex llm budget status`.*genex__cli\b/);
+    assert.throws(() => genexCliConsentArgs(budget("status"), PAID), GenexCliRefusal, "no card asks about a read");
+  });
+
+  for (const action of ["set", "clear"]) {
+    it(`runs ${action} only through the paid tool, which asks the person, and never adds --user-approved`, () => {
+      assert.deepEqual(genexCliRequest(budget(action), PAID), {
+        command: GenexCliCommand.LlmBudget,
+        argv: ["llm", "budget", action],
+        project: true,
+        paid: true,
+        declaration: GameDeclaration.ModelBudget,
+      });
+      const refused = refusal(budget(action), FREE);
+      assert.equal(refused.code, GenexCliRefusalCode.PaidTool);
+      assert.match(refused.message, new RegExp(`\`genex llm budget ${action}\`.*genex__cli-paid`));
+    });
+  }
+
+  const actions: Array<[string, unknown]> = [
+    ["no action", undefined],
+    ["an empty action", ""],
+    ["blank text", "  "],
+    ["an action in capitals", "SET"],
+    ["two actions", "status set"],
+    ["an action with a space after it", "set "],
+    ["an action with a line break", "set\n--env"],
+    ["a flag", "--help"],
+    ["a word of its own", "raise"],
+    ["a local draft's id, which is free on other rows", "local_abcdefghijkl"],
+    ["a number", 1],
+    ["a list", ["set"]],
+    ["an inherited name", "constructor"],
+  ];
+  for (const [name, action] of actions) {
+    it(`refuses ${name}, naming the three actions, whichever tool asked`, () => {
+      for (const tool of [FREE, PAID]) {
+        const refused = refusal(budget(action), tool);
+        assert.equal(refused.code, GenexCliRefusalCode.InvalidValue);
+        assert.match(refused.message, /status, set, clear/);
+      }
+    });
+  }
+
+  const options: Array<[string, Record<string, unknown>, GenexCliRefusalCode]> = [
+    ["the approval flag", { "user-approved": true }, GenexCliRefusalCode.ReservedFlag],
+    ["json", { json: true }, GenexCliRefusalCode.ReservedFlag],
+    ["a folder to read", { dir: "../elsewhere" }, GenexCliRefusalCode.ReservedFlag],
+    ["a model", { model: "genex/small" }, GenexCliRefusalCode.UnknownOption],
+    ["a ceiling", { "max-credits": 5 }, GenexCliRefusalCode.UnknownOption],
+    ["a file", { schema: "genex.json" }, GenexCliRefusalCode.UnknownOption],
+    ["an action as an option", { set: true }, GenexCliRefusalCode.UnknownOption],
+  ];
+  for (const [name, given, code] of options) {
+    it(`takes no options: ${name} is refused`, () => {
+      assert.equal(refusal(budget("status", given), FREE).code, code);
+      assert.equal(refusal(budget("set", given), PAID).code, code);
+    });
+  }
+
+  it("shows the person the command and the action it asks about", () => {
+    assert.deepEqual(genexCliConsentArgs(budget("set"), PAID), { command: "llm budget", args: "set" });
+    const card = consentAskWords({
+      pluginName: "Genex",
+      tool: "genex__cli-paid",
+      args: consentArgsDigest(genexCliConsentArgs(budget("clear"), PAID)),
+    });
+    assert.match(card, /\(command: llm budget, args: clear\)/);
+  });
+
+  it("tells an agent that asks for a command Studio does not run where the budget's commands are", () => {
+    const refused = refusal({ command: "llm budgets" }, FREE);
+    assert.equal(refused.code, GenexCliRefusalCode.Unavailable);
+    assert.match(refused.message, /llm budget status.*genex__cli;.*llm budget set\|clear.*genex__cli-paid/);
+  });
 });

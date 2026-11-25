@@ -20,6 +20,9 @@
  * commands, and a change carried back (`local-item-files.ts`); a `shop add|set|remove` in a game with
  * no hosted project runs on them alone. Studio itself uploads them after a publish
  * (`syncLocalItems`) and runs the person's "Other games can use it" on one (`setLocalShared`).
+ * What the game's folder declares for a command (`llm budget`: a native game's AI budget) is read
+ * from the bound game and written alone into the run folder (`genex-game-declaration.ts`), where the
+ * CLI finds it as it would in the game; a pinned CLI older than the command is told apart first.
  */
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -35,6 +38,8 @@ import type { PluginHostAccount } from "../../substrate/plugins/registry.ts";
 import { assertNativeActionAllowed, type NativeStep } from "../dev/native-policy.ts";
 import type { DevStand } from "../play/origins.ts";
 import {
+  GenexCliRefusal,
+  GenexCliRefusalCode,
   type GenexCliRequest,
   genexCliConsentArgs,
   genexCliRequest,
@@ -43,6 +48,7 @@ import {
   localSyncRequest,
 } from "./genex-cli-policy.ts";
 import { GENEX_CLI_PROMPT } from "./genex-cli-prompts.ts";
+import { type GameDeclarationRead, readGameDeclaration, stageGameDeclaration } from "./genex-game-declaration.ts";
 import { deliverSharedItem, ItemNotDelivered, resolveGamePath, stageGamePaths } from "./genex-game-paths.ts";
 import { type GenexPackageService, genexPackageConsentArgs } from "./genex-package.ts";
 import { type GenexRoomService, roomCall } from "./genex-room.ts";
@@ -174,6 +180,8 @@ export type PracticeRefusal = (typeof PracticeRefusal)[keyof typeof PracticeRefu
 
 /** The first Genex CLI whose practice helper has host mode (`genex llm practice --host`). */
 const HOST_PRACTICE_FIRST = [1, 46, 1] as const;
+/** The first Genex CLI that reads a declaration of the game's folder (`genex llm budget`). */
+const GAME_DECLARATION_FIRST = [1, 46, 2] as const;
 
 /** The sandbox label of a practice helper, by who answers its calls. */
 function practiceLabel(live: boolean, host: boolean): string {
@@ -203,6 +211,15 @@ export interface GenexCliAnswer {
   ok: boolean;
   exitCode?: number | null;
   output: unknown;
+  /** What Studio left out of the run and why, beside the CLI's own answer (a declaration file it did not read). */
+  note?: string;
+}
+
+/** What one run works on: the bound game, its hosted project, and what its folder declares for the command. */
+interface RunTarget {
+  game: string | null;
+  project: HostedProject | null;
+  declared?: GameDeclarationRead | null;
 }
 
 /**
@@ -307,14 +324,28 @@ export class GenexCliService {
     options: { paid: boolean; signal?: AbortSignal },
   ): Promise<GenexCliAnswer> {
     const request = genexCliRequest(args, { paid: options.paid });
+    await this.#checkCliRuns(request);
     const game = await this.#checkedGame(request, binding);
+    const declared = await this.#declared(request, game);
     const project = request.project ? await this.#projectFor(request, binding.project, game) : null;
-    return this.#execute(request, { game, project }, options.signal, async (answer, run) => {
+    return this.#execute(request, { game, project, declared }, options.signal, async (answer, run) => {
       const delivered = await this.#deliver(answer, request, run.work, game);
       const { carried, written } = await this.#carry(delivered, request, run, game, binding.project);
       await this.#announceDraft(carried, binding, project, new Map([...run.staged, ...written]), run.work);
-      return carried;
+      return declared?.note ? { ...carried, note: declared.note } : carried;
     });
+  }
+
+  /** A command the pinned CLI is too old to run is refused, with what is true to tell the person. */
+  async #checkCliRuns(request: GenexCliRequest): Promise<void> {
+    if (!request.declaration) return;
+    if (isAtLeast(await this.#cliVersion(), GAME_DECLARATION_FIRST)) return;
+    throw new GenexCliRefusal(GenexCliRefusalCode.Unavailable, GENEX_CLI_PROMPT.BudgetNeedsUpdate);
+  }
+
+  /** What the bound game's folder declares for a command that reads a declaration; null for any other. */
+  async #declared(request: GenexCliRequest, game: string | null): Promise<GameDeclarationRead | null> {
+    return game && request.declaration ? readGameDeclaration(game, request.declaration) : null;
   }
 
   /**
@@ -356,12 +387,13 @@ export class GenexCliService {
 
   /**
    * One run in a folder of its own: the credential, the folder (with the hosted project and the game's
-   * local drafts when the request uses them), the game's files it names, the sandboxed CLI, then
-   * `finish` with the answer while the folder is still there; the folder is removed after.
+   * local drafts when the request uses them), what the game declares for it, the game's files it
+   * names, the sandboxed CLI, then `finish` with the answer while the folder is still there; the
+   * folder is removed after.
    */
   async #execute<T>(
     request: GenexCliRequest,
-    target: { game: string | null; project: HostedProject | null },
+    target: RunTarget,
     signal: AbortSignal | undefined,
     finish: (answer: GenexCliAnswer, run: RunFolder) => Promise<T>,
   ): Promise<T> {
@@ -372,6 +404,7 @@ export class GenexCliService {
     try {
       const work = await this.#prepare(root, project);
       const staged = game && request.localItems ? await stageLocalDrafts(game, work) : new Map<string, string>();
+      if (target.declared) await stageGameDeclaration(target.declared, work);
       const argv =
         game && request.gamePaths ? await stageGamePaths(game, request.gamePaths, request.argv, work) : request.argv;
       const denyWrite = await this.#deps.protectedWrites();
@@ -385,25 +418,29 @@ export class GenexCliService {
   }
 
   /**
-   * What the consent card shows for a paid call, once the files it names are in the game: a call
-   * Studio would refuse throws here, so nobody is asked about it. Nothing runs or is copied.
+   * What the consent card shows for a paid call, once the files it names are in the game and what
+   * the game declares for it reads: a call Studio would refuse throws here, so nobody is asked about
+   * it. Nothing runs or is copied.
    */
   async preflight(
     args: Record<string, unknown>,
     binding: PluginBinding,
     tool: { paid: boolean },
   ): Promise<Record<string, string>> {
-    await this.#checkedGame(genexCliRequest(args, tool), binding);
+    const request = genexCliRequest(args, tool);
+    await this.#checkCliRuns(request);
+    await this.#declared(request, await this.#checkedGame(request, binding));
     return genexCliConsentArgs(args, tool);
   }
 
   /**
-   * The bound game's real folder for a call that reads the game's files, writes a shared item into it
-   * or uses its local drafts, with every file it names checked there; null for any other call. A call
-   * that only uses local drafts runs without them when the call is not bound to the game.
+   * The bound game's real folder for a call that reads the game's files or what its folder declares,
+   * writes a shared item into it or uses its local drafts, with every file it names checked there;
+   * null for any other call. A call that only uses local drafts runs without them when the call is
+   * not bound to the game.
    */
   async #checkedGame(request: GenexCliRequest, binding: PluginBinding): Promise<string | null> {
-    const strict = Boolean(request.gamePaths || request.delivers);
+    const strict = Boolean(request.gamePaths || request.delivers || request.declaration);
     if (!strict && !request.localItems) return null;
     const boundGame = this.#deps.boundGame;
     if (!boundGame) {
@@ -581,13 +618,20 @@ export class GenexCliService {
    * helper is started from, so a profile on another CLI answers for that one.
    */
   async practiceAsksHost(): Promise<boolean> {
+    return isAtLeast(await this.#cliVersion(), HOST_PRACTICE_FIRST);
+  }
+
+  /**
+   * The pinned CLI's release, read from the package its entry sits in (so a profile on another CLI
+   * answers for that one); empty when that package does not read, which is older than every release.
+   */
+  async #cliVersion(): Promise<string> {
     const manifest = path.join(path.dirname(this.#cliPath()), "..", "package.json");
     try {
       const meta: unknown = JSON.parse(await readFile(manifest, "utf8"));
-      const version = isPlainRecord(meta) && typeof meta.version === "string" ? meta.version : "";
-      return isAtLeast(version, HOST_PRACTICE_FIRST);
+      return isPlainRecord(meta) && typeof meta.version === "string" ? meta.version : "";
     } catch {
-      return false;
+      return "";
     }
   }
 

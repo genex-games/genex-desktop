@@ -22,6 +22,14 @@ disagrees with this preface, this preface wins.
 - The bench's answer is JSON. `recommendedMaxCredits` is the card's `Declare maxCredits`,
   `recommendedPerCallMaxCredits` its `Grant perCallMaxCredits`, `averageCreditsPerCall` its
   `Per-call estimate` and `recommendedPerCallEstimateCredits` its `Grant perCallEstimateCredits`.
+- `npx genex llm budget`, for a native game (Unreal) only: `genex__cli {"command":"llm budget","args":"status"}`
+  reads what the game declares; `genex__cli-paid {"command":"llm budget","args":"set"}` sends the
+  game's declaration and `"args":"clear"` withdraws it. `set` and `clear` spend nothing; the person
+  approves them because they change what the published game's page offers its players. The
+  declaration is read from the game's folder (Studio hands the CLI a copy): `"modelBudget"` in
+  `genex.json` at the game's root, or `"genex": { "modelBudget": … }` in its `package.json`. When
+  the tool answers that this version of Genex cannot declare a budget yet, say so to the person and
+  go on: nothing needs declaring for the game to answer in the Unreal editor (see An Unreal game).
 - `llm price` is not available: it reprints a file the CLI leaves in the folder it ran in, and
   Studio removes that folder after every command. Write the bench's numbers into the game when you
   read them, and bench again only when the prompt, the schema or the model changed.
@@ -74,6 +82,57 @@ disagrees with this preface, this preface wins.
   (which spends their credits up to the cap they choose), and that a draft on genex.games uses the
   real model; give the draft's link when there is one.
 
+## An Unreal game
+
+- The calls come with Genex's Unreal plugin: `unreal__multiplayer` adds it to the project, and the
+  game calls `UGenexModelsSubsystem` (a game-instance subsystem; Blueprint category Genex|Models).
+  Each call takes its options as JSON text and answers a request id; its end arrives on
+  `OnSettled(Request, Call, ResultJson)`, or on `OnRejected` for a read or `Init` that failed.
+- The order, in every Unreal game: `Init`, then `RequestSpendGrant` with
+  `{"models":["<id>"],"perCallMaxCredits":<n>,"disclosure":{"periodLabel":"session","estimatedCallsPerPeriod":<n>,"estimatedCreditsPerPeriod":<n>}}`,
+  then, once it settles `status` `active`, `Generate` with that result's `grantId`
+  (`{"grantId":"…","modelId":"<id>","prompt":"…","outputFormat":"text","maxCredits":<n>}`). Always
+  ask with `RequestSpendGrant`: it is the one call that works both while the game is made and once
+  it is published. Never write `GetActiveSpendGrant` alone, and never leave out `disclosure`: a
+  request without it is refused `invalid_request`. `GenerateStream` hands its text over whole.
+- While the game is being made, a play in the Unreal editor answers. Genex runs its practice
+  helper for the game and the plugin sends that play's calls to it: `RequestSpendGrant` is approved
+  at once and every call answers, free and made up, marked `[practice]`, exactly as in a web
+  game's preview. This holds for your own play-testing (the computer tool plays in the editor's
+  play session) and for the person's Play button in Unreal. It needs no page on genex.games, no
+  declared budget, no publish and no credits. Check the feature this way, and only this way.
+- The person chooses what answers there, in the bar above the game's Unreal card in Live: practice
+  answers, **Use my plan** (their own Claude Code or Codex plan, no credits) or **Use real AI**
+  (their credits, up to a cap they choose). Only they can switch it, and a change applies from the
+  next Play in Unreal. Under their plan, the plan's own model answers whatever `modelId` the game
+  names.
+- Two conditions for the helper, both yours to keep: the game is the one open in Genex (the helper
+  follows the game the window shows), and the game's own code or a Blueprint names
+  `GenexModelsSubsystem` (Genex looks every few seconds, so a first call you have just written and
+  compiled is found before your next play). If a play in the editor still ends
+  `budget_not_approved`, the helper was not there: say so, and do not work around it.
+- The packaged app is the published game. Started by Genex's Play, by a player or by you, it asks
+  genex.games, where a budget exists only after the game is published with a declared budget
+  (`llm budget set`, above) and a player approved it on the game's page in the Genex app before
+  Play. `budget_not_approved` there is the correct answer for a game nobody approved a budget for,
+  and a one-time call is `native_unsupported`: the game plays its written lines with its label.
+  Never test the AI through the packaged app while the game is being made, and never report that
+  answer as a broken feature.
+- The final message for an Unreal game that calls a model says in one line that a Play in the
+  Unreal editor answers with practice answers until the person presses Use my plan or Use real AI
+  above the game in Live, and that the published game needs its budget declared and each player's
+  approval on its Genex page.
+
+## Never a provider's key
+
+A game made here reaches a model through Genex, and nothing else. Never put a model provider's key
+(OpenAI, Google Gemini, Anthropic, OpenRouter or any other) in the game: not in a `.env`, a config
+file, the code, a Blueprint or a build setting. Never call a provider from the game, and never
+suggest either to the person, whatever stands in the way. A shipped game hands whatever it holds
+to every player, so a key in it is a key given away, billed to the person. When Genex cannot
+answer yet (no budget, a command this version lacks, a refusal), the game plays its written lines
+with its label, and you tell the person plainly what is missing and what brings it.
+
 ## When the written lines play, the game says so
 
 Whenever the game plays its written lines instead of a model (the Genex app's `native_unsupported`,
@@ -123,7 +182,7 @@ gets no such label.
 
 ## Not in Studio yet
 
-These parts of Genex CLI 1.45.2 are left out of the card below because Studio cannot run them yet:
+These parts of Genex CLI 1.46.2 are left out of the card below because Studio cannot run them yet:
 
 - `llm bench` takes no `system` or `messages` option here. Put the system text and a typical
   history into the bench prompt itself, so the measured size is the real call's.
@@ -134,16 +193,10 @@ These parts of Genex CLI 1.45.2 are left out of the card below because Studio ca
   `ctx.models`) are not built here. `features.roomCalls` may read true on a stand; a game made here
   calls the model from the player's page.
 - Unity, Godot and Rust games have no model-call binding in Studio.
-- An Unreal game published as a native build calls models under a budget the player sets on the
-  game's page in the Genex app before Play. The game reads that budget through
-  `UGenexModelsSubsystem`, which comes with Genex's multiplayer plugin (`unreal__multiplayer` adds
-  it to the project): `GetActiveSpendGrant`, then `Generate` with that `grantId`. A native
-  build cannot open an approval window, so a one-time call (`native_unsupported`) and
-  `RequestSpendGrant` without a live budget (`budget_not_approved`) resolve by their code, and the
-  game plays its written lines. The creator declares the budget for the published game with the
-  Genex CLI in a terminal (`genex llm budget set`, in a CLI release that has it). The CLI Studio
-  ships may not have that command yet, so do not run it through Studio's tools or promise that it
-  works there.
+- Voice and the judge in an Unreal game: `UGenexModelsSubsystem` has no voice calls, and under Use
+  my plan the judge stays practice.
+- The app that Genex's Play starts from an Unreal game's folder is the packaged, published game: it
+  does not use the practice helper (see An Unreal game).
 
 `system`, `messages`, the controls and `features` work: Studio ships the SDK that has them.
 
