@@ -610,7 +610,12 @@ is.
   shape with a Play slug is taken. Main shows the window and keeps the newest link until the page
   takes it once (`studio:play.take-game-link`, announced by `play.game-link`); the page then opens
   the game's own page in Play (`use-game-links.ts`), which shows its own error when the game
-  cannot be read. Developer and test launches register nothing.
+  cannot be read. Developer and test launches register nothing. A third shape,
+  `genex://editor/<folder>`, comes from the Genex button the Unreal editor helper puts on the level
+  editor's toolbar ([plugins](plugins.md)): `<folder>` is the project's folder in unpadded
+  base64url. Main finds the game of the library whose folder holds it by real path
+  (`main/play/editor-game.ts`) and the page opens that game's chat, with no Publish and no Play;
+  a folder no game here holds brings the window forward and opens nothing.
 - A creator's own published game opens there too: Open on the chat's live card and on Publish's
   public link shows the game's page in Play (`openPlayGame` in `play/open-play.ts`; Publish closes
   first), for a game whose public address is on this Play's website (`playPageSlug` in

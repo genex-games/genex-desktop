@@ -2,7 +2,8 @@
  * `genex://` links: once the shell is ready, the game a link left waiting opens, and so does each one
  * main announces after (`play.game-link`). A `genex://game/<slug>` link opens the game's page in Play;
  * a `genex://create/<slug>` link to a game of this library (a review on genex.games, its email) opens
- * that game with Publish, where its review card is, and opening it sends nothing. Main hands each
+ * that game with Publish, where its review card is, and opening it sends nothing. A link from the
+ * Genex button in a game engine's editor opens that game's chat and nothing else. Main hands each
  * link over once (`main/play/game-links.ts`).
  */
 import { useEffect } from "react";
@@ -23,7 +24,7 @@ export function followGameLinks(
     void api
       .playTakeGameLink()
       .then((link) => {
-        if (link?.slug) open(link);
+        if (link?.slug || link?.chat) open(link);
       })
       .catch(() => {});
   };
@@ -42,6 +43,10 @@ export interface GameLinkShell {
 
 /** Open what a link names: the library's own game with Publish when it names one, else the game's page in Play. */
 export function openGameLink(link: GameLinkOpen, shell: GameLinkShell): void {
+  if (link.chat) {
+    if (link.project) shell.openGame(link.project);
+    return;
+  }
   if (!link.project) {
     shell.showInPlay(link.slug);
     return;

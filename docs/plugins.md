@@ -476,6 +476,10 @@ spelled: any case, whitespace or zero-width characters, the module or class alon
 or qualified in `tool_name` with no toolset. Only Genex's own queue calls it. Epic answers pictures
 (`CaptureEditorImage`, `CaptureViewport`, `CaptureAssetImage`) as base64 inside the JSON text,
 which Studio would truncate, so the bridge hands up to four per answer to the agent as MCP images.
+The helper also puts a **Genex** button on the level editor's toolbar at each editor start
+(`genex_chat/button.py`, Unreal's own comment icon: a picture of ours needs a compiled Slate
+style). A press asks the computer to open `genex://editor/<the project's folder>`, and Genex comes
+forward, or starts, on that game's chat ([play](play.md), Links).
 The Genex editor helper's build and play tools (below) answer a refusal or a failure as `{error}`
 inside a call Epic counts as done, so the bridge marks such an answer `isError` (the toolset named
 short or qualified, in any case): the agent and the chat read it as a failed call, in the helper's

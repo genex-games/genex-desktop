@@ -195,6 +195,7 @@ import {
   TicketDelivery,
 } from "./play/gallery.ts";
 import { authorityHostsOf, fastHostsOf, relayHostsOf, startGenexGateway } from "./play/genex-gateway.ts";
+import { gameHoldingFolder } from "./play/editor-game.ts";
 import { GAME_LINK_SCHEME, gameLinkIn, gameLinks } from "./play/game-links.ts";
 import { thisComputer } from "./play/native-host.ts";
 import { type InstallOutcome, type NativeInstaller, nativeInstalls } from "./play/native-installs.ts";
@@ -2458,6 +2459,7 @@ function playIpcDeps(studio: StudioCore): PlayIpcDeps {
     reveal: (file) => shell.showItemInFolder(file),
     gameLinks: gameLinkQueue,
     localGame: (slug) => studio.genexGameOfSlug(slug),
+    gameOfFolder: async (folder) => gameHoldingFolder(await studio.games.list(), folder),
     pageRead: (game) => void reportPageRead(studio, game),
   };
 }

@@ -53,4 +53,23 @@ describe("genex:// links in the studio page", () => {
     openGameLink({ slug: "iron-tide" }, shell);
     assert.deepEqual(did, ["game midnight", "publish midnight", "play iron-tide"]);
   });
+
+  it("opens only the game's chat for a link from an editor's Genex button", async () => {
+    const did: string[] = [];
+    const shell = {
+      showInPlay: (slug: string) => did.push(`play ${slug}`),
+      openGame: (project: string) => did.push(`game ${project}`),
+      openPublish: (project: string) => did.push(`publish ${project}`),
+    };
+    openGameLink({ slug: "", project: "forest", chat: true }, shell);
+    openGameLink({ slug: "", chat: true }, shell);
+    assert.deepEqual(did, ["game forest"], "no Publish, and no page in Play for a link without a game");
+    const fake = fakeStudioApi();
+    const waiting: Array<GameLinkOpen | null> = [{ slug: "", project: "forest", chat: true }];
+    fake.stub("playTakeGameLink", async () => waiting.shift() ?? null);
+    const opened: GameLinkOpen[] = [];
+    followGameLinks(fake.api, (link) => opened.push(link));
+    await settle();
+    assert.deepEqual(opened, [{ slug: "", project: "forest", chat: true }], "a link with no slug still opens");
+  });
 });

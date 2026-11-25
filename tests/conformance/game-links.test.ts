@@ -179,3 +179,77 @@ describe("a link that opens the creator's own game in Genex Studio", () => {
     assert.deepEqual(await linkOpening(create, failing), { slug: "midnight-asphalt" });
   });
 });
+
+describe("a link from the Genex button in a game engine's editor", () => {
+  const code = (folder: string) => Buffer.from(folder, "utf8").toString("base64url");
+  const link = (folder: string) => `genex://editor/${code(folder)}`;
+
+  it("names the project's folder, on a Mac, Linux or Windows", () => {
+    for (const folder of ["/Users/you/AI Games/forest/unreal", "C:\\Games\\forest\\unreal", "D:/Игры/лес/unreal"])
+      assert.deepEqual(gameLinkTarget(link(folder)), { kind: GameLinkKind.Editor, slug: "", folder }, folder);
+    assert.equal(gameLinkSlug(link("/Users/you/forest")), null, "not a page in Play");
+  });
+
+  it("ignores every other link, and nothing waits, shows or is told for one", () => {
+    const good = code("/Users/you/forest");
+    const hostile: unknown[] = [
+      "genex://editor/",
+      "genex://editor",
+      `genex://editors/${good}`,
+      `genex://EDITOR/${good}`,
+      `https://genex.games/editor/${good}`,
+      // extra parts
+      `genex://editor/${good}?open=1`,
+      `genex://editor/${good}#chat`,
+      `genex://user@editor/${good}`,
+      `genex://editor:80/${good}`,
+      `genex://editor/${good}/more`,
+      // not base64url, or padded
+      "genex://editor/%2FUsers%2Fyou",
+      "genex://editor//Users/you/forest",
+      `genex://editor/${good}==`,
+      `genex://editor/${Buffer.from("/Users/you/forest").toString("base64")}+/`,
+      // decodes to something that is not one whole path of plain text
+      `genex://editor/${code("forest/unreal")}`,
+      `genex://editor/${code("../../etc")}`,
+      `genex://editor/${code("~/forest")}`,
+      `genex://editor/${code("\\\\server\\share\\forest")}`,
+      `genex://editor/${code("/Users/you/forest\n--flag")}`,
+      `genex://editor/${code("/Users/you/forest\u0000")}`,
+      `genex://editor/${Buffer.from([0x2f, 0xff, 0xfe]).toString("base64url")}`,
+      // over-long
+      `genex://editor/${code(`/${"a".repeat(4096)}`)}`,
+    ];
+    const calls: string[] = [];
+    const links = gameLinks();
+    links.listen({ show: () => calls.push("show"), announce: () => calls.push("announce") });
+    for (const bad of hostile) {
+      assert.equal(gameLinkTarget(bad), null, JSON.stringify(bad));
+      assert.equal(links.arrive(bad), false, JSON.stringify(bad));
+    }
+    assert.deepEqual(calls, []);
+    assert.equal(links.take(), null);
+  });
+
+  it("opens the chat of the game that folder is in, and nothing when no game here holds it", async () => {
+    const asked: string[] = [];
+    const gameOfFolder = async (folder: string) => {
+      asked.push(folder);
+      return folder === "/Users/you/forest/unreal" ? "forest" : null;
+    };
+    const never = async () => {
+      throw new Error("an editor link names no game on Genex");
+    };
+    assert.deepEqual(await linkOpening(gameLinkTarget(link("/Users/you/forest/unreal")), never, gameOfFolder), {
+      slug: "",
+      project: "forest",
+      chat: true,
+    });
+    assert.equal(await linkOpening(gameLinkTarget(link("/Users/you/elsewhere")), never, gameOfFolder), null);
+    assert.deepEqual(asked, ["/Users/you/forest/unreal", "/Users/you/elsewhere"]);
+    const failing = async () => {
+      throw new Error("the library cannot be read");
+    };
+    assert.equal(await linkOpening(gameLinkTarget(link("/Users/you/forest/unreal")), never, failing), null);
+  });
+});
