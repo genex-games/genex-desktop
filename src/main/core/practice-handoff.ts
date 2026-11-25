@@ -170,6 +170,14 @@ export class EditorPractice {
     });
   }
 
+  /**
+   * The key of the helper `project`'s play in its editor is named now (`<port>.<32 hex>`), or null:
+   * what Play of the game folder's own app hands that app too (`play/local-play-ai.ts`).
+   */
+  keyOf(project: string): string | null {
+    return this.#held?.project === project ? this.#held.key : null;
+  }
+
   /** A state the service told the bar: a helper of the held game that failed outside an ask here is asked for again. */
   heard(state: PreviewAiState): void {
     const ended = state.reason === PreviewAiUnavailable.HelperFailed && !this.#asking;

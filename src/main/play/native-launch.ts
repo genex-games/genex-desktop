@@ -15,7 +15,7 @@ import { isPlaySlug } from "../../shared/play.ts";
 import { LaunchFailure, NativeEngine, type NativeSession, NativeSessionPhase } from "../../shared/play-native.ts";
 import type { JobClock, JobProbe } from "../../substrate/job-process.ts";
 import { removeOwnedFolder } from "../../substrate/storage-folders.ts";
-import type { GameGenexEnv, NativeGameRequest } from "../../substrate/plugins/native-process.ts";
+import type { GameGenexEnv, GamePractice, NativeGameRequest } from "../../substrate/plugins/native-process.ts";
 import type { InstallRecord } from "./native-installs.ts";
 import { SAVES } from "./native-installs.ts";
 
@@ -104,6 +104,11 @@ export interface NativeSessionsDeps {
   log(line: string): void;
   /** Opens a game's way to Genex (`main/play/genex-gateway.ts`); without it a game has no network. */
   genex?(slug: string): Promise<GameGenex | null>;
+  /**
+   * The practice helper a game being made is handed (`local-play-ai.ts`), or none. Only the
+   * launcher of game folders' own apps is given this: a game a player installed is never asked for.
+   */
+  practice?(slug: string): Promise<GamePractice | null>;
   /**
    * Where a game's presence and plays go: started once it counts as running (its window on screen,
    * or a minute up without one), which reports the play to genex.games (`native-plays.ts`), and
@@ -233,6 +238,18 @@ export class NativeSessions {
     }
   }
 
+  /** The practice helper this game is handed, or none: one that cannot be named leaves the game without, never unplayable. */
+  async #practice(slug: string): Promise<GamePractice | null> {
+    try {
+      return (await this.#deps.practice?.(slug)) ?? null;
+    } catch (error) {
+      this.#deps.log(
+        `native game ${slug} plays with no practice helper: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
+    }
+  }
+
   /** The program `program` names for this game, or null (no resolver, none named, or it failed). */
   async #program(slug: string, app: string, executable: string): Promise<{ binary: string; args: string[] } | null> {
     try {
@@ -262,6 +279,7 @@ export class NativeSessions {
     const { bundleId, bundleName } = record;
     const chosen = await this.#program(slug, app, record.executable);
     const genex = await this.#openGenex(slug);
+    const practice = await this.#practice(slug);
     const request: NativeGameRequest = {
       binary: chosen?.binary ?? path.join(app, record.executable),
       app,
@@ -280,6 +298,7 @@ export class NativeSessions {
             },
           }
         : {}),
+      ...(practice ? { practice } : {}),
     };
     try {
       const child = await this.#deps.spawn(request);

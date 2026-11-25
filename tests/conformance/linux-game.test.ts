@@ -114,6 +114,32 @@ describe("a Linux game's bubblewrap command", () => {
     assert.equal(command.cwd, "/games/dust/1.0/Dust");
   });
 
+  it("bridges a game being made to its practice helper, and tells it the key only when it can reach it", () => {
+    const hex = "c".repeat(32);
+    const { genex: _genex, ...alone } = GAME;
+    const key = `41001.${hex}`;
+    const made = linuxGameCommand({ ...alone, practice: { key } }, SESSION);
+    const told: Record<string, string | undefined> = made.env;
+    assert.equal(told.GENEX_LLM_PRACTICE, key);
+    assert.deepEqual([told.GENEX_API_URL, told.GENEX_EMBED_TICKET], [undefined, undefined], "nothing of Genex's own");
+    assert.ok(made.args.includes("41001"), "its helper's port is bridged");
+    assert.ok(!made.args.includes("41000"), "and no port it was not given");
+    const cases: Array<[string, string]> = [
+      ["a helper on a port the bridge does not carry", `43000.${hex}`],
+      ["a key that is not one", "41001.not-a-token"],
+      ["a privileged port", `22.${hex}`],
+    ];
+    for (const [name, bad] of cases) {
+      const command = linuxGameCommand({ ...alone, practice: { key: bad } }, SESSION);
+      const env: Record<string, string | undefined> = command.env;
+      assert.equal(env.GENEX_LLM_PRACTICE, undefined, name);
+      assert.ok(!command.args.includes("41001") && !command.args.includes("43000"), `${name}: nothing is bridged`);
+    }
+    const both = linuxGameCommand({ ...GAME, practice: { key } }, SESSION);
+    const all: Record<string, string | undefined> = both.env;
+    assert.deepEqual([all.GENEX_API_URL, all.GENEX_LLM_PRACTICE], [GAME.genex?.env.GENEX_API_URL, key]);
+  });
+
   it("mounts and reaches nothing a hostile session or request names", () => {
     const hostile: Array<[string, Partial<LinuxGameHost>, Partial<NativeGameRequest>]> = [
       ["a display on another computer", { x11: { display: "evil.example:0", socket: "/tmp/.X11-unix/X0" } }, {}],

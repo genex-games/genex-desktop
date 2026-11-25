@@ -116,14 +116,12 @@ void UGenexModelsSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	// The bridge asks the identity for a token before every request: it is initialized first.
 	UGenexIdentitySubsystem* Identity = Collection.InitializeDependency<UGenexIdentitySubsystem>();
 	Http = MakeShared<FGenexModelsHttp>(Identity);
-	// A game being developed: as Play in editor began, the editor module handed this play a practice
-	// helper on this computer (GenexLocalPractice). The key is taken, so nothing this game starts
-	// inherits it, and the calls go there with nobody signed in. Only an editor build looks: a
-	// packaged game, and so every game a player installed, asks Genex whatever its environment says.
-	std::optional<genex::models::PracticeTarget> Practice;
-#if WITH_EDITOR
-	Practice = genex::models::TakePracticeKey();
-#endif
+	// A game being developed: whoever started this play handed it a practice helper on this computer.
+	// The editor module does as Play in editor begins (GenexLocalPractice), and Genex's desktop app
+	// does for the packaged app it starts from the game's own folder. The key is taken, so nothing
+	// this game starts inherits it, and the calls go there with nobody signed in. A game a player
+	// installed is started by Genex with no key and asks Genex; a play started with no key does too.
+	const std::optional<genex::models::PracticeTarget> Practice = genex::models::TakePracticeKey();
 	if (Practice)
 	{
 		genex::models::HttpBridgeOptions Options = genex::models::HttpBridgeOptionsForPractice(*Practice, Http.Get());
