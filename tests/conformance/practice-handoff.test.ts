@@ -165,6 +165,8 @@ async function studio(options: { calls?: (dir: string) => boolean; mockExitsAfte
   const pids: number[] = [];
   const reloads: string[] = [];
   const queue = new Map<string, Promise<unknown>>();
+  /** The look-again the editor's practice asked for, called by the test in place of a timer; null while none runs. */
+  const looking: { again: (() => void) | null; started: number; ended: number } = { again: null, started: 0, ended: 0 };
   let launches = 0;
   const mock = program({ first: listening(41000, "mock") });
   const dying = `${mock}setTimeout(()=>process.exit(3),${options.mockExitsAfterMs ?? 0});`;
@@ -216,6 +218,14 @@ async function studio(options: { calls?: (dir: string) => boolean; mockExitsAfte
     callsModels: async (dir) => options.calls?.(dir) ?? true,
     page,
     serial: (op) => serial(queue, LIVE, op),
+    again: (check) => {
+      looking.again = check;
+      looking.started += 1;
+      return () => {
+        looking.again = null;
+        looking.ended += 1;
+      };
+    },
     log: (line) => logs.push(line),
   });
   const add = async (project: string) => {
@@ -223,7 +233,7 @@ async function studio(options: { calls?: (dir: string) => boolean; mockExitsAfte
     games.set(project, dir);
     return dir;
   };
-  return { ai, editor, page, logs, pids, reloads, add };
+  return { ai, editor, page, logs, pids, reloads, looking, add };
 }
 
 describe("Live's helper named to the Unreal editor", () => {
@@ -308,6 +318,58 @@ describe("Live's helper named to the Unreal editor", () => {
       assert.equal(ai.state("inn").mode, PreviewAiMode.None);
       assert.deepEqual(ai.runningPids(), []);
       assert.deepEqual(await readdir(path.join(inn, ".studio")), [], "nothing is left in the game's .studio");
+    } finally {
+      await ai.stopAll();
+    }
+  });
+
+  it("names a helper to a shown game once its first model call is written, with no need to show it again", async () => {
+    let calls = false;
+    const { ai, editor, looking, add } = await studio({ calls: () => calls });
+    try {
+      const inn = await add("inn");
+      await editor.show("inn");
+      assert.equal(await handoff(inn), null, "no call yet: no file");
+      looking.again?.();
+      await editor.idle();
+      assert.equal(await handoff(inn), null, "looked at again, still no call");
+      assert.deepEqual(ai.runningPids(), []);
+      calls = true;
+      looking.again?.();
+      await editor.idle();
+      assert.equal(
+        await handoff(inn),
+        `{"key":"${MOCK_KEY}"}`,
+        "the agent wrote the call: the next look names the helper",
+      );
+      assert.equal(ai.state("inn").mode, PreviewAiMode.Practice, "and Live's bar shows");
+      looking.again?.();
+      looking.again?.();
+      await editor.idle();
+      assert.equal(ai.runningPids().length, 1, "later looks start nothing more");
+    } finally {
+      await ai.stopAll();
+    }
+  });
+
+  it("looks again only while a game's card is shown", async () => {
+    const { ai, editor, looking, add } = await studio({ calls: () => false });
+    try {
+      await add("inn");
+      await add("mill");
+      await editor.show("inn");
+      await editor.show("mill");
+      assert.deepEqual([looking.started, looking.ended], [1, 0], "one look-again runs, whichever game is shown");
+      await editor.leave("inn");
+      assert.notEqual(looking.again, null, "a late goodbye from the last game ends nothing");
+      await editor.leave("mill");
+      assert.deepEqual([looking.again, looking.ended], [null, 1], "no card shown: nothing is looked at");
+      await editor.show("mill");
+      await editor.liveStopped();
+      assert.deepEqual([looking.again, looking.started, looking.ended], [null, 2, 2], "nor after Live's Stop");
+      await editor.show("mill");
+      await editor.stopAll();
+      assert.deepEqual([looking.again, looking.ended], [null, 3], "nor once the app quits");
     } finally {
       await ai.stopAll();
     }

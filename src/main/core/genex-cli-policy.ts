@@ -10,7 +10,9 @@
  * items on sale itself after its publish (`local-items.ts`), never an agent. The shop's commands also work on the game's local
  * drafts (`.genex/items/`, made before the game is on Genex): Studio copies them into the run folder
  * and carries a change back (`localItems`). `shop sync`, which uploads them, is Studio's own run after
- * a publish ({@link localSyncRequest}), never the agent's.
+ * a publish ({@link localSyncRequest}), never the agent's. `llm budget` reads what a native game
+ * declares from the folder the CLI runs in, so its row names that declaration (`declaration`) and the
+ * host copies it from the bound game into the run folder (`genex-game-declaration.ts`).
  */
 import { isLocalItemId } from "../../shared/item-draft.ts";
 import { ITEM_DESCRIPTION_MAX, ITEM_TAG_LENGTH_MAX, ITEM_TAGS_MAX, isItemId } from "../../shared/store-items.ts";
@@ -24,6 +26,7 @@ export const GenexCliCommand = {
   LlmStatus: "llm status",
   LlmCancel: "llm cancel",
   LlmBench: "llm bench",
+  LlmBudget: "llm budget",
   ShopList: "shop list",
   ShopAdd: "shop add",
   ShopSet: "shop set",
@@ -46,6 +49,20 @@ export type GenexHostCommand = (typeof GenexHostCommand)[keyof typeof GenexHostC
 /** How a command uses the game's local drafts: it reads them, or it may change them. */
 export const LocalItemsUse = { Read: "read", Change: "change", Sync: "sync" } as const;
 export type LocalItemsUse = (typeof LocalItemsUse)[keyof typeof LocalItemsUse];
+
+/** What `llm budget` does with the AI budget a native game declares. Tool arguments: never rename a value. */
+export const LlmBudgetAction = { Status: "status", Set: "set", Clear: "clear" } as const;
+export type LlmBudgetAction = (typeof LlmBudgetAction)[keyof typeof LlmBudgetAction];
+
+/**
+ * What a game's folder declares for the CLI to read, each by its key: under `genex` in the game's
+ * package.json, else at the top of its genex.json. File keys: never rename a value.
+ */
+export const GameDeclaration = {
+  /** The AI budget a native game's players approve on its Genex page before Play (`llm budget`). */
+  ModelBudget: "modelBudget",
+} as const;
+export type GameDeclaration = (typeof GameDeclaration)[keyof typeof GameDeclaration];
 
 /** Why a call was refused. */
 export const GenexCliRefusalCode = {
@@ -169,8 +186,11 @@ const description = (empty: boolean) => ({ kind: OptionKind.Text, max: ITEM_DESC
 const itemPrice = wholeNumber(0);
 const itemType = { kind: OptionKind.Choice, values: ["consumable", "durable"] } as const;
 
-/** What a command's positional argument is: none, any one line of text, or a store item's id. */
-const Positional = { None: "none", Text: "text", ItemId: "item-id" } as const;
+/**
+ * What a command's positional argument is: none, any one line of text, a store item's id, or one
+ * of the row's own words (`choices`).
+ */
+const Positional = { None: "none", Text: "text", ItemId: "item-id", Choice: "choice" } as const;
 type Positional = (typeof Positional)[keyof typeof Positional];
 
 /**
@@ -182,6 +202,8 @@ interface CommandRow {
   paid: boolean;
   project: boolean;
   positional: Positional;
+  /** The words a `choice` positional takes, exactly as spelled: anything else is refused. */
+  choices?: readonly string[];
   options: Readonly<Record<string, OptionSpec>>;
   required?: readonly string[];
   /**
@@ -198,6 +220,13 @@ interface CommandRow {
    * nobody can buy, so changing or removing it spends and sells nothing.
    */
   freeOnLocalDraft?: boolean;
+  /**
+   * Free when its positional is one of these: the values of a paid row that only read, so they ask
+   * nobody (`llm budget status`).
+   */
+  freeOn?: readonly string[];
+  /** The declaration of the game's folder it reads, which Studio copies into the run folder. */
+  declaration?: GameDeclaration;
   /**
    * It works on the game's local drafts too: Studio copies them into the run folder (and carries a
    * change back), and it runs without a hosted project while the game has none.
@@ -269,6 +298,18 @@ const GENEX_CLI_COMMANDS: Readonly<Record<GenexCliCommand, CommandRow>> = {
     required: [BENCH_CEILING_OPTION],
     renamed: { "max-coins": BENCH_CEILING_OPTION },
     approval: true,
+  },
+  // Sending or withdrawing the declaration changes what the game's public Genex page offers its
+  // players, so the person approves it although it spends nothing (no --user-approved: each player
+  // approves their own budget there); reading it asks nobody.
+  [GenexCliCommand.LlmBudget]: {
+    paid: true,
+    project: true,
+    positional: Positional.Choice,
+    choices: Object.values(LlmBudgetAction),
+    options: {},
+    freeOn: [LlmBudgetAction.Status],
+    declaration: GameDeclaration.ModelBudget,
   },
   [GenexCliCommand.ShopList]: { ...free(true), localItems: LocalItemsUse.Read },
   // A new item is a draft: it spends nothing and nobody can buy it until the person puts it on sale
@@ -361,6 +402,11 @@ export interface GenexCliRequest {
   delivers?: string;
   /** How it uses the game's local drafts (`.genex/items/`); absent when it does not. */
   localItems?: LocalItemsUse;
+  /**
+   * The declaration of the game's folder the CLI reads from the folder it runs in, which Studio
+   * copies into the run folder first (`genex-game-declaration.ts`); absent when it reads none.
+   */
+  declaration?: GameDeclaration;
 }
 
 /**
@@ -547,8 +593,16 @@ function optionsArgv(
   return { argv, gamePaths };
 }
 
+/** A `choice` row's positional: one of the row's own words, exactly as spelled; a missing one is refused too. */
+function choiceValue(command: GenexCliCommand, row: CommandRow, raw: unknown): string {
+  const choices = row.choices ?? [];
+  if (typeof raw === "string" && choices.includes(raw)) return raw;
+  throw refuse(GenexCliRefusalCode.InvalidValue, GENEX_CLI_PROMPT.NeedsChoice(command, choices));
+}
+
 /** The positional argument as argv, when the command takes one. */
 function positionalArgv(command: GenexCliCommand, row: CommandRow, raw: unknown): string[] {
+  if (row.positional === Positional.Choice) return [choiceValue(command, row, raw)];
   const given = raw !== undefined && raw !== "";
   const takes = row.positional !== Positional.None;
   if (!takes && given) throw refuse(GenexCliRefusalCode.InvalidValue, GENEX_CLI_PROMPT.NoPositional(command));
@@ -561,6 +615,16 @@ function positionalArgv(command: GenexCliCommand, row: CommandRow, raw: unknown)
 
 /** The option `budget` would set a spend allowance with, which no Studio run keeps. */
 const BUDGET_ALLOWANCE_OPTION = "assets";
+
+/**
+ * Whether a call asks the person first: a paid row's, unless its positional makes it free (a local
+ * draft's id, or a value that only reads).
+ */
+function asksPerson(row: CommandRow, positional: unknown): boolean {
+  if (!row.paid) return false;
+  if (row.freeOnLocalDraft && isLocalItemId(positional)) return false;
+  return !(typeof positional === "string" && row.freeOn?.includes(positional));
+}
 
 /**
  * The argv for one `genex__cli` or `genex__cli-paid` call, or a typed refusal. `tool.paid` says
@@ -576,9 +640,12 @@ export function genexCliRequest(
   const options = currentOptions(command, row, optionsOf(args.options));
   const setsAllowance = command === GenexCliCommand.Budget && Object.hasOwn(options, BUDGET_ALLOWANCE_OPTION);
   if (setsAllowance) throw refuse(GenexCliRefusalCode.UnknownOption, GENEX_CLI_PROMPT.BudgetAllowance);
-  const paid = row.paid && !(row.freeOnLocalDraft && isLocalItemId(args.args));
-  if (paid && !tool.paid) throw refuse(GenexCliRefusalCode.PaidTool, GENEX_CLI_PROMPT.PaidTool(command));
-  if (!paid && tool.paid) throw refuse(GenexCliRefusalCode.FreeTool, GENEX_CLI_PROMPT.FreeTool(command));
+  // A choice decides which tool runs the call, so it is checked first and the refusal names it.
+  const isChoice = row.positional === Positional.Choice;
+  const spelled = isChoice ? `${command} ${choiceValue(command, row, args.args)}` : command;
+  const paid = asksPerson(row, args.args);
+  if (paid && !tool.paid) throw refuse(GenexCliRefusalCode.PaidTool, GENEX_CLI_PROMPT.PaidTool(spelled));
+  if (!paid && tool.paid) throw refuse(GenexCliRefusalCode.FreeTool, GENEX_CLI_PROMPT.FreeTool(spelled));
   const head = [...command.split(" "), ...positionalArgv(command, row, args.args)];
   const flags = optionsArgv(command, row, options, head.length);
   const argv = [...head, ...flags.argv, ...(paid && row.approval ? [USER_APPROVED_FLAG] : [])];
@@ -590,6 +657,7 @@ export function genexCliRequest(
     ...(flags.gamePaths.length > 0 ? { gamePaths: flags.gamePaths } : {}),
     ...(row.delivers ? { delivers: String(args.args) } : {}),
     ...(row.localItems ? { localItems: row.localItems } : {}),
+    ...(row.declaration ? { declaration: row.declaration } : {}),
   };
 }
 

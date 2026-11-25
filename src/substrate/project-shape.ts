@@ -333,7 +333,23 @@ async function isPlainFolder(dir: string): Promise<boolean> {
 interface UnrealScanLeft {
   files: number;
   bytes: number;
+  /** What an earlier check read of each file, so a file that has not changed is not read again. */
+  seen?: UnrealFilesSeen;
 }
+
+/** One file as a check last read it: its change time and size then, and whether it named the class. */
+interface UnrealFileSeen {
+  mtimeMs: number;
+  size: number;
+  names: boolean;
+}
+
+/**
+ * What earlier checks of one game read, by file path: handed back to
+ * {@link unrealGameCallsPlayTimeModels}, a check repeated while the game is being made reads only
+ * the files that changed since.
+ */
+export type UnrealFilesSeen = Map<string, UnrealFileSeen>;
 
 /** Whether the check has looked at all it may. */
 const scanSpent = (left: UnrealScanLeft): boolean => left.files <= 0 || left.bytes <= 0;
@@ -341,10 +357,15 @@ const scanSpent = (left: UnrealScanLeft): boolean => left.files <= 0 || left.byt
 /** Whether `file` holds the models class's name as plain bytes; a file too large or unreadable does not. */
 async function fileNamesModels(file: string, left: UnrealScanLeft): Promise<boolean> {
   left.files -= 1;
+  const stat = left.seen ? await lstat(file).catch(() => null) : null;
+  const before = left.seen?.get(file);
+  const unchanged = stat !== null && before?.mtimeMs === stat.mtimeMs && before.size === stat.size;
+  if (before && unchanged) return before.names;
   const bytes = await readRegularFile(file, UNREAL_SCAN_MAX_BYTES).catch(() => null);
-  if (bytes === null) return false;
-  left.bytes -= bytes.length;
-  return bytes.includes(UNREAL_MODELS_CLASS, 0, "latin1");
+  if (bytes !== null) left.bytes -= bytes.length;
+  const names = bytes?.includes(UNREAL_MODELS_CLASS, 0, "latin1") ?? false;
+  if (stat) left.seen?.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, names });
+  return names;
 }
 
 /**
@@ -389,10 +410,15 @@ async function unrealProjectNamesModels(project: string, left: UnrealScanLeft): 
  * `.umap` under `Content/`. The project is the game's `unreal/` folder (New game) or the game folder
  * itself (an Unreal project opened as a game). Such a game gets a practice helper named to the
  * editor (`main/core/practice-handoff.ts`). No link is followed, and a file over
- * {@link UNREAL_SCAN_MAX_BYTES} is not read.
+ * {@link UNREAL_SCAN_MAX_BYTES} is not read. With `seen`, what an earlier check of this game read, a
+ * file whose size and change time are the same is not read again.
  */
-export async function unrealGameCallsPlayTimeModels(dir: string): Promise<boolean> {
-  const left: UnrealScanLeft = { files: UNREAL_SCAN_MAX_FILES, bytes: UNREAL_SCAN_MAX_TOTAL_BYTES };
+export async function unrealGameCallsPlayTimeModels(dir: string, seen?: UnrealFilesSeen): Promise<boolean> {
+  const left: UnrealScanLeft = {
+    files: UNREAL_SCAN_MAX_FILES,
+    bytes: UNREAL_SCAN_MAX_TOTAL_BYTES,
+    ...(seen ? { seen } : {}),
+  };
   for (const project of [path.join(dir, UNREAL_PROJECT_FOLDER), dir]) {
     if (await unrealProjectNamesModels(project, left)) return true;
   }
