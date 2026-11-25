@@ -9,6 +9,12 @@ disagrees with this preface, this preface wins.
 - `npx genex llm models`, `llm status` and `llm cancel <id>`: `genex__cli`, for example
   `genex__cli {"command":"llm models","options":{"all":true}}` or
   `genex__cli {"command":"llm cancel","args":"<id>"}`.
+- `npx genex llm usage`: `genex__cli {"command":"llm usage","options":{"days":1}}` (`days` 1 to 90,
+  7 when left out). The published game's model calls as its owner sees them: how many, what
+  players were charged, and the code of each call that failed (`failuresByCode`). It lists only
+  calls Genex admitted. A call refused before that (low credits, a ceiling or a model outside the
+  approved budget, an ended sign-in) is not in it, so no calls after a play that failed means the
+  call was refused, not that it never arrived.
 - `npx genex llm bench "<prompt>" --schema ./answer.schema.json --samples 3 --max-credits <n>`:
   `genex__cli-paid`, with the prompt in `args` and the flags in `options`:
   `{"command":"llm bench","args":"<prompt>","options":{"schema":"answer.schema.json","samples":3,"max-credits":5}}`.
@@ -33,7 +39,7 @@ disagrees with this preface, this preface wins.
 - `llm price` is not available: it reprints a file the CLI leaves in the folder it ran in, and
   Studio removes that folder after every command. Write the bench's numbers into the game when you
   read them, and bench again only when the prompt, the schema or the model changed.
-- Project commands (`llm bench`, `llm status`, `llm cancel`) need the game's hosted project:
+- Project commands (`llm bench`, `llm status`, `llm cancel`, `llm usage`) need the game's hosted project:
   publish a draft with `genex__publish {"operation":"draft"}` first. `init --convert` does not
   apply in Studio.
 
@@ -125,6 +131,23 @@ disagrees with this preface, this preface wins.
   and a one-time call is `native_unsupported`: the game plays its written lines with its label.
   Never start the packaged app yourself from a shell to test its AI, and never report that answer
   as a broken feature.
+- The published game's budget is the declared one, never what the game's own `RequestSpendGrant`
+  options say: the plugin does not send them there. So every `Generate` names a `modelId` that is
+  in the declaration's `models` and a `maxCredits` no higher than its `perCallMaxCredits`, and you
+  change the declaration (`llm budget set`) whenever you change either in the code. A practice play
+  cannot show a mismatch: the helper approves what the game asks for.
+- A call that fails settles `status` `failed` with the reason's code in `error`. The game shows
+  `GenerationErrorMessage(<error>)`, which is a sentence for that code, and writes the code itself
+  to its log (`UE_LOG`), never to the screen. When the person reports a failed play of the
+  published game, read the code before changing anything: ask what the screen said, and run
+  `llm usage` (above). What the codes mean: `grant_insufficient_funds` the player's credits do not
+  cover the call (they top up, the budget resumes); `grant_price_unreasonable` the call's
+  `maxCredits` is above the declared `perCallMaxCredits`; `model_not_available` the `modelId` is
+  not in the declared `models`, or Genex does not serve it; `provider_budget_insufficient` the
+  `maxCredits` is too small for this prompt on this model; `provider_token_limit` the answer was
+  cut off (raise `maxCredits` or pass `maxOutputTokens`; the attempt is charged);
+  `session_revoked` the sign-in that approved the budget ended, so they approve again;
+  `budget_not_approved` nobody approved a budget. Say which one it was, and never guess between them.
 - The final message for an Unreal game that calls a model says in one line that a Play in the
   Unreal editor answers with practice answers until the person presses Use my plan or Use real AI
   above the game in Live (Genex's own Play of the packaged app is answered the same way on a Mac
@@ -194,9 +217,9 @@ These parts of Genex CLI 1.46.2 are left out of the card below because Studio ca
 
 - `llm bench` takes no `system` or `messages` option here. Put the system text and a typical
   history into the bench prompt itself, so the measured size is the real call's.
-- Practice mode (`llm practice`), creator-paid budgets (`llm sponsor`, `sponsored: true`) and
-  `llm usage` are commands Studio does not run. `features.sponsor` may read true on a stand; a game
-  made here still asks the player for the budget.
+- Practice mode (`llm practice`) and creator-paid budgets (`llm sponsor`, `sponsored: true`) are
+  commands Studio does not run. `features.sponsor` may read true on a stand; a game made here
+  still asks the player for the budget.
 - Model calls from a multiplayer server room (`shareWithRooms`, `lendSpendGrantToRoom`,
   `ctx.models`) are not built here. `features.roomCalls` may read true on a stand; a game made here
   calls the model from the player's page.

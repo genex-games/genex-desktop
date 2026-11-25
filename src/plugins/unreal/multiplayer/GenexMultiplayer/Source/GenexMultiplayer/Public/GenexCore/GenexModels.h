@@ -70,9 +70,12 @@ struct Event {
  *  type needs is missing or of another type (BRIDGE.md). */
 GENEX_CORE_API std::vector<Event> ReadEvents(std::string_view drainJson);
 
-/** Two of the platform's sentences (embed-sdk's generationErrorMessage): the one for kNativeUnsupported, and the
- *  general one, which any other code, or none (nullptr), reads as. */
+/** The platform's sentence for a code (embed-sdk's generationErrorMessage, the whole table: GenexModelsSentences.cpp).
+ *  A code the table does not name, or none (nullptr), reads as the general one. */
 GENEX_CORE_API std::string NativeErrorMessage(const std::string* code);
+
+/** Whether the table has a sentence of its own for `code`: it is one of the platform's codes, not a server's free text. */
+GENEX_CORE_API bool HasErrorSentence(std::string_view code);
 
 /** How the calls reach a page. This build's is the native one; a test passes its own. */
 class GENEX_CORE_API Bridge {

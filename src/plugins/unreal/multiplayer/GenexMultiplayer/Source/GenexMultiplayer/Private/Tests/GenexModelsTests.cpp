@@ -220,6 +220,22 @@ bool FGenexModelsTest::RunTest(const FString&)
 		TestTrue(TEXT("the sentence for native_unsupported is the SDK's"), Unsupported != nullptr && genex::models::NativeErrorMessage(&Code) == Unsupported->AsString());
 		TestTrue(TEXT("any other code reads as the SDK's general sentence"),
 			General != nullptr && genex::models::NativeErrorMessage(nullptr) == General->AsString() && genex::models::NativeErrorMessage(&Later) == General->AsString());
+		// The SDK's whole table, code by code, as this engine's compiler built it.
+		const genex::Json* Sentences = Native->Find("sentences");
+		if (TestTrue(TEXT("the vectors carry the SDK's sentence table"), Sentences != nullptr && Sentences->IsObject() && General != nullptr))
+		{
+			int32 Rows = 0;
+			for (const genex::JsonMember& Member : Sentences->Members())
+			{
+				++Rows;
+				const std::string Said = genex::models::NativeErrorMessage(&Member.key);
+				if (!Member.value.IsString() || Said != Member.value.AsString() || Said == General->AsString())
+				{
+					AddError(FString::Printf(TEXT("the sentence for %s is not the SDK's"), UTF8_TO_TCHAR(Member.key.c_str())));
+				}
+			}
+			TestTrue(TEXT("every code of the SDK's table was read"), Rows > 100);
+		}
 	}
 	return true;
 }

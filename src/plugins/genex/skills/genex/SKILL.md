@@ -24,7 +24,7 @@ passages of advice Studio does not ship taken out. Where it disagrees with this 
   options. Studio passes `--out-dir` and `--no-wait` itself, and delivered files land in the game,
   so wire in those local paths. In a Godot game they land in its project (`godot/assets/...`),
   which the game loads as `res://assets/...`.
-- `doctor`, `budget`, `llm models`, `llm status`, `llm cancel`, `shop list`, `shop add`,
+- `doctor`, `budget`, `llm models`, `llm status`, `llm cancel`, `llm usage`, `shop list`, `shop add`,
   `items list` and `items search`: `genex__cli`. `budget --assets` is not available: Studio's own
   asset allowance and the user's approval govern asset spending. `shop add` asks nobody: it makes
   a store item's draft, which spends nothing and sells nothing until Studio puts it on sale with the game's publish,

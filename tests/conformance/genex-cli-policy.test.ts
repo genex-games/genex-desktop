@@ -737,3 +737,67 @@ describe("the AI budget a native game declares (`genex llm budget`)", () => {
     assert.match(refused.message, /llm budget status.*genex__cli;.*llm budget set\|clear.*genex__cli-paid/);
   });
 });
+
+describe("how a game's players used its AI (`genex llm usage`)", () => {
+  it("is a free read of the game's hosted project", () => {
+    const request = genexCliRequest({ command: "llm usage" }, FREE);
+    assert.deepEqual(request.argv, ["llm", "usage"]);
+    assert.equal(request.project, true);
+    assert.equal(request.paid, false);
+  });
+  it("takes the window in days, 1 to 90", () => {
+    assert.deepEqual(genexCliRequest({ command: "llm usage", options: { days: 1 } }, FREE).argv, [
+      "llm",
+      "usage",
+      "--days",
+      "1",
+    ]);
+    assert.deepEqual(genexCliRequest({ command: "llm usage", options: { days: "90" } }, FREE).argv.slice(2), [
+      "--days",
+      "90",
+    ]);
+  });
+  const refused: [string, Record<string, unknown>, { paid: boolean }, GenexCliRefusalCode][] = [
+    ["no days", { command: "llm usage", options: { days: 0 } }, FREE, GenexCliRefusalCode.InvalidValue],
+    [
+      "more days than the CLI keeps",
+      { command: "llm usage", options: { days: 91 } },
+      FREE,
+      GenexCliRefusalCode.InvalidValue,
+    ],
+    [
+      "days that are not a number",
+      { command: "llm usage", options: { days: "week" } },
+      FREE,
+      GenexCliRefusalCode.InvalidValue,
+    ],
+    [
+      "a second flag hidden in the value",
+      { command: "llm usage", options: { days: "7 --all" } },
+      FREE,
+      GenexCliRefusalCode.InvalidValue,
+    ],
+    [
+      "an option it does not take",
+      { command: "llm usage", options: { project: "other" } },
+      FREE,
+      GenexCliRefusalCode.UnknownOption,
+    ],
+    [
+      "the output flag Studio adds itself",
+      { command: "llm usage", options: { json: true } },
+      FREE,
+      GenexCliRefusalCode.ReservedFlag,
+    ],
+    ["the paid tool", { command: "llm usage" }, PAID, GenexCliRefusalCode.FreeTool],
+  ];
+  for (const [name, args, tool, code] of refused) {
+    it(`refuses ${name}`, () => assert.equal(refusal(args, tool).code, code));
+  }
+  it("refuses words after the command, which it does not take", () => {
+    assert.throws(() => genexCliRequest({ command: "llm usage", args: "another-game" }, FREE), GenexCliRefusal);
+  });
+  it("is named among the commands when an agent asks for one Studio does not run", () => {
+    assert.match(refusal({ command: "llm usages" }, FREE).message, /Available:.* llm usage, /);
+  });
+});

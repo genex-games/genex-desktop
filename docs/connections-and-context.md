@@ -1023,6 +1023,9 @@ copies in. `llm price` is refused: it rereads a file from the CLI's folder, whic
 after every command, so the benchmark's answer is the record. A benchmark is not a gate: until one
 runs, a game declares provisional ceilings and ships with its model calls on (the play-time model
 card's preface, [plugins](plugins.md)).
+`llm usage` is free: the owner's read of the published game's model calls (counts per day and
+model, what players were charged, each failed call's code; `days` 1 to 90). It lists calls Genex
+admitted, so a call refused before admission is not in it.
 A native game (an Unreal game, a downloaded one) declares the AI budget its players approve on its
 Genex page before Play: `llm budget` takes its action in `args`. `status` is free and shows what the
 game declares on Genex; `set` (send the game's declaration) and `clear` (withdraw it) change what

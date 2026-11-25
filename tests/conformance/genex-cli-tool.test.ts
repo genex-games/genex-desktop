@@ -170,6 +170,18 @@ describe("a Studio-run Genex CLI command, through an injected sandbox", () => {
     assert.ok(sandbox.seen[0]?.request.command.includes("'llm' 'status'"));
   });
 
+  it("reads how the published game's players used its AI, for the days asked, as JSON", async () => {
+    const p = await profile();
+    await publishedDraft(p, "space-race");
+    const sandbox = fakeSandbox();
+    await service(p, sandbox).run({ command: "llm usage", options: { days: 1 } }, binding(p), { paid: false });
+    const command = sandbox.seen[0]?.request.command ?? "";
+    assert.ok(command.includes("'llm' 'usage' '--days' '1'"), command);
+    assert.ok(command.endsWith("--no-auth --json"), command);
+    assert.doesNotMatch(command, /--user-approved/);
+    assert.deepEqual(JSON.parse(sandbox.seen[0]?.mirrored ?? "null"), { id: "proj_1", slug: "space-race-x1" });
+  });
+
   it("runs a paid command only through the paid tool, with the approval flag Studio adds", async () => {
     const p = await profile();
     await publishedDraft(p, "space-race");

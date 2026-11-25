@@ -27,6 +27,7 @@ export const GenexCliCommand = {
   LlmCancel: "llm cancel",
   LlmBench: "llm bench",
   LlmBudget: "llm budget",
+  LlmUsage: "llm usage",
   ShopList: "shop list",
   ShopAdd: "shop add",
   ShopSet: "shop set",
@@ -269,6 +270,8 @@ const sharedItem = (delivers: boolean): CommandRow => ({
 export const PICTURE_OPTION = "image";
 /** The option setting the most credits one bench attempt may spend, as the pinned CLI names it. */
 const BENCH_CEILING_OPTION = "max-credits";
+/** The longest window `llm usage` reads, in days (the CLI's and the API's own limit). */
+const MAX_USAGE_DAYS = 90;
 
 /**
  * Every command Studio runs. `budget` only reads: its `--assets` allowance lives in the run folder,
@@ -280,6 +283,9 @@ const GENEX_CLI_COMMANDS: Readonly<Record<GenexCliCommand, CommandRow>> = {
   [GenexCliCommand.LlmModels]: free(false, { all: flag }),
   [GenexCliCommand.LlmStatus]: free(true),
   [GenexCliCommand.LlmCancel]: free(true, {}, Positional.Text),
+  // The owner's read of the published game's model calls: counts per day and model, and each
+  // failed call's code. No player is named and no prompt or answer is in it; it spends nothing.
+  [GenexCliCommand.LlmUsage]: free(true, { days: wholeNumber(1, MAX_USAGE_DAYS) }),
   [GenexCliCommand.LlmBench]: {
     paid: true,
     project: true,

@@ -679,6 +679,14 @@ void HttpBridge::Settle(int id, Json result) {
     delta.Set("soFar", *output);
     queue_.Push(std::move(delta));
   }
+  // One line for a call that ended with a code, so whoever reads the log can say why. The code is written only when
+  // it is one of the platform's own (or this plugin's `budget_not_approved`): anything else is a server's text.
+  const Json* error = result.Find("error");
+  if (!succeeded && error != nullptr && error->IsString()) {
+    const std::string& code = error->AsString();
+    const bool named = HasErrorSentence(code) || code == kBudgetNotApproved;
+    Log(LogLevel::Info, "genex models: " + op.call + " ended " + (named ? code : std::string("with a code this plugin has no sentence for")));
+  }
   Resolve(id, op.call, std::move(result));
 }
 
