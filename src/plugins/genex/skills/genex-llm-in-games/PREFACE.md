@@ -190,7 +190,7 @@ gets no such label.
 
 ## Not in Studio yet
 
-These parts of Genex CLI 1.45.2 are left out of the card below because Studio cannot run them yet:
+These parts of Genex CLI 1.46.2 are left out of the card below because Studio cannot run them yet:
 
 - `llm bench` takes no `system` or `messages` option here. Put the system text and a typical
   history into the bench prompt itself, so the measured size is the real call's.
