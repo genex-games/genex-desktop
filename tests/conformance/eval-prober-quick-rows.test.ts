@@ -175,6 +175,31 @@ describe("quick rows", () => {
     assert.equal(inputRow(observation({ bursts: refused })).result, "unknown");
   });
 
+  it("input on a page that never changes without input: one small thing moving is a response, rounding is not", () => {
+    // The known-good mini golf as a live calibration measured it: 120 readings with no change at
+    // all, then a 16 px ball rolling moved the 64x36 mirror by 0.0008 after Space.
+    const stillPage = {
+      preBaseline: buildBaseline(BaselineName.PreGesture, Array<number>(81).fill(0)),
+      postBaseline: buildBaseline(BaselineName.PostEntrance, Array<number>(120).fill(0)),
+    };
+    const ignored = { input: "KeyW", sent: true, samples: 48, maxDiff: 0, cameraMoved: null };
+    const shot = { input: "Space", sent: true, samples: 48, maxDiff: 0.0008, cameraMoved: null };
+    assert.equal(inputRow(observation({ ...stillPage, bursts: [ignored, shot] })).result, "pass");
+
+    const dead = inputRow(observation({ ...stillPage, bursts: [ignored, { ...ignored, input: "Space" }] }));
+    assert.equal(dead.result, "fail", "input that moves nothing still fails");
+    assert.doesNotMatch(dead.detail, /already moving/, "nothing moved without input, and the row does not say it did");
+    // The aim line growing by 8 px measured 2e-6: a few channel steps, not a thing moving.
+    const rounding = { ...shot, maxDiff: 2.3e-6 };
+    assert.equal(inputRow(observation({ ...stillPage, bursts: [ignored, rounding] })).result, "fail");
+    // A page with drift of its own keeps the coarse floor: 0.0008 there is not told from the drift.
+    assert.equal(inputRow(observation({ bursts: [ignored, shot] })).result, "fail");
+    // Too few still readings prove nothing, so they do not lower the floor.
+    const thin = buildBaseline(BaselineName.PostEntrance, Array<number>(6).fill(0));
+    const thinPage = { preBaseline: thin, postBaseline: thin };
+    assert.equal(inputRow(observation({ ...thinPage, bursts: [ignored, shot] })).result, "fail");
+  });
+
   it("evidence frames are gameplay frames on the game's origin, and none at all when gameplay was never reached", () => {
     const frames = [
       frame(1_000, "boot", -1),

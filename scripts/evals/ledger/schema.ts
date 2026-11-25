@@ -88,7 +88,7 @@ export const SEED_PATTERN = /^[0-9a-z]{1,32}$/;
 export const REVIEWER_ID_PATTERN = /^[0-9a-f]{8,32}$/;
 /** An acceptance item id, `<case>-<nn>` (cases.ts numbers items from 01). */
 export const ITEM_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}-\d{2,3}$/;
-/** A prober version, `genex-prober/6+desktop.3+cdn.<digest>`. */
+/** A prober version, `genex-prober/6+desktop.4+cdn.<digest>`. */
 export const PROBER_VERSION_PATTERN = /^[a-z0-9][a-z0-9.+/-]{0,63}$/;
 /** An in-app stop code as the harness spells it. */
 export const STOP_CODE_PATTERN = /^[a-z0-9][a-z0-9_.-]{0,39}$/;

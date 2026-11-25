@@ -20,6 +20,7 @@ import {
   installInterruptReaper,
   LANE_PID_FILE,
   liveGroups,
+  OUTPUT_DRAIN_MS,
   RAIL_KILL_AFTER_MS,
   readLanePid,
   readStreamRecords,
@@ -97,6 +98,8 @@ interface Behaviour {
   mode?: "exit" | "term" | "stubborn";
   /** A group member outlives the leader until SIGTERM. */
   lingers?: boolean;
+  /** A process outside the group keeps the leader's output open: it exits, its output never ends. */
+  holdsOutput?: boolean;
 }
 
 interface Spawned {
@@ -167,9 +170,12 @@ function fakeMachine(behaviour: Behaviour) {
       lingering = behaviour.lingers === true;
       close = (signal) => {
         leaderAlive = false;
+        const code = signal ? null : (behaviour.exitCode ?? 0);
+        setImmediate(() => emitter.emit("exit", code, signal));
+        if (behaviour.holdsOutput) return;
         stdout.end();
         stderr.end();
-        setImmediate(() => emitter.emit("close", signal ? null : (behaviour.exitCode ?? 0), signal));
+        setImmediate(() => emitter.emit("close", code, signal));
       };
       queueMicrotask(() => {
         behaviour.before?.(args, record.cwd);
@@ -400,6 +406,26 @@ describe("supervisor", () => {
     const outcome = await superviseProcess(run(root), machine.deps);
     assert.equal(outcome.railFired, false);
     assert.deepEqual(machine.signals, ["SIGTERM"]);
+  });
+
+  it("ends when the leader exits though a process outside its group keeps its output open", async () => {
+    const root = tempDir();
+    const machine = fakeMachine({ lines: ['{"a":1}'], exitCode: 0, holdsOutput: true });
+    let outcome: Awaited<ReturnType<typeof superviseProcess>> | null = null;
+    void superviseProcess(run(root), machine.deps).then((value) => {
+      outcome = value;
+    });
+    for (let turn = 0; turn < 20 && outcome === null; turn++) {
+      await tick();
+      machine.advance(OUTPUT_DRAIN_MS);
+    }
+    assert.ok(outcome, "the supervisor still waits for output that nothing will close");
+    const ended: Awaited<ReturnType<typeof superviseProcess>> = outcome;
+    assert.equal(ended.exitCode, 0);
+    assert.equal(ended.lines, 1);
+    assert.equal(ended.railFired, false);
+    assert.equal(fs.readFileSync(path.join(root, "stderr.log"), "utf8"), "warming up\n");
+    assert.deepEqual(liveGroups(), []);
   });
 });
 

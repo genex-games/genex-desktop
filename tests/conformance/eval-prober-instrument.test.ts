@@ -3,9 +3,9 @@
  * replayed with no browser. `probeInitSource()` is one self-contained IIFE, so it runs inside a
  * `node:vm` context offering exactly the DOM surface the instrument reaches for: a
  * `Document.prototype` with a real `pointerLockElement` getter to shadow, an
- * `Element.prototype.requestPointerLock` that refuses the way headless Chromium does, a window whose
- * listeners the test fires directly, a WebGPU queue whose writes carry a view matrix, and a manual
- * timer queue so the 500 ms grace period is under the test's control. Ported from genex-demo's
+ * `Element.prototype.requestPointerLock` that counts the calls reaching it (the instrument must
+ * make none: the real one takes the cursor), a window whose listeners the test fires directly, a
+ * WebGPU queue whose writes carry a view matrix, and a manual timer queue. Ported from genex-demo's
  * `prober/instrument.test.ts`.
  */
 import assert from "node:assert/strict";
@@ -13,6 +13,7 @@ import { test } from "node:test";
 import { setImmediate } from "node:timers/promises";
 import vm from "node:vm";
 import { probeInitSource } from "../../scripts/evals/prober/instrument.ts";
+import { MIRROR_CELLS } from "../../scripts/evals/prober/phases/baseline.ts";
 import { yawSweepDeg } from "../../scripts/evals/prober/verdicts.ts";
 
 type Listener = (e: Record<string, unknown>) => void;
@@ -43,10 +44,13 @@ type Harness = {
   readonly timers: Array<{ fn: () => void; ms: number }>;
   readonly flushTimers: () => void;
   readonly element: { requestPointerLock: () => unknown; requestFullscreen?: () => Promise<void> };
+  /** How many calls reached the browser's own `requestPointerLock`, the one that takes the real cursor. */
+  readonly realLockRequests: () => number;
   readonly snapshot: () => {
     pointerLock: Record<string, unknown> & { look: LookSnapshot };
     camera: CameraSnapshot;
     fullscreen: Record<string, unknown>;
+    frames: { mirrorWidth: number; mirrorHeight: number };
   };
   readonly document: { pointerLockElement: unknown; exitPointerLock: () => void };
   /** Set the page clock (`performance.now()`), in ms. */
@@ -86,6 +90,7 @@ function boot(opts: {
   }
   class Document {}
   let realLocked: unknown = null;
+  let realLockRequests = 0;
   Object.defineProperty(Document.prototype, "pointerLockElement", {
     configurable: true,
     get() {
@@ -95,6 +100,7 @@ function boot(opts: {
   let realFullscreen: unknown = null;
   class Element {
     requestPointerLock(): unknown {
+      realLockRequests += 1;
       if (opts.refuse === "reject") {
         return Promise.reject(
           new Error("WrongDocumentError: The root document of this element is not valid for pointer lock."),
@@ -226,6 +232,7 @@ function boot(opts: {
       return e;
     },
     element: new Element(),
+    realLockRequests: () => realLockRequests,
     snapshot: () => probe.snapshot(),
     document: document as Harness["document"],
   };
@@ -233,12 +240,11 @@ function boot(opts: {
 
 const tick = () => setImmediate();
 
-test("a refused request engages the shim, records the refusal and the activation state, and reports the door", async () => {
+test("a request engages the synthetic lock, records the activation state, and reports the door", async () => {
   const h = boot({ refuse: "reject", userActivation: true });
   const ret = h.element.requestPointerLock() as Promise<unknown>;
-  assert.equal(typeof ret.then, "function", "the caller still gets the promise");
-  await ret; // resolved, never re-thrown: the shim granted a lock
-  await tick();
+  assert.equal(h.snapshot().pointerLock.locked, false, "granted a moment later, as a browser grants");
+  await ret; // resolved once the lock is held
   const pl = h.snapshot().pointerLock;
   assert.equal(pl.requested, 1);
   assert.equal(pl.grantedNatively, false);
@@ -246,7 +252,6 @@ test("a refused request engages the shim, records the refusal and the activation
   assert.equal(pl.locked, true);
   assert.equal(pl.userActivationAtRequest, true);
   assert.equal(pl.requestsWithActivation, 1);
-  assert.match(String(pl.lastRefusal), /requestPointerLock rejected: .*WrongDocumentError/);
   assert.equal(h.document.pointerLockElement, h.element, "the shadowed getter reports the synthetic element");
   assert.deepEqual([pl.movesWhileLocked, pl.deltasNative, pl.deltasSupplied], [0, 0, 0], "nothing moved yet");
 });
@@ -311,27 +316,28 @@ test("nothing is counted or patched while no synthetic lock is held, and an exit
   assert.equal(pl.userActivationAtRequest, null, "an absent isActive is null, never false");
 });
 
-test("a request that neither resolves nor rejects is shimmed after the grace period; a native grant is never shimmed", async () => {
-  const hung = boot({ refuse: "hang" });
-  hung.element.requestPointerLock();
-  await tick();
-  assert.equal(hung.snapshot().pointerLock.shimmed, false, "the browser gets its grace period first");
-  assert.equal(hung.timers.length, 1);
-  assert.equal(hung.timers[0].ms, 500);
-  hung.flushTimers();
-  const pl = hung.snapshot().pointerLock;
-  assert.equal(pl.shimmed, true);
-  assert.match(String(pl.lastRefusal), /no pointer lock 500ms after the request/);
-  assert.equal(pl.userActivationAtRequest, null, "no userActivation API on this navigator");
+test("a page's request never reaches the browser, whatever it would answer: the synthetic lock engages at once", async () => {
+  for (const refuse of ["reject", "hang", "grant"] as const) {
+    const h = boot({ refuse, userActivation: true });
+    const ret = h.element.requestPointerLock() as Promise<unknown>;
+    assert.equal(typeof ret.then, "function", `${refuse}: the caller gets a promise`);
+    await ret;
+    await tick();
+    assert.equal(h.realLockRequests(), 0, `${refuse}: the browser's own lock takes the real cursor of whoever is here`);
+    assert.equal(h.timers.length, 0, `${refuse}: no grace period waits on a browser that is never asked`);
+    const pl = h.snapshot().pointerLock;
+    assert.deepEqual(
+      [pl.requested, pl.shimmed, pl.locked, pl.grantedNatively],
+      [1, true, true, false],
+      `${refuse}: requested, shimmed, locked, grantedNatively`,
+    );
+    assert.equal(h.document.pointerLockElement, h.element, `${refuse}: the page sees its element locked`);
+  }
+});
 
-  const granted = boot({ refuse: "grant" });
-  await granted.element.requestPointerLock();
-  await tick();
-  granted.flushTimers();
-  const g = granted.snapshot().pointerLock;
-  assert.equal(g.grantedNatively, true);
-  assert.equal(g.shimmed, false);
-  assert.equal(g.movesWhileLocked, 0, "no shim, no listeners, no counting");
+test("the frame mirror has the cells the change floors are sized in", () => {
+  const { frames } = boot({ refuse: "reject" }).snapshot();
+  assert.equal(frames.mirrorWidth * frames.mirrorHeight, MIRROR_CELLS);
 });
 
 /* ------------------------------------------------ the camera ring + the look record */

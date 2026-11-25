@@ -13,7 +13,7 @@ import { type InstrumentSnapshot, type PageEvents, pointerLockOf, rafOf, webglCo
 import type { LoggedFrame } from "./frame-log.ts";
 import { exposureReport } from "./frames.ts";
 import type { BootVerdict } from "./phases/boot.ts";
-import { appliedBaseline, type PageBaseline } from "./phases/baseline.ts";
+import { appliedBaseline, isStillBaseline, type PageBaseline } from "./phases/baseline.ts";
 import type { EntranceObservation } from "./phases/entrance.ts";
 import type { BurstObservation } from "./phases/input.ts";
 import { type Check, CheckLayer, CheckSource, type Demotion, ShotKind } from "./types.ts";
@@ -269,9 +269,12 @@ function inputVerdict(o: QuickObservation): { result: CheckResult; detail: strin
   if (best > baseline.changeThreshold) {
     return { result: CheckResult.Pass, detail: `Input moved the frame by ${best.toFixed(4)} against ${against}.` };
   }
+  const why = isStillBaseline(baseline)
+    ? "nothing on screen changed without input, and no input changed it by more than the threshold"
+    : "whatever moves on screen was already moving without input";
   return {
     result: CheckResult.Fail,
-    detail: `The biggest response to any input (${best.toFixed(4)}) did not clear ${against}; whatever moves on screen was already moving without input.`,
+    detail: `The biggest response to any input (${best.toFixed(4)}) did not clear ${against}; ${why}.`,
   };
 }
 
