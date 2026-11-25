@@ -2973,6 +2973,9 @@ function claimTheMac(): boolean {
   return true;
 }
 
+/** The one link a fixture launch names (`STUDIO_FIXTURE_GAME_LINK`), handed to it as the system would. */
+const fixtureGameLink = fixtureProviders ? process.env.STUDIO_FIXTURE_GAME_LINK : undefined;
+
 /**
  * The real studio answers `genex://` links: the system starts it, or hands it, each one, and one it
  * was started with waits for the page. A developer or test launch leaves the system's handler alone;
@@ -2981,10 +2984,10 @@ function claimTheMac(): boolean {
 function answerGameLinks(): void {
   // A fixture launch may name one link (`STUDIO_FIXTURE_GAME_LINK`), so what a link opens can be
   // checked through dev control on any system without touching the system's handler.
-  const fixtureLink = fixtureProviders ? process.env.STUDIO_FIXTURE_GAME_LINK : undefined;
-  if (isSmoke || (dev && !fixtureLink)) return;
-  if (dev) gameLinkQueue.arrive(fixtureLink);
-  else {
+  if (isSmoke || (dev && !fixtureGameLink)) return;
+  // A fixture's link arrives once its game is open (`handFixtureLink`): the page that would take
+  // it at start is replaced by the fixture's reload, and the link is handed over only once.
+  if (!dev) {
     // An unpackaged Mac build is Electron's own app, which declares no scheme: it would take the
     // links from an installed Genex, so only Windows and Linux name it with this folder.
     if (app.isPackaged) app.setAsDefaultProtocolClient(GAME_LINK_SCHEME);
@@ -3184,6 +3187,7 @@ async function launchStudio(studio: StudioCore): Promise<StartedStudio | null> {
     if (!booted) return null;
     if (fixture) await activateChatFixture(studio, fixture);
     if (fixture?.project) await openFixtureGame(studio, win, fixture.project);
+    gameLinkQueue.arrive(fixtureGameLink);
     announceReady(userData);
     showFixtureAgentsFailure(userData);
     const view = requirePreview();
