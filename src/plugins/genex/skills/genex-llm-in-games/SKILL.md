@@ -66,10 +66,22 @@ disagrees with this preface, this preface wins.
 - A ceiling also bounds how long an answer may be, so a provisional one needs short answers: the
   prompt states the answer's length, every string in the schema has a `maxLength`, and the call
   passes `maxOutputTokens`. Each ceiling is one named constant, so one edit raises it.
-- A call that ends `provider_token_limit` was cut off because its ceiling is too low for that model:
-  the game plays the written line with its label, and the next call of that prompt declares twice
-  the `maxCredits`, up to the budget's `perCallMaxCredits` (16), for the rest of the session. That is
-  why the provisional budget allows 16 a call while a call starts at 4. A bench settles the figures.
+- A call that ends `provider_token_limit` was cut off, by one of two limits, and the result says
+  which. When the result's `maxCredits` is lower than the `maxCredits` the call declared, the
+  length cut it, not the ceiling, and raising `maxCredits` changes nothing. Most current models
+  think before they write (Gemini 3.8 Flash, GPT-6 Astra and Claude Fable 5.1 always do), the
+  thinking is counted against the call's `maxOutputTokens`, and a game cannot turn it down: there
+  is no thinking setting to pass. So a cap sized for the answer alone (the stand's default is
+  512) can end with no answer at all. Give such a call room: `maxOutputTokens` 2000 to 4000 for a
+  short line on Gemini 3.8 Flash, with the answer's own length still stated in the prompt and the
+  schema's `maxLength`, and work the ceiling rule above again with that number so the call's
+  `maxCredits` and the declared `perCallMaxCredits` fund it. When the two are equal, the
+  ceiling cut it: the next call of that prompt declares twice the `maxCredits`, up to the budget's
+  `perCallMaxCredits` (16), for the rest of the session. A call's `maxCredits` can never be above
+  the approved budget's `perCallMaxCredits`. Either way the game plays the written line with its
+  label, and after two cut-offs in a row for the same prompt it stops calling for the session
+  rather than retry. That is why the provisional budget allows 16 a call while a call starts at 4. A bench
+  settles the figures.
 - Ask for the bench once. When its `genex__cli-paid` card is not approved, declined or left
   unanswered, ask no more and keep the feature on with the provisional ceilings; the final message
   says the ceilings are provisional and that a bench would replace them.
@@ -113,7 +125,7 @@ disagrees with this preface, this preface wins.
   it is published. Never write `GetActiveSpendGrant` alone, and never leave out `disclosure`: a
   request without it is refused `invalid_request`. `GenerateStream` hands its text over whole.
 - A call that wants fields back sends a schema, and the whole options text is one JSON object:
-  `{"grantId":"…","modelId":"<id>","prompt":"…","outputFormat":"json","maxOutputTokens":300,"maxCredits":<n>,"schema":{"type":"object","additionalProperties":false,"required":["line","mood"],"properties":{"line":{"type":"string","maxLength":240},"mood":{"type":"string","enum":["warm","wary","angry"]}}}}`.
+  `{"grantId":"…","modelId":"<id>","prompt":"…","outputFormat":"json","maxOutputTokens":2000,"maxCredits":<n>,"schema":{"type":"object","additionalProperties":false,"required":["line","mood"],"properties":{"line":{"type":"string","maxLength":240},"mood":{"type":"string","enum":["warm","wary","angry"]}}}}`.
   Its answer is the result's `output`, an object. Write the schema exactly this way, because the
   plugin sends it as written and a schema Genex cannot serve is refused `invalid_schema` before
   the call runs (a published game's first call failed this way): `schema` is an object inside the
@@ -176,7 +188,8 @@ disagrees with this preface, this preface wins.
   not in the declared `models`, or Genex does not serve it; `provider_budget_insufficient` the
   `maxCredits` is below what this model's input may cost (the ceiling rule above: raise it and the
   declared `perCallMaxCredits`); `provider_token_limit` the answer was
-  cut off (raise `maxCredits` or pass `maxOutputTokens`; the attempt is charged);
+  cut off (raise `maxOutputTokens` when the result's `maxCredits` is below the call's, else
+  `maxCredits`: the rule above);
   `session_revoked` the sign-in that approved the budget ended, so they approve again;
   `budget_not_approved` nobody approved a budget. Say which one it was, and never guess between them.
 - The final message for an Unreal game that calls a model says in one line that a Play in the

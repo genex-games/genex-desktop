@@ -81,9 +81,10 @@ GENEX_CORE_API bool HasErrorSentence(std::string_view code);
  *  (`provider_http_429`). What a log may repeat of an answer's `error`: a prompt, a token or a sentence never has it. */
 GENEX_CORE_API bool IsErrorCode(std::string_view text);
 
-/** Whether `text` reads as what Genex says beside a refusal's code: its `reason` (a short fixed code or phrase, such as
- *  `ref_not_supported`) or its `at` (a place, such as `schema.properties.mood`): 1 to 300 characters of letters,
- *  digits, spaces and `_.,:$#-`. Anything else in an answer is not kept and never logged. */
+/** Whether `text` reads as what Genex says beside a refusal's code: its `reason` (a short fixed code, such as
+ *  `ref_not_supported`) or its `at` (a place, such as `schema.properties.mood`, or `schema.properties.*` for a
+ *  property whose name is not a plain word): 1 to 300 characters of letters, digits, spaces and `_.,:$#*-`. Anything
+ *  else in an answer is not kept and never logged. */
 GENEX_CORE_API bool IsRefusalReason(std::string_view text);
 
 /** For the game's MAKER, never for a player: what to change when a call ends with `code`, or empty for a code nobody

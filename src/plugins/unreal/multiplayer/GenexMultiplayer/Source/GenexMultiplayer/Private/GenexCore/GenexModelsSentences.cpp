@@ -234,7 +234,7 @@ bool IsRefusalReason(std::string_view text) {
   if (text.empty() || text.size() > 300) return false;
   for (const char c : text) {
     const bool letter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
-    if (!letter && std::string_view(" _.,:$#-").find(c) == std::string_view::npos) return false;
+    if (!letter && std::string_view(" _.,:$#*-").find(c) == std::string_view::npos) return false;
   }
   return true;
 }
@@ -252,7 +252,9 @@ std::string_view ErrorMakerNote(std::string_view code) {
       {"model_not_available", "the modelId is not one of the approved budget's models, or Genex does not serve it"},
       {"provider_budget_insufficient",
        "the call's maxCredits does not cover this model's input reserve; raise maxCredits and the declared perCallMaxCredits"},
-      {"provider_token_limit", "the answer was cut off at its length limit; raise maxCredits or pass maxOutputTokens"},
+      {"provider_token_limit",
+       "the answer was cut off at its length limit, and a model that thinks spends answer tokens on thinking; raise maxOutputTokens, or maxCredits when the "
+       "result's maxCredits equals the call's (a call's maxCredits can never be above the approved budget's perCallMaxCredits)"},
       {"session_revoked", "the sign-in that approved the budget has ended; the player approves it again"},
   };
   for (const Note& note : kNotes) {
