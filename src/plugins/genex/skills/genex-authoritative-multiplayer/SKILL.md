@@ -88,7 +88,7 @@ as listed, for example
 `genex__publish {"operation":"gallery"}`; both carry the room module (above). Other commands map
 onto Studio tools as the `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/SKILL.md v1.46.1 sha256 4df517a65e24c3011cc106a7993ebaaccdb8a9376a0b86f713c3c7f7187f67bb -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-authoritative-multiplayer/SKILL.md v1.46.2 sha256 4df517a65e24c3011cc106a7993ebaaccdb8a9376a0b86f713c3c7f7187f67bb -->
 ---
 name: genex-authoritative-multiplayer
 description: Server-authoritative multiplayer for Genex games — the game's own room module runs on Genex's servers, players only send input, and the server decides every move and hit (lag-compensated). Use for competitive play where cheating matters: ranked PvP, arenas, shooters (first-person, hitscan or dodgeable projectiles), car football, "so nobody can cheat". Casual co-op and hangouts use genex-threejs-multiplayer instead. Load before writing the room module or any networking code.

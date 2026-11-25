@@ -1,11 +1,11 @@
 {
-  "cliVersion": "1.46.1",
-  "skillMdVersion": "1.46.1",
+  "cliVersion": "1.46.2",
+  "skillMdVersion": "1.46.2",
   "url": "https://genex.games/SKILL.md",
   "files": {
     "genex/SKILL.md": {
       "source": "https://genex.games/SKILL.md",
-      "sha256": "79ef38301717caf82006d814c0a0679b356d8a3aefeed73913a991ec07ab474b",
+      "sha256": "35b8d4c64005d739955dcd96c259b6833f2ba8b9d03181b1f57c8ad0a838a379",
       "bytes": 5698
     },
     "genex-threejs-multiplayer/SKILL.md": {
