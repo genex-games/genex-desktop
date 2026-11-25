@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { FolderInspection } from "../../shared/game-project.ts";
 import { reportFirstScreen } from "../analytics/events/launch.ts";
 import { firstScreenReady, useAppLoaderDismissal } from "../app-loader.ts";
 import { firstAsksFromEvents } from "../chat-labels.ts";
@@ -72,7 +73,12 @@ export function useShell() {
     navigation,
     views,
   );
-  useGameLinks(app, ready, chrome.setPlayOpen, navigation.selectGame);
+  const dispatchDialog = dialogs.dispatch;
+  const offerFolder = useCallback(
+    (inspection: FolderInspection) => dispatchDialog({ type: "picked", inspection }),
+    [dispatchDialog],
+  );
+  useGameLinks(app, ready, chrome.setPlayOpen, navigation.selectGame, offerFolder);
   // At home, the keyboard's composer is home's; the chat's stays mounted beneath it.
   const homeUp = room === Room.Home;
   useShellShortcuts(dialogs, chrome, navigation, homeUp ? handoff.homeComposer : handoff.composer);

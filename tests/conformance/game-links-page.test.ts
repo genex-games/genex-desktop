@@ -51,6 +51,7 @@ describe("genex:// links in the studio page", () => {
       openGame: (project: string) => did.push(`game ${project}`),
       openPublish: (project: string) => did.push(`publish ${project}`),
       showBeside: () => did.push("beside"),
+      offerFolder: (folder: string) => did.push(`offer ${folder}`),
     };
     openGameLink({ slug: "midnight-asphalt", project: "midnight" }, shell);
     openGameLink({ slug: "iron-tide" }, shell);
@@ -64,13 +65,15 @@ describe("genex:// links in the studio page", () => {
       openGame: (project: string) => did.push(`game ${project}`),
       openPublish: (project: string) => did.push(`publish ${project}`),
       showBeside: () => did.push("beside"),
+      offerFolder: (folder: string) => did.push(`offer ${folder}`),
     };
     openGameLink({ slug: "", project: "forest", chat: true }, shell);
     openGameLink({ slug: "", chat: true }, shell);
+    openGameLink({ slug: "", chat: true, folder: "/Users/you/Valley" }, shell);
     assert.deepEqual(
       did,
-      ["game forest", "beside"],
-      "no Publish, and neither a page in Play nor a small window for a link without a game",
+      ["game forest", "beside", "offer /Users/you/Valley"],
+      "no Publish, and neither a page in Play nor a small window for a link without a game; a project is offered",
     );
     const fake = fakeStudioApi();
     const waiting: Array<GameLinkOpen | null> = [{ slug: "", project: "forest", chat: true }];

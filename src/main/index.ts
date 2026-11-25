@@ -197,7 +197,7 @@ import {
 } from "./play/gallery.ts";
 import { authorityHostsOf, fastHostsOf, relayHostsOf, startGenexGateway } from "./play/genex-gateway.ts";
 import { type BesideWindowHost, besideWindow } from "./beside-window.ts";
-import { gameHoldingFolder } from "./play/editor-game.ts";
+import { gameHoldingFolder, unrealProjectFolder } from "./play/editor-game.ts";
 import { GAME_LINK_SCHEME, gameLinkIn, gameLinks } from "./play/game-links.ts";
 import { thisComputer } from "./play/native-host.ts";
 import { type InstallOutcome, type NativeInstaller, nativeInstalls } from "./play/native-installs.ts";
@@ -2465,6 +2465,7 @@ function playIpcDeps(studio: StudioCore): PlayIpcDeps {
     gameLinks: gameLinkQueue,
     localGame: (slug) => studio.genexGameOfSlug(slug),
     gameOfFolder: async (folder) => gameHoldingFolder(await studio.games.list(), folder),
+    projectFolder: unrealProjectFolder,
     pageRead: (game) => void reportPageRead(studio, game),
   };
 }

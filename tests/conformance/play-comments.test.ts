@@ -229,6 +229,7 @@ describe("Who may answer a purchase sheet", () => {
       gameLinks: gameLinks(),
       localGame: async () => null,
       gameOfFolder: async () => null,
+      projectFolder: async () => null,
       remix: async () => "",
       remixReady: async () => ({}),
       viewer: () => viewer,

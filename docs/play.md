@@ -615,7 +615,10 @@ is.
   editor's toolbar ([plugins](plugins.md)): `<folder>` is the project's folder in unpadded
   base64url. Main finds the game of the library whose folder holds it by real path
   (`main/play/editor-game.ts`) and the page opens that game's chat, with no Publish and no Play;
-  a folder no game here holds brings the window forward and opens nothing. The chat opens as the
+  a folder no game here holds, when it is an Unreal project's folder (a `.uproject` directly in
+  it, `unrealProjectFolder`), is looked at as Open folder does and the Open Game sheet asks; nothing
+  is written until its button is pressed. Any other folder brings the window forward and opens
+  nothing. A game's chat opens as the
   small window: `studio:window.beside` (`main/beside-window.ts`) makes the studio window narrow, at
   the right edge of its screen and kept over other programs, and the page shows the chat alone
   (`shell/beside-window.ts`, the layout store's `beside`). Full window in the chat's header

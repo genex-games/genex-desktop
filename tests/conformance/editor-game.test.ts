@@ -4,10 +4,10 @@
  * so it is compared by real path and nothing else is done with it.
  */
 import assert from "node:assert/strict";
-import { mkdir, readdir, symlink } from "node:fs/promises";
+import { mkdir, readdir, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { gameHoldingFolder } from "../../src/main/play/editor-game.ts";
+import { gameHoldingFolder, unrealProjectFolder } from "../../src/main/play/editor-game.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 describe("the game an editor's Genex button means", () => {
@@ -49,5 +49,26 @@ describe("the game an editor's Genex button means", () => {
     const before = await readdir(root, { recursive: true });
     for (const folder of hostile) assert.equal(await gameHoldingFolder(games, folder), null, folder);
     assert.deepEqual(await readdir(root, { recursive: true }), before, "nothing is made or changed");
+  });
+
+  it("takes for an Unreal project only a folder with a project file directly in it, and writes nothing", async () => {
+    const root = await tmpDir("editor-project-");
+    const valley = path.join(root, "Valley");
+    await mkdir(path.join(valley, "Content"), { recursive: true });
+    await writeFile(path.join(valley, "Valley.uproject"), "{}");
+    await mkdir(path.join(root, "notes", "Fake.uproject"), { recursive: true });
+    await mkdir(path.join(root, "empty"), { recursive: true });
+    const before = await readdir(root, { recursive: true });
+    assert.equal(await unrealProjectFolder(valley), valley);
+    const hostile = [
+      root, // the project is one level down
+      path.join(root, "notes"), // a folder named like a project file
+      path.join(root, "empty"),
+      path.join(valley, "Valley.uproject"), // a file, not a folder
+      path.join(root, "missing"),
+      "",
+    ];
+    for (const folder of hostile) assert.equal(await unrealProjectFolder(folder), null, folder);
+    assert.deepEqual(await readdir(root, { recursive: true }), before);
   });
 });

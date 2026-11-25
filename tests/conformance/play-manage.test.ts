@@ -506,6 +506,7 @@ describe("Play's manage channels", () => {
       gameLinks: gameLinks(),
       localGame: async () => null,
       gameOfFolder: async () => null,
+      projectFolder: async () => null,
       remix: async () => "",
       remixReady: async () => ({}),
       viewer: () => null,

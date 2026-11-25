@@ -127,19 +127,32 @@ export function gameLinks(): GameLinks {
 /**
  * What the studio page opens for the waiting link: a create link's own game here (`localGame`, the
  * game whose publish record has that link), else, as a game link does, the game's page in Play. An
- * editor link opens the chat of the game its folder is in (`gameOfFolder`), and nothing otherwise.
+ * editor link opens the chat of the game its folder is in (`gameOfFolder`); a project no game here
+ * holds is offered as a new game when it is an engine's project (`projectFolder`), and nothing
+ * otherwise.
  */
 export async function linkOpening(
   target: GameLinkTarget | null,
   localGame: (slug: string) => Promise<string | null>,
   gameOfFolder: (folder: string) => Promise<string | null> = async () => null,
+  projectFolder: (folder: string) => Promise<string | null> = async () => null,
 ): Promise<GameLinkOpen | null> {
   if (!target) return null;
-  if (target.kind === GameLinkKind.Editor) {
-    const game = target.folder ? await gameOfFolder(target.folder).catch(() => null) : null;
-    return game ? { slug: "", project: game, chat: true } : null;
-  }
+  if (target.kind === GameLinkKind.Editor)
+    return target.folder ? editorOpening(target.folder, gameOfFolder, projectFolder) : null;
   if (target.kind !== GameLinkKind.Create) return { slug: target.slug };
   const project = await localGame(target.slug).catch(() => null);
   return project ? { slug: target.slug, project } : { slug: target.slug };
+}
+
+/** What an editor link opens: its game's chat, the offer to open its project as a game, or nothing. */
+async function editorOpening(
+  folder: string,
+  gameOfFolder: (folder: string) => Promise<string | null>,
+  projectFolder: (folder: string) => Promise<string | null>,
+): Promise<GameLinkOpen | null> {
+  const game = await gameOfFolder(folder).catch(() => null);
+  if (game) return { slug: "", project: game, chat: true };
+  const offered = await projectFolder(folder).catch(() => null);
+  return offered ? { slug: "", chat: true, folder: offered } : null;
 }

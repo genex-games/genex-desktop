@@ -95,6 +95,8 @@ export interface PlayIpcDeps {
   localGame(slug: string): Promise<string | null>;
   /** The game of this library whose folder holds `folder`, which an editor's Genex button sent. */
   gameOfFolder(folder: string): Promise<string | null>;
+  /** The real path of `folder` when it is an engine's project folder that could open as a game, else null. */
+  projectFolder(folder: string): Promise<string | null>;
   /**
    * A game's page was read while it is what the window shows: whether it offers this computer an
    * install, for genex.games (`install-reports.ts`). Told, never waited for; one that throws changes
@@ -164,7 +166,7 @@ export function registerPlayIpc(handle: IpcHandle, deps: PlayIpcDeps): void {
   });
   handle("studio:play.close", async () => viewer()?.close());
   handle("studio:play.take-game-link", async () =>
-    linkOpening(deps.gameLinks.take(), deps.localGame, deps.gameOfFolder),
+    linkOpening(deps.gameLinks.take(), deps.localGame, deps.gameOfFolder, deps.projectFolder),
   );
   // Only a read for the page on screen is told: a Recent cover's read is no page anyone saw.
   handle("studio:play.game", async (payload) => {

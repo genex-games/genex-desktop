@@ -252,4 +252,34 @@ describe("a link from the Genex button in a game engine's editor", () => {
     };
     assert.equal(await linkOpening(gameLinkTarget(link("/Users/you/forest/unreal")), never, failing), null);
   });
+
+  it("offers an engine's project no game here holds, by its real folder, and nothing for any other folder", async () => {
+    const never = async () => {
+      throw new Error("an editor link names no game on Genex");
+    };
+    const noGame = async () => null;
+    const asked: string[] = [];
+    const projectFolder = async (folder: string) => {
+      asked.push(folder);
+      return folder === "/Users/you/Valley" ? "/Volumes/work/Valley" : null;
+    };
+    assert.deepEqual(await linkOpening(gameLinkTarget(link("/Users/you/Valley")), never, noGame, projectFolder), {
+      slug: "",
+      chat: true,
+      folder: "/Volumes/work/Valley",
+    });
+    assert.equal(await linkOpening(gameLinkTarget(link("/Users/you")), never, noGame, projectFolder), null);
+    // A game of the library wins: its project is never offered again.
+    const held = async () => "valley";
+    assert.deepEqual(await linkOpening(gameLinkTarget(link("/Users/you/Valley")), never, held, projectFolder), {
+      slug: "",
+      project: "valley",
+      chat: true,
+    });
+    assert.deepEqual(asked, ["/Users/you/Valley", "/Users/you"]);
+    const failing = async () => {
+      throw new Error("the folder cannot be read");
+    };
+    assert.equal(await linkOpening(gameLinkTarget(link("/Users/you/Valley")), never, noGame, failing), null);
+  });
 });
