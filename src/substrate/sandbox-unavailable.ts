@@ -79,21 +79,21 @@ const MESSAGE = {
       'A policy on this PC does not let Genex\'s sandbox user sign in, and Set up could not change that. Ask the PC\'s administrator, or check your security program: the account "srt-sandbox" needs "Allow log on locally" and must not be under "Deny log on locally" (Local Security Policy, User Rights Assignment). Then restart Genex.',
   } satisfies Record<SandboxLaunchCode, string>,
   Setup: {
-    [SandboxSetupFailure.UserNotCreated]: (windowsError: number | null) =>
-      `Windows did not let Genex create the local account its agents run as ("srt-sandbox"${windowsError === null ? "" : `, Windows error ${windowsError}`}). A security program, a work or school device policy, or a local password policy can block new accounts. Check your security program, or ask the PC's administrator to allow it, then press Set up again.`,
-  } satisfies Record<SandboxSetupFailure, (windowsError: number | null) => string>,
+    [SandboxSetupFailure.UserNotCreated]: (windowsError: number) =>
+      `Windows did not let Genex create the local account its agents run as ("srt-sandbox", Windows error ${windowsError}). A security program, a work or school device policy, or a local password policy can block new accounts. Check your security program, or ask the PC's administrator to allow it, then press Set up again.`,
+  } satisfies Record<SandboxSetupFailure, (windowsError: number) => string>,
 } as const;
 
 /**
  * Set up of the protected workspace failed for a reason Genex knows: `code` says which, the
  * message says what to do, then srt-win's own words; `windowsError` is the Win32 error Windows
- * answered, when srt-win named it.
+ * answered, as srt-win's words name it.
  */
 export class SandboxSetupError extends Error {
   readonly code: SandboxSetupFailure;
-  readonly windowsError: number | null;
+  readonly windowsError: number;
 
-  constructor(code: SandboxSetupFailure, windowsError: number | null, detail: string, options?: ErrorOptions) {
+  constructor(code: SandboxSetupFailure, windowsError: number, detail: string, options?: ErrorOptions) {
     super(`${MESSAGE.Setup[code](windowsError)} (${detail})`, options);
     this.code = code;
     this.windowsError = windowsError;
@@ -107,9 +107,12 @@ export class SandboxSetupError extends Error {
  */
 export function windowsSetupError(error: unknown): SandboxSetupError | null {
   if (!(error instanceof Error) || !("code" in error) || error.code !== INSTALL_USER_FAILED) return null;
+  // srt-win's provisioning is more than NetUserAdd: only that call's refusal is an account Windows would not create.
   const windowsError = NET_USER_ADD_REFUSAL.exec(error.message)?.[1];
-  const code = windowsError === undefined ? null : Number(windowsError);
-  return new SandboxSetupError(SandboxSetupFailure.UserNotCreated, code, error.message, { cause: error });
+  if (windowsError === undefined) return null;
+  return new SandboxSetupError(SandboxSetupFailure.UserNotCreated, Number(windowsError), error.message, {
+    cause: error,
+  });
 }
 
 /** A sandboxed command could not start; `code` says why, the message says what to do. */

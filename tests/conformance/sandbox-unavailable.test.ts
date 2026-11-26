@@ -204,12 +204,10 @@ describe("Windows proxy ports", () => {
     assert.match(setup.message, /Windows error 1783/);
     assert.match(setup.message, /security program/);
     assert.match(setup.message, /NetUserAdd\(srt-sandbox\): 1783\)$/, "srt-win's own words stay, for a report");
-    const unnamed = windowsSetupError(
-      srtWin("install_user_failed", "srt-win install: sandbox user provisioning failed: "),
-    );
-    assert.equal(unnamed?.windowsError, null, "srt-win named no Windows error");
-    assert.doesNotMatch(unnamed?.message ?? "", /Windows error/);
     for (const error of [
+      // Provisioning is more than NetUserAdd: a later step's failure is not an account Windows refused.
+      srtWin("install_user_failed", "srt-win install: sandbox user provisioning failed: "),
+      srtWin("install_user_failed", "srt-win install: sandbox user provisioning failed: NetLocalGroupAddMembers: 5"),
       srtWin("install_wfp_failed", "srt-win install: WFP filter install failed: NetUserAdd(srt-sandbox): 1783"),
       new Error("srt-win install: sandbox user provisioning failed: NetUserAdd(srt-sandbox): 1783"),
       "install_user_failed",

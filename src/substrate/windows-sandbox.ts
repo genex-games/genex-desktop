@@ -802,6 +802,11 @@ export interface AncestorGrantDeps {
    * through icacls ({@link FolderAceEdit.ifUnlisted}): the profile. Default: none.
    */
   ifUnlisted?: (dir: string) => boolean;
+  /**
+   * Where a refused {@link ifUnlisted} grant is said (default: nowhere). Only that one goes on: its
+   * check answers "unlisted" when unsure, and the start went on without it before Genex set it.
+   */
+  log?: (line: string) => void;
 }
 
 /**
@@ -828,7 +833,7 @@ export function ancestorGrants(holders: string, deps: AncestorGrantDeps): Ancest
   };
   const ifUnlisted = deps.ifUnlisted ?? (() => false);
   const grantAll = (dirs: readonly string[], sid: string) =>
-    grantEach(edit, dirs, sid, deps.retryDelayMs ?? GRANT_RETRY_MS, ifUnlisted);
+    grantEach(edit, dirs, sid, { retryMs: deps.retryDelayMs ?? GRANT_RETRY_MS, ifUnlisted, log: deps.log });
   // A folder since removed has no grant left to take back, so a removal that fails is let go.
   const takeBackOf = async (records: readonly GrantRecord[], keep: ReadonlySet<string>) => {
     const removals = takeBack(records, keep, ifUnlisted);
@@ -873,17 +878,21 @@ export function ancestorGrants(holders: string, deps: AncestorGrantDeps): Ancest
   };
 }
 
+/** How {@link grantEach} waits, which folders it marks, and where a refusal it lets go is said. */
+interface GrantEachOptions {
+  retryMs: number;
+  ifUnlisted: (dir: string) => boolean;
+  log?: (line: string) => void;
+}
+
 /**
  * Grant `dirs` in one batch, and those refused in another, up to {@link GRANT_ATTEMPTS} in all:
- * another process changing the same folder's entries at that moment can refuse one once.
+ * another process changing the same folder's entries at that moment can refuse one once. A grant
+ * still refused then stops the start, but for an {@link AncestorGrantDeps.ifUnlisted} one, which is
+ * logged.
  */
-async function grantEach(
-  edit: FolderAceEditor,
-  dirs: readonly string[],
-  sid: string,
-  retryMs: number,
-  ifUnlisted: (dir: string) => boolean,
-) {
+async function grantEach(edit: FolderAceEditor, dirs: readonly string[], sid: string, options: GrantEachOptions) {
+  const { ifUnlisted } = options;
   let pending = [...dirs];
   for (let attempt = 1; pending.length > 0; attempt++) {
     const outcomes = await edit(pending.map((dir) => folderEdit(dir, sid, FolderAceOp.Grant, ifUnlisted)));
@@ -891,10 +900,14 @@ async function grantEach(
       const outcome = outcomes[i];
       return outcome?.ok ? [] : [{ dir, error: outcome ? outcome.error : MESSAGE.NoAnswer }];
     });
-    const first = refused[0];
-    if (!first) return;
-    if (attempt >= GRANT_ATTEMPTS) throw new Error(MESSAGE.AncestorGrant(first.dir, first.error));
-    await sleep(retryMs);
+    if (refused.length === 0) return;
+    if (attempt >= GRANT_ATTEMPTS) {
+      const fatal = refused.find((r) => !ifUnlisted(r.dir));
+      if (fatal) throw new Error(MESSAGE.AncestorGrant(fatal.dir, fatal.error));
+      for (const r of refused) options.log?.(MESSAGE.AncestorGrant(r.dir, r.error));
+      return;
+    }
+    await sleep(options.retryMs);
     pending = refused.map((r) => r.dir);
   }
 }
@@ -2514,6 +2527,7 @@ export function windowsSessionFor(
   const ancestors = ancestorGrants(holders, {
     sid: sandboxSidOnce(() => srtAncestorGrantee(options.srtWin)),
     ifUnlisted: (dir) => pathKey(dir) === pathKey(options.profile),
+    log: options.log,
   });
   const log = options.log;
   const srtWinDir = win.dirname(options.srtWin);

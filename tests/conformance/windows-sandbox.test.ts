@@ -343,6 +343,33 @@ describe("read-attributes grants above each root", () => {
     );
   });
 
+  it("logs a profile grant Windows refuses and goes on, where any other refused grant stops the start", async () => {
+    // The profile is granted only where its parent seems not to let the sandbox user list it, and that
+    // check answers no when unsure: a profile Windows will not change must not stop a start that went
+    // on before Genex touched it.
+    const holders = await tmpDir("windows-grants-");
+    const logged: string[] = [];
+    const batches: string[][] = [];
+    const refusesProfile: FolderAceEditor = async (edits) => {
+      batches.push(edits.map((edit) => edit.dir));
+      return edits.map((edit) => (edit.dir === PROFILE ? { ok: false, error: "Access is denied." } : { ok: true }));
+    };
+    const options = {
+      edit: refusesProfile,
+      ifUnlisted: (dir: string) => dir === PROFILE,
+      log: (line: string) => logged.push(line),
+    };
+    await holder(holders, 1, [], options).sync([PROFILE, at("AppData")]);
+    assert.deepEqual(batches, [[PROFILE, at("AppData")], [PROFILE], [PROFILE]], "tried as often as any grant");
+    assert.equal(logged.length, 1);
+    assert.match(logged[0] ?? "", /could not let the sandbox user see the folder .*: Access is denied\./);
+    const refusesAll: FolderAceEditor = async (edits) => edits.map(() => ({ ok: false, error: "Access is denied." }));
+    await assert.rejects(
+      holder(holders, 2, [], { ...options, edit: refusesAll }).sync([PROFILE, at("Music", "x")]),
+      /could not let the sandbox user see the folder .*Music\\x: Access is denied\./,
+    );
+  });
+
   it("records under %LOCALAPPDATA%, shared by every profile and apart from the Squirrel install", () => {
     assert.equal(windowsGrantHolders(PROFILE, at("AppData", "Local")), at("AppData", "Local", "genex-sandbox-grants"));
     assert.equal(windowsGrantHolders(PROFILE, ""), at("AppData", "Local", "genex-sandbox-grants"));
@@ -511,6 +538,7 @@ describe("an entry on one folder alone", () => {
         { phase: FolderAcePhase.Walk, open: "C:\\x is open" },
       ],
       ["a phase belongs to its own edit", '{"phase":"walk","open":null}\n{"ok":true}\n', null],
+      ["on the folder after a scan", '{"phase":"scan"}\n{"phase":"folder"}\n', { phase: FolderAcePhase.Folder }],
     ];
     for (const [label, stdout, expected] of stops) assert.deepEqual(folderAceStop(stdout), expected, label);
   });
@@ -560,6 +588,10 @@ describe("an entry on one folder alone", () => {
       ['{"ok":true,"ms":4}\n{"phase":"walk","open":null}\n', "Windows was still passing the entries down after 30 s"],
       [
         '{"ok":true,"ms":4}\n',
+        "Windows had not finished with the folder itself after 30 s (nothing under it was being walked)",
+      ],
+      [
+        '{"ok":true,"ms":4}\n{"phase":"scan"}\n{"phase":"folder"}\n',
         "Windows had not finished with the folder itself after 30 s (nothing under it was being walked)",
       ],
     ];
@@ -615,7 +647,11 @@ describe("an entry on one folder alone", () => {
         { dir: profile, sid: SID, op: FolderAceOp.Grant, ifUnlisted: true },
         { dir: profile, sid: SID, op: FolderAceOp.Remove, ifUnlisted: true },
       ]),
-      [{ ok: true }, { ok: true }],
+      [
+        { ok: false, error: "icacls would pass the entry down through everything in the folder: left as it is" },
+        { ok: false, error: "icacls would pass the entry down through everything in the folder: left as it is" },
+      ],
+      "said, not passed for done",
     );
     assert.deepEqual(icacls, [], "icacls never walks the profile");
   });

@@ -110,8 +110,9 @@ the setup screen opens on `git-missing`. What differs from macOS:
   writes the rights again, is not Genex's to lift: a refusal after this run's Set up fails with
   `SandboxLaunchCode.LogonRightRefused`, which names the account and the two rights for the PC's
   administrator.
-- A sandbox user Windows will not create (srt-win's `install_user_failed`, its `NetUserAdd` line
-  naming Windows' error; a field PC answered 1783 at every try) fails Set up as
+- A sandbox user Windows will not create (srt-win's `install_user_failed` with a `NetUserAdd` line
+  naming Windows' error; a field PC answered 1783 at every try; another provisioning step's
+  failure keeps srt-win's words alone) fails Set up as
   `SandboxSetupFailure.UserNotCreated` (`windowsSetupError`): the message says a security program,
   a work or school device policy or a password policy can block new accounts and keeps srt-win's
   words for a report, and the start's facts carry the code to analytics once the studio opens.
@@ -138,7 +139,9 @@ the setup screen opens on `git-missing`. What differs from macOS:
   parent does not let Everyone, Authenticated Users or the group list it (`ifUnlisted`): `C:\Users`
   does on every PC Windows set up, which lets the harness read the profile's attributes as it walks
   its own path, and a field PC's did not, so every harness stopped at `lstat` of the profile
-  (EPERM). `icacls` never stands in there, since it would walk the whole profile. Synchronize matters before Windows 11
+  (EPERM). `icacls` never stands in there, since it would walk the whole profile. The check counts
+  only what it is sure of, so a profile grant Windows refuses is logged and the start goes on, as it
+  did before Genex set one; any other refused grant stops it. Synchronize matters before Windows 11
   24H2: Node's stat opens each folder there, and every synchronous open asks for it. The entry names the `sandbox-runtime-users` group
   (`srtAncestorGrantee`; the user itself outside it): every srt host, Claude Code's own shell
   sandbox among them, stamps and cleans up the user's entries, and its cleanup took Genex's on

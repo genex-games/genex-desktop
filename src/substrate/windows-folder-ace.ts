@@ -159,6 +159,8 @@ const MESSAGE = {
   NotReached: (ms: number) => `not reached: the batch ran out of time after ${Math.round(ms / SECOND_MS)} s`,
   /** What a failed icacls call adds when its deadline stopped it. */
   IcaclsStopped: (ms: number) => `stopped after ${Math.round(ms / SECOND_MS)} s (it walks everything under the folder)`,
+  /** An {@link FolderAceEdit.ifUnlisted} edit, which icacls cannot make on the folder alone. */
+  NotWithIcacls: "icacls would pass the entry down through everything in the folder: left as it is",
 } as const;
 
 /** How long one `icacls` call, or one PowerShell batch on the way out, may take. */
@@ -549,6 +551,8 @@ function Edit($edit) {
   # Written alone, the folder would drop its auto-inherited mark, and what is made in it meanwhile
   # would take the deny as its own entry, which no later walk or take-back reaches.
   if ($script:deferred) { $sd.SetFlags([Security.AccessControl.ControlFlags]([int]$sd.ControlFlags -bor [int][Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInheritRequired)) }
+  # Said after any scan, so a batch stopped here says Windows was on this one folder, not still checking.
+  if ($own) { Phase @{ phase = 'folder' } }
   $out = New-Object byte[] $sd.BinaryLength
   $sd.GetBinaryForm($out, 0)
   $ok = $api::SetFileSecurityW($edit.dir, $DACL, $out); $code = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
@@ -637,6 +641,8 @@ export const FolderAcePhase = {
   Scan: "scan",
   /** Passing the path's entries down through everything under it. */
   Walk: "walk",
+  /** Writing the path's own entries, and nothing under it. */
+  Folder: "folder",
 } as const;
 export type FolderAcePhase = (typeof FolderAcePhase)[keyof typeof FolderAcePhase];
 
@@ -755,12 +761,12 @@ async function runIcacls(args: string[]): Promise<void> {
   await run("icacls", args, { timeout: TOOL_TIMEOUT_MS, windowsHide: true });
 }
 
-/** Each edit through `icacls`, one call each, but for a folder icacls must not walk ({@link FolderAceEdit.ifUnlisted}), left as it is. */
+/** Each edit through `icacls`, one call each, but for a folder icacls must not walk ({@link FolderAceEdit.ifUnlisted}), left as it is and refused. */
 async function viaIcacls(icacls: (args: string[]) => Promise<void>, edits: readonly FolderAceEdit[]) {
   const outcomes: FolderAceOutcome[] = [];
   for (const edit of edits) {
     if (edit.ifUnlisted) {
-      outcomes.push({ ok: true });
+      outcomes.push({ ok: false, error: MESSAGE.NotWithIcacls });
       continue;
     }
     try {
@@ -827,7 +833,7 @@ export function folderAceEditorSync(env: NodeJS.ProcessEnv = process.env): Folde
     const outcomes = batchSync(edits, env, TOOL_TIMEOUT_MS);
     if (outcomes) return outcomes;
     return edits.map((edit): FolderAceOutcome => {
-      if (edit.ifUnlisted) return { ok: true };
+      if (edit.ifUnlisted) return { ok: false, error: MESSAGE.NotWithIcacls };
       try {
         execFileSync("icacls", icaclsArgs(edit), options);
         return { ok: true };
