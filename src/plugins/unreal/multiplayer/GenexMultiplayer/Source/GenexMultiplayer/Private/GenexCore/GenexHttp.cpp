@@ -67,6 +67,13 @@ namespace genex {
 
 IHttp::~IHttp() = default;
 
+void IHttp::SendStreamed(HttpRequest request, HttpChunk chunk, HttpDone done) {
+  Send(std::move(request), [piece = std::move(chunk), finish = std::move(done)](HttpResponse response) {
+    if (piece && response.IsSuccess() && !response.body.empty()) piece(response.body);
+    finish(std::move(response));
+  });
+}
+
 ColyseusHttp::ColyseusHttp() = default;
 
 ColyseusHttp::~ColyseusHttp() {
