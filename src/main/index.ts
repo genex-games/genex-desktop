@@ -196,7 +196,7 @@ import {
   TicketDelivery,
 } from "./play/gallery.ts";
 import { authorityHostsOf, fastHostsOf, relayHostsOf, startGenexGateway } from "./play/genex-gateway.ts";
-import { type BesideWindowHost, besideWindow } from "./beside-window.ts";
+import { type BesideWindowHost, besideBounds, besideWindow } from "./beside-window.ts";
 import { gameHoldingFolder, unrealProjectFolder } from "./play/editor-game.ts";
 import { GAME_LINK_SCHEME, gameLinkIn, gameLinks } from "./play/game-links.ts";
 import { thisComputer } from "./play/native-host.ts";
@@ -2772,8 +2772,29 @@ function setStudioWindowBeside(on: boolean): boolean {
     studioBeside.forget();
     return false;
   }
-  studioBeside.set(besideHostOf(window), on);
+  const win = window;
+  studioBeside.set(besideHostOf(win), on);
+  if (studioBeside.on()) void keepBesidePlace(win);
   return studioBeside.on();
+}
+
+/** How long a system may take to settle a window it was just told to move. */
+const BESIDE_SETTLE_MS = 150;
+
+/**
+ * Windows has left the small window short of the place it was asked to take (its first move after
+ * the size limits change): once the move has settled, a window still elsewhere is put there again,
+ * and the log says where it was.
+ */
+async function keepBesidePlace(win: BrowserWindow): Promise<void> {
+  const host = besideHostOf(win);
+  const asked = besideBounds(host.workArea());
+  await sleep(BESIDE_SETTLE_MS);
+  if (win.isDestroyed() || !studioBeside.on()) return;
+  const got = win.getBounds();
+  const placed = got.x === asked.x && got.y === asked.y && got.width === asked.width && got.height === asked.height;
+  studioLog.write("main", `small chat window asked ${JSON.stringify(asked)} got ${JSON.stringify(got)}`);
+  if (!placed) win.setBounds(asked);
 }
 
 /** Is `event` from the studio window's own top frame (not a plugin page or a game)? */
