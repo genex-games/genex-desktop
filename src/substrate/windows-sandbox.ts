@@ -207,8 +207,8 @@ const MESSAGE = {
   WalkFailed: (error: unknown) => `own entries passed down later: ${errorMessage(error)}`,
   OwnEntry: (dir: string, error: unknown) =>
     `could not set the sandbox user's entries on ${dir}: ${errorMessage(error)}`,
-  SlowOwnEdit: (dir: string, ms: number) =>
-    `own entries: ${dir} took ${Math.round(ms / SECOND_MS)} s (once; they stay)`,
+  SlowOwnEdit: (dir: string, ms: number, open?: string) =>
+    `own entries: ${dir} took ${Math.round(ms / SECOND_MS)} s (once; they stay)${open ? `; its walk could not wait: ${open}` : ""}`,
   /** A grant the start did not wait for in full; the walk after the start finishes it. */
   GrantLater: (dir: string, why: string) => `own entries: ${dir} is passed down after the start (${why})`,
   /** Windows refused to start srt-win as the sandbox user; `initialize` runs again after `ms`. */
@@ -222,6 +222,9 @@ const MESSAGE = {
   /** A read grant Windows refused where the sandbox user may read everything it would open anyway ({@link FolderAceOutcome}). */
   UnneededGrant: (dir: string, refused: string) =>
     `own entries: left ${dir} as it is: Windows refused the grant (${refused}), and the sandbox user may already read everything in it`,
+  /** A guard Windows refused where the sandbox user may delete or rename nothing in the folder anyway ({@link FolderAceOutcome}). */
+  UnneededGuard: (dir: string, refused: string) =>
+    `own entries: left ${dir} as it is: Windows refused the guard (${refused}), and the sandbox user may delete or rename nothing in it anyway`,
   /** A write root Windows refused srt-win's grant on ({@link refusedWriteRoot}): the session starts without it. */
   WriteRootLeftOut: (root: string, error: unknown) =>
     `left ${root} out of the sandbox: Windows refused its write grant, so no sandboxed command works in it this launch: ${errorMessage(error)}`,
@@ -345,8 +348,8 @@ async function icaclsListing(dir: string): Promise<string> {
 }
 
 /**
- * Who may open each folder from the profile down to `paths`, as `icacls` lists it: the profile,
- * every folder between it and each path, and the paths, one line per entry. It goes in the log when
+ * Who may open each folder from the profile down to `paths`, as `icacls` lists it: the profile's
+ * parent, the profile, every folder between it and each path, and the paths, one line per entry. It goes in the log when
  * a sandboxed process could not walk to its files, which only a person's own PC has shown.
  */
 export async function windowsAccessReport(
@@ -354,7 +357,8 @@ export async function windowsAccessReport(
   paths: readonly string[],
   listing: (dir: string) => Promise<string> = icaclsListing,
 ): Promise<string[]> {
-  const dirs = [profile, ...ancestorDirs(profile, paths), ...paths];
+  // The profile's parent first: whether it lets the sandbox user list the profile decides whether it may read the profile's attributes.
+  const dirs = [win.dirname(profile), profile, ...ancestorDirs(profile, paths), ...paths];
   const lines: string[] = [];
   for (const dir of dirs) {
     lines.push(...(await listing(dir)).split(/\r?\n/).filter((line) => line.trim()));
@@ -793,6 +797,11 @@ export interface AncestorGrantDeps {
   retryDelayMs?: number;
   /** Whether a folder still exists (default: `existsSync`); one that is gone has nothing to grant. */
   exists?: (dir: string) => boolean;
+  /**
+   * Whether `dir` is granted only where its parent does not let the sandbox user list it, and never
+   * through icacls ({@link FolderAceEdit.ifUnlisted}): the profile. Default: none.
+   */
+  ifUnlisted?: (dir: string) => boolean;
 }
 
 /**
@@ -817,11 +826,12 @@ export function ancestorGrants(holders: string, deps: AncestorGrantDeps): Ancest
     await mkdir(holders, { recursive: true });
     await writeFile(recordFile, JSON.stringify(record));
   };
+  const ifUnlisted = deps.ifUnlisted ?? (() => false);
   const grantAll = (dirs: readonly string[], sid: string) =>
-    grantEach(edit, dirs, sid, deps.retryDelayMs ?? GRANT_RETRY_MS);
+    grantEach(edit, dirs, sid, deps.retryDelayMs ?? GRANT_RETRY_MS, ifUnlisted);
   // A folder since removed has no grant left to take back, so a removal that fails is let go.
   const takeBackOf = async (records: readonly GrantRecord[], keep: ReadonlySet<string>) => {
-    const removals = takeBack(records, keep);
+    const removals = takeBack(records, keep, ifUnlisted);
     if (removals.length > 0) await edit(removals).catch(() => []);
   };
   return {
@@ -853,7 +863,7 @@ export function ancestorGrants(holders: string, deps: AncestorGrantDeps): Ancest
       const record = readRecord(recordFile);
       rmSync(recordFile, { force: true });
       if (!record) return;
-      const removals = takeBack([record], neededBy(otherHolders(holders, self, alive, readRecord).live));
+      const removals = takeBack([record], neededBy(otherHolders(holders, self, alive, readRecord).live), ifUnlisted);
       try {
         if (removals.length > 0) editSync(removals);
       } catch {
@@ -867,10 +877,16 @@ export function ancestorGrants(holders: string, deps: AncestorGrantDeps): Ancest
  * Grant `dirs` in one batch, and those refused in another, up to {@link GRANT_ATTEMPTS} in all:
  * another process changing the same folder's entries at that moment can refuse one once.
  */
-async function grantEach(edit: FolderAceEditor, dirs: readonly string[], sid: string, retryMs: number) {
+async function grantEach(
+  edit: FolderAceEditor,
+  dirs: readonly string[],
+  sid: string,
+  retryMs: number,
+  ifUnlisted: (dir: string) => boolean,
+) {
   let pending = [...dirs];
   for (let attempt = 1; pending.length > 0; attempt++) {
-    const outcomes = await edit(pending.map((dir) => ({ dir, sid, op: FolderAceOp.Grant })));
+    const outcomes = await edit(pending.map((dir) => folderEdit(dir, sid, FolderAceOp.Grant, ifUnlisted)));
     const refused = pending.flatMap((dir, i) => {
       const outcome = outcomes[i];
       return outcome?.ok ? [] : [{ dir, error: outcome ? outcome.error : MESSAGE.NoAnswer }];
@@ -888,8 +904,22 @@ function neededBy(records: readonly GrantRecord[]): Set<string> {
   return new Set(records.flatMap((record) => record.dirs.map(pathKey)));
 }
 
+/** One folder's grant or take-back, marked {@link FolderAceEdit.ifUnlisted} where `ifUnlisted` says. */
+function folderEdit(
+  dir: string,
+  sid: string,
+  op: FolderAceEdit["op"],
+  ifUnlisted: (dir: string) => boolean,
+): FolderAceEdit {
+  return ifUnlisted(dir) ? { dir, sid, op, ifUnlisted: true } : { dir, sid, op };
+}
+
 /** The removals that take back each record's grants on the folders `keep` does not name, once each. */
-function takeBack(records: readonly GrantRecord[], keep: ReadonlySet<string>): FolderAceEdit[] {
+function takeBack(
+  records: readonly GrantRecord[],
+  keep: ReadonlySet<string>,
+  ifUnlisted: (dir: string) => boolean = () => false,
+): FolderAceEdit[] {
   const seen = new Set<string>();
   const edits: FolderAceEdit[] = [];
   for (const record of records) {
@@ -897,7 +927,7 @@ function takeBack(records: readonly GrantRecord[], keep: ReadonlySet<string>): F
       const key = `${pathKey(dir)}|${record.sid}`;
       if (keep.has(pathKey(dir)) || seen.has(key)) continue;
       seen.add(key);
-      edits.push({ dir, sid: record.sid, op: FolderAceOp.Remove });
+      edits.push(folderEdit(dir, record.sid, FolderAceOp.Remove, ifUnlisted));
     }
   }
   return edits;
@@ -1129,20 +1159,24 @@ function setsEntry(edit: FolderOwnEdit): boolean {
   return edit.deny !== null || edit.guard || edit.grant !== null;
 }
 
+/** What the log says of an edit Windows refused where it was not needed: a deny, a guard or a read grant. */
+function unneededNote(edit: FolderOwnEdit): (dir: string, refused: string) => string {
+  if (edit.deny !== null) return MESSAGE.UnneededDeny;
+  return edit.grant === null ? MESSAGE.UnneededGuard : MESSAGE.UnneededGrant;
+}
+
 /**
- * What the log says about one batch: each deny or read grant Windows refused where none was
- * needed, and each other edit Windows took long over (a first walk of a large folder).
+ * What the log says about one batch: each deny, guard or read grant Windows refused where none was
+ * needed, and each other edit Windows took long over (a first walk of a large folder, and why it
+ * could not wait).
  */
 function editNotes(edits: readonly FolderOwnEdit[], outcomes: readonly FolderAceOutcome[]): string[] {
   return edits.flatMap((one, i) => {
     const outcome = outcomes[i];
     if (!outcome?.ok) return [];
-    if (outcome.refused !== undefined) {
-      const unneeded = one.deny === null ? MESSAGE.UnneededGrant : MESSAGE.UnneededDeny;
-      return [unneeded(one.dir, outcome.refused)];
-    }
+    if (outcome.refused !== undefined) return [unneededNote(one)(one.dir, outcome.refused)];
     const slow = (outcome.ms ?? 0) >= SLOW_OWN_EDIT_MS;
-    return slow ? [MESSAGE.SlowOwnEdit(one.dir, outcome.ms ?? 0)] : [];
+    return slow ? [MESSAGE.SlowOwnEdit(one.dir, outcome.ms ?? 0, outcome.open)] : [];
   });
 }
 
@@ -1790,9 +1824,7 @@ export class WindowsSandboxSession {
   async refreshAncestors(): Promise<void> {
     const applied = this.#applied;
     if (!applied) return;
-    await this.#deps.ancestors.sync(
-      ancestorDirs(this.#deps.profile, [...applied.write, ...applied.read], this.#deps.dataRoot),
-    );
+    await this.#deps.ancestors.sync(this.#aboveRoots(applied));
   }
 
   /** Resolves once no regrant is queued or being applied (tests, quit). */
@@ -2085,12 +2117,29 @@ export class WindowsSandboxSession {
    */
   async #grantAncestors(grants: WindowsGrants): Promise<void> {
     try {
-      const dirs = ancestorDirs(this.#deps.profile, [...grants.write, ...grants.read], this.#deps.dataRoot);
+      const dirs = this.#aboveRoots(grants);
       await this.#timed("folders above the grants", () => this.#deps.ancestors.sync(dirs));
     } catch (error) {
       await this.#deps.runtime.reset().catch(() => {});
       throw error;
     }
+  }
+
+  /**
+   * The folders that get the read-attributes grant above `grants`: the profile, when a root is in
+   * it, then each folder between ({@link ancestorDirs}). The harness walks its own path from the
+   * drive down, and Windows lets it read the profile's attributes only through `C:\Users`, which
+   * lets everyone list it on every PC Windows set up; a field PC's did not, and every harness
+   * stopped at `lstat` of the profile (EPERM). So the profile's grant is set only where its parent
+   * does not let the sandbox user list it ({@link AncestorGrantDeps.ifUnlisted}).
+   */
+  #aboveRoots(grants: WindowsGrants): string[] {
+    const { profile } = this.#deps;
+    const roots = [...grants.write, ...grants.read];
+    // As every folder above a root: one that is a root, or inside one, has the root's own grant.
+    const covered = roots.some((root) => insideWindowsPath(root, profile));
+    const inProfile = !covered && roots.some((root) => insideWindowsPath(profile, root));
+    return [...(inProfile ? [profile] : []), ...ancestorDirs(profile, roots, this.#deps.dataRoot)];
   }
 
   /** The session's runtime config, with the grants and denies routed as the last apply routed them. */
@@ -2462,7 +2511,10 @@ export function windowsSessionFor(
   const existing = sessions.get(runtime);
   if (existing) return existing;
   const holders = windowsGrantHolders(options.profile);
-  const ancestors = ancestorGrants(holders, { sid: sandboxSidOnce(() => srtAncestorGrantee(options.srtWin)) });
+  const ancestors = ancestorGrants(holders, {
+    sid: sandboxSidOnce(() => srtAncestorGrantee(options.srtWin)),
+    ifUnlisted: (dir) => pathKey(dir) === pathKey(options.profile),
+  });
   const log = options.log;
   const srtWinDir = win.dirname(options.srtWin);
   const launchDirs = insideWindowsPath(options.installDir, srtWinDir)

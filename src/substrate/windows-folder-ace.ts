@@ -64,6 +64,12 @@ export interface FolderAceEdit {
   dir: string;
   sid: string;
   op: typeof FolderAceOp.Grant | typeof FolderAceOp.Remove;
+  /**
+   * A folder that holds so much that `icacls`, which walks everything under it, never stands in
+   * for the script (the profile): the fallback leaves it as it is. A grant on it is set only where
+   * its parent does not already let the SID list it, which lets it read the folder's attributes.
+   */
+  ifUnlisted?: true;
 }
 
 /** When an own edit passes the path's entries down through everything under it. */
@@ -102,14 +108,15 @@ export interface FolderOwnEdit {
 
 /**
  * What became of one edit: done (and how long Windows took, for an edit that passed entries
- * down, and `deferred` when it left that walk for later, {@link OwnWalk}), or the reason it was
- * refused; `timedOut` when the batch ran out of time before it. A deny Windows refused with
- * ERROR_ACCESS_DENIED on a path the sandbox user can open nothing at or under anyway, or a read
- * grant refused so where it may already read everything the grant would open (Program Files), is
- * done without it, and `refused` carries Windows' words.
+ * down, and `deferred` when it left that walk for later, {@link OwnWalk}, or `open` saying why its
+ * walk could not wait), or the reason it was refused; `timedOut` when the batch ran out of time
+ * before it. A deny Windows refused with ERROR_ACCESS_DENIED on a path the sandbox user can open
+ * nothing at or under anyway, a read grant refused so where it may already read everything the
+ * grant would open (Program Files), or a guard refused so on a folder whose entries let the sandbox
+ * user delete nothing in it anyway (a profile), is done without it, and `refused` carries Windows' words.
  */
 export type FolderAceOutcome =
-  | { ok: true; ms?: number; deferred?: true; refused?: string }
+  | { ok: true; ms?: number; deferred?: true; refused?: string; open?: string }
   | { ok: false; error: string; timedOut?: true };
 
 /** Applies edits in order and answers one outcome per edit; never throws. */
@@ -138,7 +145,15 @@ export type FolderOwnEditorSync = (edits: readonly FolderOwnEdit[]) => FolderAce
 const MESSAGE = {
   /** A refusal the script gave no words for. */
   Refused: "refused",
-  TimedOut: (ms: number) => `Windows was still passing the entries down after ${Math.round(ms / SECOND_MS)} s`,
+  /** A batch stopped while Windows passed an edit's entries down; `open` says why that walk could not wait. */
+  TimedOut: (ms: number, open?: string) =>
+    `Windows was still passing the entries down after ${Math.round(ms / SECOND_MS)} s${open ? ` (it could not wait: ${open})` : ""}`,
+  /** A batch stopped while the script checked whether a walk could wait ({@link OwnWalk.Later}). */
+  StillChecking: (ms: number) =>
+    `Genex was still checking what is under the folder after ${Math.round(ms / SECOND_MS)} s, to leave its walk for later`,
+  /** A batch stopped on an edit that walks nothing: Windows was still reading or writing that one folder. */
+  StillOnFolder: (ms: number) =>
+    `Windows had not finished with the folder itself after ${Math.round(ms / SECOND_MS)} s (nothing under it was being walked)`,
   /** A folder-only batch stopped for time: its edits walk nothing, so PowerShell itself was slow. */
   PowerShellSlow: (ms: number) => `PowerShell had not finished after ${Math.round(ms / SECOND_MS)} s`,
   NotReached: (ms: number) => `not reached: the batch ran out of time after ${Math.round(ms / SECOND_MS)} s`,
@@ -211,6 +226,8 @@ $DENIED = @{ read = 0x1F01FF; write = 0x10156 }
 # write, execute and DELETE, without FILE_DELETE_CHILD, so a denied file in it cannot be deleted).
 $GRANTED = @{ read = 0x1200A9; modify = 0x1301BF }
 $DELETE_CHILD = 0x40
+# FILE_LIST_DIRECTORY: on a folder, it lets the holder read the attributes of what is in it.
+$LIST_DIRECTORY = 0x1
 $ACCESS_DENIED = 5
 # ObjectInherit | ContainerInherit: an entry the path passes down.
 $INHERITS = 3
@@ -309,16 +326,23 @@ function OpensNothing($sd) {
 # read, or anything else unsure, answers no. Inline on purpose, but for the judging of a
 # descriptor not seen yet: a PowerShell function call per entry more than doubled the time.
 function ClosedBelow($dir) {
+  Phase @{ phase = 'scan' }
   $folders = New-Object Collections.Generic.Stack[string]
   $folders.Push($dir)
   $judged = New-Object Collections.Generic.HashSet[string]
   $needed = 0
   while ($folders.Count -gt 0) {
     foreach ($item in (New-Object IO.DirectoryInfo $folders.Pop()).EnumerateFileSystemInfos()) {
-      if (-not $api::GetFileSecurityW($item.FullName, $OWNER_AND_DACL, $SCAN_BUFFER, $SCAN_BUFFER.Length, [ref]$needed)) { return $false }
+      if (-not $api::GetFileSecurityW($item.FullName, $OWNER_AND_DACL, $SCAN_BUFFER, $SCAN_BUFFER.Length, [ref]$needed)) {
+        $script:openEntry = "Genex could not read who may open $($item.FullName)"
+        return $false
+      }
       $descriptor = [Convert]::ToBase64String($SCAN_BUFFER, 0, $needed)
       if (-not $judged.Contains($descriptor)) {
-        if (-not (OpensNothing (New-Object Security.AccessControl.RawSecurityDescriptor($SCAN_BUFFER, 0)))) { return $false }
+        if (-not (OpensNothing (New-Object Security.AccessControl.RawSecurityDescriptor($SCAN_BUFFER, 0)))) {
+          $script:openEntry = "$($item.FullName) is open to someone the sandbox user may be"
+          return $false
+        }
         [void]$judged.Add($descriptor)
       }
       $folder = ($item.Attributes -band [IO.FileAttributes]'Directory, ReparsePoint') -eq [IO.FileAttributes]::Directory
@@ -375,20 +399,43 @@ function OpenAt($dir, $sid) {
   $read = $GRANTED.read
   return (($self -band $read) -eq $read) -and (($files -band $read) -eq $read) -and (($folders -band $read) -eq $read)
 }
+# Whether the sandbox user may delete or rename what is in the folder without a guard: an allow
+# that applies to the folder itself gives FILE_DELETE_CHILD (FILE_ALL_ACCESS and GENERIC_ALL among
+# it) to anyone the sandbox user may be (anyone but Unreached), or the folder's owner is such a
+# one, who may give it that. Anything unsure answers yes. A profile, whose entries give only
+# SYSTEM, the Administrators and its owner anything, answers no.
+function DeletesIn($dir) {
+  $needed = 0
+  if (-not $api::GetFileSecurityW($dir, $OWNER_AND_DACL, $SCAN_BUFFER, $SCAN_BUFFER.Length, [ref]$needed)) { return $true }
+  $sd = New-Object Security.AccessControl.RawSecurityDescriptor($SCAN_BUFFER, 0)
+  if ($null -eq $sd.DiscretionaryAcl -or $UNREACHED -notcontains $sd.Owner) { return $true }
+  foreach ($ace in $sd.DiscretionaryAcl) {
+    if ($ace -isnot [Security.AccessControl.QualifiedAce]) { return $true }
+    if ($ace.AceQualifier -ne [Security.AccessControl.AceQualifier]::AccessAllowed) { continue }
+    if (([int]$ace.AceFlags -band $INHERIT_ONLY) -ne 0) { continue }
+    if (Unreached $ace.SecurityIdentifier) { continue }
+    if (((Mapped $ace.AccessMask) -band $DELETE_CHILD) -ne 0) { return $true }
+  }
+  return $false
+}
 # Whether a refused edit was not needed: Windows refused it with ERROR_ACCESS_DENIED (the person
 # may not change that path's entries, as security software or another owner can leave a browser
-# profile, and as Program Files is for every standard user), and either it denies where the
-# sandbox user can open nothing at or under the path anyway (ClosedAt), or it grants reading where
-# the sandbox user may already read everything the grant would open (OpenAt). The edit stays
-# wanted, so every later start tries it again and checks again.
+# profile, as Program Files is for every standard user, and as a field PC's profile folder was even
+# with WRITE_DAC), and either it denies where the sandbox user can open nothing at or under the
+# path anyway (ClosedAt), or it grants reading where the sandbox user may already read everything
+# the grant would open (OpenAt), or it guards a folder in which the sandbox user may delete nothing
+# anyway (DeletesIn). The edit stays wanted, so every later start tries it again and checks again.
 function Unneeded($edit, $refusal) {
   $accessDenied = ($refusal -is [ComponentModel.Win32Exception]) -and $refusal.NativeErrorCode -eq $ACCESS_DENIED
   if (-not ($accessDenied -and $edit.op -eq '${FolderAceOp.Own}')) { return $false }
   $deny = $edit.deny -and -not $edit.grant
   $read = ($edit.grant -eq '${GrantAccess.Read}') -and -not $edit.deny -and -not $edit.guard
+  # A guard alone: an edit that would also take back an allow Genex passed down is still needed.
+  $guard = $edit.guard -and -not $edit.deny -and -not $edit.grant -and -not $edit.allows
   try {
     if ($deny) { return ClosedAt $edit.dir }
     if ($read) { return OpenAt $edit.dir $edit.sid }
+    if ($guard) { return -not (DeletesIn $edit.dir) }
   } catch {
     return $false
   }
@@ -399,8 +446,14 @@ function Unneeded($edit, $refusal) {
 # (ClosedBelow). The sandbox user can then open nothing under the path with or without the
 # walk, so the path alone is written now, which everything made in it later inherits.
 function WalkCanWait($dir, $before, $acl) {
-  if ($before -or (PassesAllowDown $acl)) { return $false }
-  try { $script:closedBelow = ClosedBelow $dir } catch { $script:closedBelow = $false }
+  if ($before -or (PassesAllowDown $acl)) {
+    $script:openEntry = 'the folder passes an allow down to someone the sandbox user may be'
+    return $false
+  }
+  try { $script:closedBelow = ClosedBelow $dir } catch {
+    $script:openEntry = "Genex could not list what is under it: $($_.Exception.Message)"
+    $script:closedBelow = $false
+  }
   return $script:closedBelow
 }
 # The SID's denies (and, with allows set, its passed-down allows) made exactly the edit's: denies
@@ -440,6 +493,33 @@ function WriteTree($dir, $sd) {
   $code = $api::SetNamedSecurityInfoW($dir, $SE_FILE_OBJECT, $info, [IntPtr]::Zero, [IntPtr]::Zero, $bytes, [IntPtr]::Zero)
   if ($code -ne 0) { throw (Refused $code) }
 }
+# Whether the folder's parent lets the SID list it, which lets it read the attributes of what is
+# in it: an allow on the parent itself gives FILE_LIST_DIRECTORY to Everyone, Authenticated Users or
+# the SID, and no deny there names anyone but Unreached. BUILTIN\\Users does not count: a PC where the
+# sandbox user is not effectively one of them is what a grant asked for this way is for. Anything
+# unsure answers no. C:\\Users lets Everyone list it on every PC Windows set up.
+function ListedIn($dir, $sid) {
+  $parent = [IO.Path]::GetDirectoryName($dir)
+  if (-not $parent) { return $false }
+  $needed = 0
+  if (-not $api::GetFileSecurityW($parent, $OWNER_AND_DACL, $SCAN_BUFFER, $SCAN_BUFFER.Length, [ref]$needed)) { return $false }
+  $acl = (New-Object Security.AccessControl.RawSecurityDescriptor($SCAN_BUFFER, 0)).DiscretionaryAcl
+  if ($null -eq $acl) { return $false }
+  $listers = $LISTERS + @($sid)
+  $listed = $false
+  foreach ($ace in $acl) {
+    if ($ace -isnot [Security.AccessControl.QualifiedAce]) { return $false }
+    if ($ace.AceQualifier -ne [Security.AccessControl.AceQualifier]::AccessAllowed) {
+      if (Unreached $ace.SecurityIdentifier) { continue }
+      return $false
+    }
+    if (([int]$ace.AceFlags -band $INHERIT_ONLY) -ne 0) { continue }
+    if ($ace.AceType -ne [Security.AccessControl.AceType]::AccessAllowed) { continue }
+    if ($listers -notcontains $ace.SecurityIdentifier) { continue }
+    if (((Mapped $ace.AccessMask) -band $LIST_DIRECTORY) -ne 0) { $listed = $true }
+  }
+  return $listed
+}
 function Edit($edit) {
   $needed = 0
   $ok = $api::GetFileSecurityW($edit.dir, $DACL, $null, 0, [ref]$needed); $code = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
@@ -453,11 +533,18 @@ function Edit($edit) {
   # No DACL lets everyone in: there is nothing to add an entry to, and a deny must not pass for done.
   if ($null -eq $acl) { if ($own) { throw 'the path has no DACL' } else { return } }
   $sid = New-Object Security.Principal.SecurityIdentifier ([string]$edit.sid)
-  $how = if ($own) { Own $acl $sid $edit } elseif ($edit.op -eq '${FolderAceOp.Grant}') { Grant $acl $sid } else { Remove $acl $sid }
+  $grant = $edit.op -eq '${FolderAceOp.Grant}'
+  $how = if ($own) { Own $acl $sid $edit } elseif ($grant -and $edit.ifUnlisted -and (ListedIn $edit.dir $sid)) { 'none' } elseif ($grant) { Grant $acl $sid } else { Remove $acl $sid }
   if ($how -eq 'none' -and $edit.walk -eq '${OwnWalk.Again}') { $how = 'tree' }
   if ($how -eq 'none') { return }
   $sd.DiscretionaryAcl = $acl
-  if ($how -eq 'tree') { WriteTree $edit.dir $sd; return }
+  if ($how -eq 'tree') {
+    # Said before the walk, so a batch stopped during it says what Windows was doing, and why it could not wait.
+    Phase @{ phase = 'walk'; open = $script:openEntry }
+    $script:walked = $true
+    WriteTree $edit.dir $sd
+    return
+  }
   $script:deferred = $how -eq 'deferred'
   # Written alone, the folder would drop its auto-inherited mark, and what is made in it meanwhile
   # would take the deny as its own entry, which no later walk or take-back reaches.
@@ -473,6 +560,8 @@ function Answer($json) {
   $stdout.Write($bytes, 0, $bytes.Length)
   $stdout.Flush()
 }
+# A line that says what the edit under way is doing (a scan or a walk), which no outcome line answers.
+function Phase($what) { Answer ((ConvertTo-Json -InputObject $what -Compress) + [char]10) }
 # A deny for the running user, or a group it is in, would lock the person out of their own files.
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $held = @($identity.User) + @($identity.Groups)
@@ -480,6 +569,8 @@ $held = @($identity.User) + @($identity.Groups)
 $UNREACHED = @((New-Object Security.Principal.SecurityIdentifier 'S-1-5-18'), (New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'), $identity.User)
 # Everyone, Authenticated Users and BUILTIN\\Users: an allow for them reaches the sandbox user (OpenAt).
 $REACHES = @('S-1-1-0', 'S-1-5-11', 'S-1-5-32-545' | ForEach-Object { New-Object Security.Principal.SecurityIdentifier $_ })
+# Everyone and Authenticated Users: an allow for them on a folder's parent reaches the sandbox user whatever its groups (ListedIn).
+$LISTERS = @($REACHES[0], $REACHES[1])
 foreach ($edit in @($request)) {
   if ($edit.op -eq '${FolderAceOp.Own}' -and ($held -contains (New-Object Security.Principal.SecurityIdentifier ([string]$edit.sid)))) {
     Answer '{"refused":"the running user holds this SID"}'
@@ -492,11 +583,14 @@ foreach ($edit in @($request)) {
   $watch = [Diagnostics.Stopwatch]::StartNew()
   $script:deferred = $false
   $script:closedBelow = $false
+  $script:openEntry = $null
+  $script:walked = $false
   try {
     $null = Edit $edit
-    # How long Windows took over an own edit, which may pass entries down a large folder.
+    # How long Windows took over an own edit, which may pass entries down a large folder, and why a walk could not wait.
     if ($script:deferred) { $outcome = @{ ok = $true; ms = $watch.ElapsedMilliseconds; deferred = $true } }
     elseif ($edit.op -eq '${FolderAceOp.Own}') { $outcome = @{ ok = $true; ms = $watch.ElapsedMilliseconds } } else { $outcome = @{ ok = $true } }
+    if ($script:walked -and $script:openEntry) { $outcome.open = $script:openEntry }
   } catch {
     $refusal = $_.Exception
     if (Unneeded $edit $refusal) { $outcome = @{ ok = $true; ms = $watch.ElapsedMilliseconds; refused = $refusal.Message } }
@@ -528,40 +622,83 @@ export function folderAceCommand(
   };
 }
 
-/** An edit the script did: how long Windows took, whether it left its walk for later, and a refusal it did without. */
+/** An edit the script did: how long Windows took, whether it left its walk for later, why not, and a refusal it did without. */
 function doneOutcome(answer: object): FolderAceOutcome {
   const ms = "ms" in answer && typeof answer.ms === "number" ? { ms: answer.ms } : {};
   const deferred = "deferred" in answer && answer.deferred === true ? { deferred: true as const } : {};
   const refused = "refused" in answer && typeof answer.refused === "string" ? { refused: answer.refused } : {};
-  return { ok: true, ...ms, ...deferred, ...refused };
+  const open = "open" in answer && typeof answer.open === "string" ? { open: answer.open } : {};
+  return { ok: true, ...ms, ...deferred, ...refused, ...open };
 }
 
-/** One answer line as an outcome; null when it is not one. */
-function outcomeOf(line: string): FolderAceOutcome | null {
+/** What the script says the edit under way is doing, before any outcome of its own. */
+export const FolderAcePhase = {
+  /** Checking whether anything under the path is open to the sandbox user, to leave its walk for later. */
+  Scan: "scan",
+  /** Passing the path's entries down through everything under it. */
+  Walk: "walk",
+} as const;
+export type FolderAcePhase = (typeof FolderAcePhase)[keyof typeof FolderAcePhase];
+
+/** Where a batch stopped: the phase of the edit it was on, and why that edit's walk could not wait. */
+export interface FolderAceStop {
+  phase: FolderAcePhase;
+  open?: string;
+}
+
+/** One line as what it is: an outcome, the phase of the edit under way, or neither (null). */
+function lineOf(line: string): { outcome: FolderAceOutcome } | { stop: FolderAceStop } | null {
   try {
     const answer: unknown = JSON.parse(line);
-    if (typeof answer !== "object" || answer === null || Array.isArray(answer) || !("ok" in answer)) return null;
-    if (answer.ok === true) return doneOutcome(answer);
-    return { ok: false, error: "error" in answer ? String(answer.error) : MESSAGE.Refused };
+    if (typeof answer !== "object" || answer === null || Array.isArray(answer)) return null;
+    if ("phase" in answer && !("ok" in answer)) {
+      const phase = Object.values(FolderAcePhase).find((one) => one === answer.phase);
+      if (!phase) return null;
+      const open = "open" in answer && typeof answer.open === "string" ? { open: answer.open } : {};
+      return { stop: { phase, ...open } };
+    }
+    if (!("ok" in answer)) return null;
+    if (answer.ok === true) return { outcome: doneOutcome(answer) };
+    return { outcome: { ok: false, error: "error" in answer ? String(answer.error) : MESSAGE.Refused } };
   } catch {
     return null;
   }
 }
 
 /**
- * The outcomes the script finished, in the order of the batch: one per answer line, the text after
- * the last line break left out (a batch stopped mid-line). Null for anything else, a batch refused
- * whole among it.
+ * The outcomes the script finished, in the order of the batch, and the phase of the edit it was on
+ * after them (null when it said none): one outcome per answer line, the text after the last line
+ * break left out (a batch stopped mid-line). Null for anything else, a batch refused whole among it.
  */
-export function folderAceProgress(stdout: string): FolderAceOutcome[] | null {
+function progressOf(stdout: string): { outcomes: FolderAceOutcome[]; stop: FolderAceStop | null } | null {
   const outcomes: FolderAceOutcome[] = [];
+  let stop: FolderAceStop | null = null;
   for (const line of stdout.split("\n").slice(0, -1)) {
     if (!line.trim()) continue;
-    const outcome = outcomeOf(line);
-    if (!outcome) return null;
-    outcomes.push(outcome);
+    const read = lineOf(line);
+    if (!read) return null;
+    if ("stop" in read) {
+      stop = read.stop;
+      continue;
+    }
+    outcomes.push(read.outcome);
+    stop = null;
   }
-  return outcomes;
+  return { outcomes, stop };
+}
+
+/**
+ * The outcomes the script finished, in the order of the batch: one per answer line, the text after
+ * the last line break left out (a batch stopped mid-line), each line saying what an edit was doing
+ * passed over. Null for anything else, a batch refused whole among it.
+ */
+export function folderAceProgress(stdout: string): FolderAceOutcome[] | null {
+  return progressOf(stdout)?.outcomes ?? null;
+}
+
+/** What the edit a batch stopped on was doing, as the script last said; null when it said nothing. */
+export function folderAceStop(stdout: string): FolderAceStop | null {
+  return progressOf(stdout)?.stop ?? null;
 }
 
 /** The script's answer, when it is one outcome per edit; anything else is null. */
@@ -618,10 +755,14 @@ async function runIcacls(args: string[]): Promise<void> {
   await run("icacls", args, { timeout: TOOL_TIMEOUT_MS, windowsHide: true });
 }
 
-/** Each edit through `icacls`, one call each. */
+/** Each edit through `icacls`, one call each, but for a folder icacls must not walk ({@link FolderAceEdit.ifUnlisted}), left as it is. */
 async function viaIcacls(icacls: (args: string[]) => Promise<void>, edits: readonly FolderAceEdit[]) {
   const outcomes: FolderAceOutcome[] = [];
   for (const edit of edits) {
+    if (edit.ifUnlisted) {
+      outcomes.push({ ok: true });
+      continue;
+    }
     try {
       await icacls(icaclsArgs(edit));
       outcomes.push({ ok: true });
@@ -686,6 +827,7 @@ export function folderAceEditorSync(env: NodeJS.ProcessEnv = process.env): Folde
     const outcomes = batchSync(edits, env, TOOL_TIMEOUT_MS);
     if (outcomes) return outcomes;
     return edits.map((edit): FolderAceOutcome => {
+      if (edit.ifUnlisted) return { ok: true };
       try {
         execFileSync("icacls", icaclsArgs(edit), options);
         return { ok: true };
@@ -706,6 +848,13 @@ function writtenBefore(error: unknown): string {
   return typeof error === "object" && error !== null && "stdout" in error ? String(error.stdout) : "";
 }
 
+/** Why an own batch stopped on its edit, by what the script said that edit was doing ({@link folderAceStop}). */
+function stoppedOn(stop: FolderAceStop | null): (ms: number) => string {
+  if (stop?.phase === FolderAcePhase.Walk) return (ms) => MESSAGE.TimedOut(ms, stop.open);
+  if (stop?.phase === FolderAcePhase.Scan) return MESSAGE.StillChecking;
+  return MESSAGE.StillOnFolder;
+}
+
 /**
  * Every edit of a batch stopped after `ms`: the outcomes it finished, then the edit it was still
  * on (`current` says why) and those it never reached, refused as `timedOut`.
@@ -714,7 +863,7 @@ function stoppedOutcomes(
   edits: readonly unknown[],
   finished: readonly FolderAceOutcome[],
   ms: number,
-  current: (ms: number) => string = MESSAGE.TimedOut,
+  current: (ms: number) => string,
 ) {
   return edits.map((_, i): FolderAceOutcome => {
     const outcome = finished[i];
@@ -741,7 +890,8 @@ export function folderOwnEditor(tools: Pick<FolderAceTools, "env" | "powershell"
       return folderAceOutcomes(stdout, edits.length);
     } catch (error) {
       if (!ranOutOfTime(error)) return null;
-      return stoppedOutcomes(edits, folderAceProgress(writtenBefore(error)) ?? [], timeoutMs);
+      const written = writtenBefore(error);
+      return stoppedOutcomes(edits, folderAceProgress(written) ?? [], timeoutMs, stoppedOn(folderAceStop(written)));
     }
   };
 }

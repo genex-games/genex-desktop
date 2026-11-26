@@ -14,6 +14,7 @@ import {
   LINUX_SANDBOX_TOOLS,
   SandboxLaunchCode,
   SandboxProblemCode,
+  SandboxSetupFailure,
   StudioPlatform,
   linuxInstallCommands,
   type SandboxProblem,
@@ -48,6 +49,11 @@ const WINDOWS_LAUNCH_CODES: ReadonlyMap<string, SandboxLaunchCode> = new Map([
  */
 export const SRT_PROXY_PORT_RANGE: readonly [number, number] = [60080, 60089];
 const SRT_PROXY_PORTS = SRT_PROXY_PORT_RANGE.join("-");
+/** sandbox-runtime's code for an srt-win install that could not make the sandbox user. */
+const INSTALL_USER_FAILED = "install_user_failed";
+/** srt-win's line for the Windows call that refused the account, and that call's Win32 error. */
+const NET_USER_ADD_REFUSAL = /NetUserAdd\(srt-sandbox\): (\d+)/;
+
 /** What Windows answers a listen on a port it reserved (EACCES) or another program holds. */
 const PORT_REFUSED: ReadonlySet<string> = new Set(["EACCES", "EADDRINUSE"]);
 const LISTEN_SYSCALL = "listen";
@@ -72,7 +78,39 @@ const MESSAGE = {
     [SandboxLaunchCode.LogonRightRefused]:
       'A policy on this PC does not let Genex\'s sandbox user sign in, and Set up could not change that. Ask the PC\'s administrator, or check your security program: the account "srt-sandbox" needs "Allow log on locally" and must not be under "Deny log on locally" (Local Security Policy, User Rights Assignment). Then restart Genex.',
   } satisfies Record<SandboxLaunchCode, string>,
+  Setup: {
+    [SandboxSetupFailure.UserNotCreated]: (windowsError: number | null) =>
+      `Windows did not let Genex create the local account its agents run as ("srt-sandbox"${windowsError === null ? "" : `, Windows error ${windowsError}`}). A security program, a work or school device policy, or a local password policy can block new accounts. Check your security program, or ask the PC's administrator to allow it, then press Set up again.`,
+  } satisfies Record<SandboxSetupFailure, (windowsError: number | null) => string>,
 } as const;
+
+/**
+ * Set up of the protected workspace failed for a reason Genex knows: `code` says which, the
+ * message says what to do, then srt-win's own words; `windowsError` is the Win32 error Windows
+ * answered, when srt-win named it.
+ */
+export class SandboxSetupError extends Error {
+  readonly code: SandboxSetupFailure;
+  readonly windowsError: number | null;
+
+  constructor(code: SandboxSetupFailure, windowsError: number | null, detail: string, options?: ErrorOptions) {
+    super(`${MESSAGE.Setup[code](windowsError)} (${detail})`, options);
+    this.code = code;
+    this.windowsError = windowsError;
+  }
+}
+
+/**
+ * The Set up failure a sandbox-runtime install error stands for, by its `code`; null for any other
+ * error. A sandbox user Windows would not create (`NetUserAdd`, with Windows' error, which a field PC
+ * answered with 1783 at every try) is one the person, not Genex, can lift.
+ */
+export function windowsSetupError(error: unknown): SandboxSetupError | null {
+  if (!(error instanceof Error) || !("code" in error) || error.code !== INSTALL_USER_FAILED) return null;
+  const windowsError = NET_USER_ADD_REFUSAL.exec(error.message)?.[1];
+  const code = windowsError === undefined ? null : Number(windowsError);
+  return new SandboxSetupError(SandboxSetupFailure.UserNotCreated, code, error.message, { cause: error });
+}
 
 /** A sandboxed command could not start; `code` says why, the message says what to do. */
 export class SandboxLaunchError extends Error {
@@ -117,15 +155,16 @@ export class SandboxUnavailableError extends Error {
 const CAUSE_DEPTH_MAX = 4;
 
 /**
- * The sandbox's code for a start that failed because of it: the setup problem, or why its commands
- * could not start (Windows' reserved proxy ports), read from the error or the causes it wraps; null
- * for any other failure.
+ * The sandbox's code for a start that failed because of it: the setup problem, a Set up that failed,
+ * or why its commands could not start (Windows' reserved proxy ports), read from the error or the
+ * causes it wraps; null for any other failure.
  */
 export function sandboxStartFailureCode(error: unknown): BootFailureCode | null {
   let current = error;
   for (let depth = 0; depth < CAUSE_DEPTH_MAX && current instanceof Error; depth++) {
     if (current instanceof SandboxUnavailableError) return current.problem.code;
     if (current instanceof SandboxLaunchError) return current.code;
+    if (current instanceof SandboxSetupError) return current.code;
     current = current.cause;
   }
   return null;

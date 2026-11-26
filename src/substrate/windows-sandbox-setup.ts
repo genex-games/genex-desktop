@@ -10,6 +10,7 @@
  *
  * Where the Secondary Logon service is disabled, Set up first turns it back on, behind a prompt of
  * its own (`windows-logon-service.ts`): srt-win elevates itself, so the two cannot share one.
+ * An account Windows refuses to create is a typed failure with advice (`windowsSetupError`).
  * A PC an earlier Genex set up for another srt-win release runs the same install again, which
  * upgrades it in place. Where Windows will not sign the sandbox user in, Set up gives it that right
  * (`windows-logon-right.ts`), behind a prompt of its own too.
@@ -17,6 +18,7 @@
 import path from "node:path";
 import { type SandboxProblem, WindowsSetupNeed } from "../shared/boot.ts";
 import { MINUTE_MS } from "../shared/duration.ts";
+import { windowsSetupError } from "./sandbox-unavailable.ts";
 import { allowSandboxLogon } from "./windows-logon-right.ts";
 import { enableLogonService, logonServiceStartType, ServiceStartType } from "./windows-logon-service.ts";
 
@@ -62,7 +64,11 @@ async function installSrtSandbox(): Promise<{ cancelled: boolean }> {
   const srtWin = srt.resolveSrtWin({ path: await srtWinPath() });
   const status: SetupVersions = await srt.getWindowsSandboxUserStatusAsync({ srtWin }).catch(() => ({}));
   const options = srtInstallOptions(status);
-  const result = await srt.installWindowsSandboxAsync({ srtWin, timeoutMs: INSTALL_TIMEOUT_MS, ...options });
+  const result = await srt
+    .installWindowsSandboxAsync({ srtWin, timeoutMs: INSTALL_TIMEOUT_MS, ...options })
+    .catch((error: unknown) => {
+      throw windowsSetupError(error) ?? error;
+    });
   return { cancelled: result.cancelled === true };
 }
 

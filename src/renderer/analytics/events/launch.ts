@@ -24,6 +24,7 @@ import {
   SandboxFolderKind,
   SandboxLaunchCode,
   SandboxProblemCode,
+  SandboxSetupFailure,
   StartPassage,
 } from "../../../shared/boot.ts";
 import { DAY_MS, HOUR_MS, MINUTE_MS } from "../../../shared/duration.ts";
@@ -204,7 +205,10 @@ export function previousSessionProperties(previous: unknown): PreviousSessionPro
 
 /** A held start's code, re-checked: the boot's own, or the sandbox's. */
 export const bootFailureCode = (value: unknown): BootFailureCode | null =>
-  oneOf(BootFailure, value) ?? oneOf(SandboxProblemCode, value) ?? oneOf(SandboxLaunchCode, value);
+  oneOf(BootFailure, value) ??
+  oneOf(SandboxProblemCode, value) ??
+  oneOf(SandboxLaunchCode, value) ??
+  oneOf(SandboxSetupFailure, value);
 
 /** `app_ready_measured`'s start facts. */
 export type StartProperties = {

@@ -10,6 +10,7 @@ import { describe, it } from "node:test";
 import {
   PackageManager,
   SandboxProblemCode,
+  SandboxSetupFailure,
   SandboxTool,
   WindowsSetupNeed,
   linuxInstallCommands,
@@ -17,12 +18,14 @@ import {
 import {
   SandboxLaunchCode,
   SandboxLaunchError,
+  SandboxSetupError,
   SandboxUnavailableError,
   missingLinuxTools,
   sandboxProblem,
   sandboxSetupProblem,
   sandboxStartFailureCode,
   windowsProxyPortsError,
+  windowsSetupError,
   windowsSetupProblem,
 } from "../../src/substrate/sandbox-unavailable.ts";
 import { ProcessSandbox, type SandboxRuntime } from "../../src/substrate/spawn.ts";
@@ -183,6 +186,41 @@ describe("Windows proxy ports", () => {
       [null, null],
     ];
     for (const [error, code] of cases) assert.equal(sandboxStartFailureCode(error), code, String(error));
+  });
+
+  it("Windows refusing to create the sandbox user says what to do, by the install error's code", () => {
+    // A field PC's Set up failed five times in a minute with srt-win's words alone: NetUserAdd 1783.
+    const srtWin = (code: string, message: string) => Object.assign(new Error(message), { code });
+    const refused = srtWin(
+      "install_user_failed",
+      "srt-win install: sandbox user provisioning failed: srt-win: error: sandbox user step: provision sandbox user: NetUserAdd(srt-sandbox): 1783",
+    );
+    const setup = windowsSetupError(refused);
+    assert.ok(setup instanceof SandboxSetupError);
+    assert.equal(setup.code, SandboxSetupFailure.UserNotCreated);
+    assert.equal(setup.windowsError, 1783);
+    assert.equal(setup.cause, refused);
+    assert.match(setup.message, /^Windows did not let Genex create the local account its agents run as/);
+    assert.match(setup.message, /Windows error 1783/);
+    assert.match(setup.message, /security program/);
+    assert.match(setup.message, /NetUserAdd\(srt-sandbox\): 1783\)$/, "srt-win's own words stay, for a report");
+    const unnamed = windowsSetupError(
+      srtWin("install_user_failed", "srt-win install: sandbox user provisioning failed: "),
+    );
+    assert.equal(unnamed?.windowsError, null, "srt-win named no Windows error");
+    assert.doesNotMatch(unnamed?.message ?? "", /Windows error/);
+    for (const error of [
+      srtWin("install_wfp_failed", "srt-win install: WFP filter install failed: NetUserAdd(srt-sandbox): 1783"),
+      new Error("srt-win install: sandbox user provisioning failed: NetUserAdd(srt-sandbox): 1783"),
+      "install_user_failed",
+      null,
+    ])
+      assert.equal(windowsSetupError(error), null, String(error));
+    assert.equal(sandboxStartFailureCode(setup), SandboxSetupFailure.UserNotCreated);
+    assert.equal(
+      sandboxStartFailureCode(new Error("Set up failed", { cause: setup })),
+      SandboxSetupFailure.UserNotCreated,
+    );
   });
 });
 
