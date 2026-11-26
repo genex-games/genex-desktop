@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import net from "node:net";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { mkdir, readFile, readdir, rename, rmdir, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, stat, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, it } from "node:test";
@@ -1207,7 +1207,7 @@ Set-Acl -LiteralPath $env:GENEX_ACL_PATH -AclObject $acl`,
     });
   }
 
-  it("still refuses a grant or a guard Windows refuses, even where the sandbox user can open nothing", async () => {
+  it("still refuses a grant Windows refuses, even where the sandbox user can open nothing", async () => {
     const root = realpathSync.native(await tmpDir("folder-grant-refused-"));
     const secret = path.join(root, "User Data");
     await mkdir(path.join(secret, "Default"), { recursive: true });
@@ -1217,8 +1217,9 @@ Set-Acl -LiteralPath $env:GENEX_ACL_PATH -AclObject $acl`,
     try {
       const [aboveGrant] = await folderAceEditor()([{ dir: secret, sid: GUESTS, op: FolderAceOp.Grant }]);
       assert.equal(aboveGrant?.ok, false, "a grant above the grants");
+      // Only SYSTEM and the person may delete anything in it, so a guard there is not needed: see refusedGuards.
       const [guard] = (await folderOwnEditor()([{ ...own, guard: true, grant: null, allows: false }])) ?? [];
-      assert.equal(guard?.ok, false, "a guard");
+      assert.equal(guard?.ok === true && typeof guard.refused, "string", `a guard: ${JSON.stringify(guard)}`);
       const granted = await folderOwnEditor({ powershell: withoutPrivileges })([
         { ...own, guard: false, grant: GrantAccess.Read, allows: true },
       ]);
@@ -1290,17 +1291,10 @@ Set-Acl -LiteralPath $env:GENEX_ACL_PATH -AclObject $acl`,
     });
   }
 
-  /**
-   * A folder whose entries the running user may not change, made without any privilege, so a
-   * standard user's shell can run it too: OWNER RIGHTS takes the owner's implicit WRITE_DAC away. It
-   * stays empty, so its parent's FILE_DELETE_CHILD removes it. `also` adds entries.
-   */
-  const lockedForMe = (dir: string, ...also: string[]) =>
-    icacls(dir, "/inheritance:r", "/grant:r", "*S-1-3-4:(RX)", `*${runningUser()}:(RX)`, "*S-1-5-18:(F)", ...also);
   /** One shape of a profile whose entries Windows refuses to change: its extra entries, and whether the start goes on. */
   type RefusedGuard = [string, string[], boolean, Partial<FolderOwnEdit>?];
   const refusedGuards: RefusedGuard[] = [
-    ["only SYSTEM, its owner and the person may open it, as a profile", [], true],
+    ["only SYSTEM, which owns it, and the person may open it, as a profile", [], true],
     ["Users may delete what is in it", [`*${USERS}:(DC)`], false],
     ["Everyone may delete what is in it", ["*S-1-1-0:(DC)"], false],
     ["Users may delete what is in its folders, not in it", [`*${USERS}:(OI)(CI)(IO)(DC)`], true],
@@ -1314,7 +1308,8 @@ Set-Acl -LiteralPath $env:GENEX_ACL_PATH -AclObject $acl`,
       const root = realpathSync.native(await tmpDir("folder-guard-refused-"));
       const profile = path.join(root, "Ann");
       await mkdir(profile);
-      lockedForMe(profile, ...also);
+      // OWNER RIGHTS alone did not stop the runner's administrator from writing the entries: SYSTEM owns it.
+      refusesChanges(profile, ...also);
       const before = ownerAndDacl(profile);
       try {
         const outcomes = await folderOwnEditor({ powershell: withoutPrivileges })([
@@ -1338,7 +1333,7 @@ Set-Acl -LiteralPath $env:GENEX_ACL_PATH -AclObject $acl`,
         );
         assert.equal(ownerAndDacl(profile), before, "the folder is left as it was");
       } finally {
-        await rmdir(profile);
+        giveBack(profile);
       }
     });
   }
