@@ -23,6 +23,7 @@
 #include <cstddef>
 #include <functional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace genex {
@@ -53,12 +54,24 @@ struct HttpResponse {
 };
 
 using HttpDone = std::function<void(HttpResponse)>;
+/** A piece of an answer's body, as it arrived. The bytes are only valid during the call. */
+using HttpChunk = std::function<void(std::string_view)>;
 
 class GENEX_CORE_API IHttp {
  public:
   virtual ~IHttp();
   /** Start `request`; `done` is called once with its outcome (see the contract above). */
   virtual void Send(HttpRequest request, HttpDone done) = 0;
+  /**
+   * Send, and the body is also handed over in pieces as they arrive (an event stream: a model's answer while it is
+   * being written, a spoken line's sound): `chunk` zero or more times, in order, on the thread that pumps GenexCore,
+   * every call before `done`. `done` is Send's own and still carries the whole body. For a 2xx answer the pieces add
+   * up to that body; for any other answer they may be absent.
+   *
+   * This default reads the body whole and hands it over as one piece, so an IHttp that cannot read in pieces stays
+   * correct and is only late.
+   */
+  virtual void SendStreamed(HttpRequest request, HttpChunk chunk, HttpDone done);
 };
 
 /**

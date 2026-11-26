@@ -18,14 +18,20 @@
 //   requestSpendGrant    GET  /grants/current            never POST /grants: the live budget, else
 //                                                        `budget_not_approved`
 //   generate             POST /grants/{id}/generations   then GET /generations/{id} every 750 ms
-//   generateStream       the same call; its text arrives whole, as one Delta before the Result
+//   generateStream       POST /grants/{id}/generations/stream, an event stream: `start`, a `delta` per piece of
+//                        text (each a Delta event as it arrives), `done` with the call's view. A stand without
+//                        that door (404) is asked generate's way, and the text then arrives whole, as one Delta
 //   judge                POST /grants/{id}/judgments     polled only while it reads `dispatching`
+//   speak                POST /grants/{id}/speech, an event stream: `start` with the sound's format, an `audio`
+//                        per piece of it (base64 PCM, each a SpeechAudio event as it arrives), `done` with the
+//                        call's view. Playing the sound is the engine layer's.
 //   waitForGeneration    GET  /generations/{id} every 750 ms
 //   getGeneration        GET  /generations/{id}
 //
 // What a native build cannot do answers by code, with no request: `generate` without a `grantId`
 // and a sponsored `requestSpendGrant` settle `native_unsupported`, `generateStream` without one
-// `stream_requires_grant`; voice and the room lends are rejected `native_unsupported`.
+// `stream_requires_grant`; the page's own voice calls (a microphone, a speaker object) and the room lends are
+// rejected `native_unsupported`: a native game says a line with `speak` and plays the sound itself.
 //
 // A call with `system`, `messages` or a control (`temperature`, `topP`, `stop`, `seed`,
 // `reasoningEffort`, `cacheSystem`) asks the stand once whether it takes them (`features.messages`
@@ -206,11 +212,24 @@ class GENEX_CORE_API HttpBridge final : public Bridge, public IPumped {
     std::string call;
     bool stream = false;
     bool judge = false;
+    /** A speak: its stream carries sound, and its `done` is a voice call's view. */
+    bool speech = false;
+    bool speechStarted = false;
     /** A practice requestSpendGrant waiting for the helper's answer: `generationId` holds the budget's id. */
     bool grant = false;
     /** The first read of a waitForGeneration: no token there ends the call. */
     bool endsWithoutSession = false;
     std::string generationId;
+    /** A generateStream whose event stream is being read. */
+    bool streaming = false;
+    /** The budget a stream was asked under: its `done` view must name it. */
+    std::string grantId;
+    /** Bytes of the event stream not yet a whole line, and the event being put together. */
+    std::string streamLine;
+    std::string streamEvent;
+    std::string streamData;
+    /** The text handed over as Deltas so far. */
+    std::string soFar;
     bool polling = false;
     bool readInFlight = false;
     double deadlineMs = 0.0;
@@ -221,7 +240,8 @@ class GENEX_CORE_API HttpBridge final : public Bridge, public IPumped {
 
   double Now() const;
   std::string NewKey() const;
-  void Request(std::string method, std::string path, std::optional<Json> body, std::string_view fallback, ReplyDone done);
+  /** One request. With `chunk`, the answer is asked for as an event stream and its body is handed over as it arrives. */
+  void Request(std::string method, std::string path, std::optional<Json> body, std::string_view fallback, ReplyDone done, HttpChunk chunk = nullptr);
   void Get(std::string path, std::string_view fallback, ReplyDone done);
   void Post(std::string path, Json body, std::string_view fallback, ReplyDone done);
 
@@ -229,7 +249,7 @@ class GENEX_CORE_API HttpBridge final : public Bridge, public IPumped {
   /** A read or Init that failed. `httpStatus`, `reason` and `at` are the refusing answer's, for the log line. */
   void Reject(int id, std::string_view call, std::string_view code, int httpStatus = 0, std::string_view reason = {}, std::string_view at = {});
   void Reject(int id, std::string_view call, const Reply& refused);
-  /** End an Op: the stream's text as one Delta when it succeeded, then its Result. A result that carries an `error`
+  /** End an Op: what of a stream's text was not yet a Delta (all of it when it was answered whole), then its Result. A result that carries an `error`
    *  is written to the log first; `httpStatus` is the refusing answer's, 0 when the call was admitted or never sent. */
   void Settle(int id, Json result, int httpStatus = 0);
   void Fail(int id, std::string_view code);
@@ -251,7 +271,17 @@ class GENEX_CORE_API HttpBridge final : public Bridge, public IPumped {
   std::string InvalidGeneration(const Json& options, bool stream) const;
   void Generate(int id, const Json& args);
   void SendGeneration(int id, const std::string& grantId, double timeoutMs, Json body);
+  /** generateStream under a budget: the stream door, read as it arrives. */
+  void SendStream(int id, const std::string& grantId, double timeoutMs, Json body);
+  /** Bytes of a stream's body: every whole line of them, as events. */
+  void StreamBytes(int id, std::string_view bytes);
+  void StreamEvent(int id, const std::string& event, const std::string& data);
+  /** Text of a stream: one Delta event, and `soFar` grows by it. */
+  void Deliver(int id, Op& op, std::string_view text);
   void Judge(int id, const Json& args);
+  void Speak(int id, const Json& args);
+  /** One event of a speak's stream. */
+  void SpeechEvent(int id, const std::string& event, const Json& data);
   void WaitFor(int id, const Json& args);
   /** Whether the stand takes `system`, `messages` and the controls; `noSession` when it could not
    *  be asked for want of a token. */
@@ -274,6 +304,8 @@ class GENEX_CORE_API HttpBridge final : public Bridge, public IPumped {
   std::optional<bool> takesMessages_;
   bool askingMessages_ = false;
   std::vector<std::function<void(bool, bool)>> messagesWaiters_;
+  /** The stand answered 404 at the stream door once: every later stream is asked generate's way. */
+  bool noStreamDoor_ = false;
   bool registered_ = false;
 };
 

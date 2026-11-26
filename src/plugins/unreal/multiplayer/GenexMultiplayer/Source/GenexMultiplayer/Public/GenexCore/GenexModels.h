@@ -52,6 +52,11 @@ struct Event {
     /** The call opens the Genex approval window and a browser needs a click, tap or key press for that:
      *  `waiting` is true while it waits for the player's next one, false once it has run or given up. */
     Gesture,
+    /** Speak: the sound's format, before any of it. `name` is the encoding (`pcm_s16le`), with `sampleRate` and
+     *  `channels`. */
+    SpeechStart,
+    /** Speak: the next piece of the sound, whole samples, in order. `text` is its bytes as base64. */
+    SpeechAudio,
   };
   Type type = Type::Result;
   int id = 0;
@@ -63,6 +68,8 @@ struct Event {
   std::string soFar;
   std::string name;
   bool waiting = false;
+  int sampleRate = 0;
+  int channels = 0;
 };
 
 /** One drain as events. A reader skips what it cannot read and keeps the rest: text that is not a JSON array is no
@@ -143,6 +150,10 @@ class GENEX_CORE_API Models {
   int GenerateStream(const Json& options);
   /** The budget's classifier: typed questions about the game's own state. */
   int Judge(const Json& options);
+  /** One line said in one of Genex's voices, under a budget whose terms carry speech: `grantId`, `text`, `voice`, and
+   *  optionally `tier`, `style`, `language`. The sound arrives while it is made (SpeechStart, then SpeechAudio events),
+   *  then the Result with what was said and what it cost. */
+  int Speak(const Json& options);
   /** Ask the player for a standing budget. In a native build nothing is asked: the answer is the budget the player
    *  approved on the game's Genex page, or kBudgetNotApproved. */
   int RequestSpendGrant(const Json& options);

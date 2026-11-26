@@ -110,6 +110,21 @@ std::vector<Event> ReadEvents(std::string_view drainJson) {
       event.type = Event::Type::PartialField;
       event.name = *name;
       event.text = *text;
+    } else if (*type == "speechStart") {
+      const std::string* encoding = ModelsText(entry, "encoding");
+      const Json* rate = entry.Find("sampleRate");
+      const Json* channels = entry.Find("channels");
+      const bool whole = rate != nullptr && rate->IsNumber() && channels != nullptr && channels->IsNumber();
+      if (encoding == nullptr || !whole || rate->AsNumber() < 1.0 || rate->AsNumber() > 384000.0 || channels->AsNumber() < 1.0 || channels->AsNumber() > 8.0) continue;
+      event.type = Event::Type::SpeechStart;
+      event.name = *encoding;
+      event.sampleRate = static_cast<int>(rate->AsNumber());
+      event.channels = static_cast<int>(channels->AsNumber());
+    } else if (*type == "speechAudio") {
+      const std::string* data = ModelsText(entry, "data");
+      if (data == nullptr) continue;
+      event.type = Event::Type::SpeechAudio;
+      event.text = *data;
     } else if (*type == "gesture") {
       const Json* waiting = entry.Find("waiting");
       if (waiting == nullptr || !waiting->IsBool()) continue;
@@ -155,6 +170,12 @@ int Models::GenerateStream(const Json& options) {
   Json args = Json::MakeArray();
   args.Push(options);
   return Start("generateStream", std::move(args));
+}
+
+int Models::Speak(const Json& options) {
+  Json args = Json::MakeArray();
+  args.Push(options);
+  return Start("speak", std::move(args));
 }
 
 int Models::Judge(const Json& options) {

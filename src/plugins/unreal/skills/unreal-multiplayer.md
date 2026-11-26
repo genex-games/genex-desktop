@@ -104,6 +104,11 @@ Say what you saw. Never report the game as online before a published draft of it
 the running game. Read `genex__skill {"name":"genex-llm-in-games"}`, section An Unreal game, before
 writing a call: a play in the editor is answered by Genex's practice helper while the game is made,
 and the published game answers under a budget each player approves on its Genex page.
+`GenerateStream` hands the answer over while it is being written (`OnDelta` per piece of text): show
+a character's words as they arrive, never a silent wait for the whole answer. `Speak` says one line
+in one of Genex's voices (`grantId`, `text`, `voice`, optional `tier` and `style`): play the
+`USoundWave` that `OnSpeechStarted` hands over on an audio component at the speaker, and declare
+speech in the game's AI budget, or every line is refused.
 
 ## 5. Publish
 
