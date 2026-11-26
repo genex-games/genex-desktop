@@ -505,7 +505,7 @@ function ListedIn($dir, $sid) {
   if (-not $api::GetFileSecurityW($parent, $OWNER_AND_DACL, $SCAN_BUFFER, $SCAN_BUFFER.Length, [ref]$needed)) { return $false }
   $acl = (New-Object Security.AccessControl.RawSecurityDescriptor($SCAN_BUFFER, 0)).DiscretionaryAcl
   if ($null -eq $acl) { return $false }
-  $listers = $LISTERS + @($sid)
+  $who = $LISTERS + @($sid)
   $listed = $false
   foreach ($ace in $acl) {
     if ($ace -isnot [Security.AccessControl.QualifiedAce]) { return $false }
@@ -515,7 +515,7 @@ function ListedIn($dir, $sid) {
     }
     if (([int]$ace.AceFlags -band $INHERIT_ONLY) -ne 0) { continue }
     if ($ace.AceType -ne [Security.AccessControl.AceType]::AccessAllowed) { continue }
-    if ($listers -notcontains $ace.SecurityIdentifier) { continue }
+    if ($who -notcontains $ace.SecurityIdentifier) { continue }
     if (((Mapped $ace.AccessMask) -band $LIST_DIRECTORY) -ne 0) { $listed = $true }
   }
   return $listed
