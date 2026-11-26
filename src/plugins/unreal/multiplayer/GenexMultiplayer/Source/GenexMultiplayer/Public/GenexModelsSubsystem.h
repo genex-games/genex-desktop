@@ -100,6 +100,12 @@ public:
 	 *  and what it cost. A build with no sound output still settles; it only plays nothing. */
 	UFUNCTION(BlueprintCallable, Category = "Genex|Models")
 	int32 Speak(const FString& OptionsJson);
+	/** A recording of the player turned into words, under a budget whose terms carry listening. `Wav` is one WAV
+	 *  file (16-bit PCM; 16 kHz mono is plenty) of at most a minute; `OptionsJson`: `grantId`, and optionally
+	 *  `language` and `model`. Recording is the game's own (Unreal's audio capture): this only sends it.
+	 *  OnSettled ("transcribe") carries `text`, empty when nobody spoke. */
+	UFUNCTION(BlueprintCallable, Category = "Genex|Models")
+	int32 Transcribe(const TArray<uint8>& Wav, const FString& OptionsJson);
 	/** The budget's classifier: typed questions about the game's own state. */
 	UFUNCTION(BlueprintCallable, Category = "Genex|Models")
 	int32 Judge(const FString& OptionsJson);

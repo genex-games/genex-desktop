@@ -22,6 +22,10 @@ constexpr std::string_view kRuntimePath = "/api/runtime";
 constexpr std::string_view kUnavailable = "generation_unavailable";
 constexpr std::string_view kJudgeUnavailable = "judge_unavailable";
 constexpr std::string_view kSpeechUnavailable = "speech_unavailable";
+constexpr std::string_view kTranscriptionUnavailable = "transcription_unavailable";
+/** The most a recording may weigh here: 4 MiB of WAV, two minutes at 16 kHz mono, when the stand takes one. A call's
+ *  arguments cross as JSON text of at most 8 MiB (JsonLimits), which base64 of more than this would not fit. */
+constexpr std::size_t kMaxRecordingBytes = 4194304;
 /** A spoken line and a voice's id, as the stand bounds them (a longer one is refused there by name). */
 constexpr std::size_t kMaxVoiceIdChars = 64;
 constexpr std::string_view kGrantUnavailable = "grant_unavailable";
@@ -363,6 +367,54 @@ std::string InvalidJudgeOptions(const Json& options) {
   return std::string();
 }
 
+/** Base64 (the standard alphabet, padded or not) as bytes; nothing when it is not base64. */
+std::optional<std::string> FromBase64(std::string_view text) {
+  std::string out;
+  out.reserve(text.size() * 3 / 4);
+  unsigned buffer = 0;
+  int bits = 0;
+  std::size_t padding = 0;
+  for (const char c : text) {
+    if (c == '=') {
+      ++padding;
+      continue;
+    }
+    if (padding > 0) return std::nullopt;
+    int value = -1;
+    if (c >= 'A' && c <= 'Z') value = c - 'A';
+    else if (c >= 'a' && c <= 'z') value = c - 'a' + 26;
+    else if (c >= '0' && c <= '9') value = c - '0' + 52;
+    else if (c == '+') value = 62;
+    else if (c == '/') value = 63;
+    if (value < 0) return std::nullopt;
+    buffer = (buffer << 6) | static_cast<unsigned>(value);
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out.push_back(static_cast<char>((buffer >> bits) & 0xffu));
+    }
+  }
+  if (padding > 2) return std::nullopt;
+  return out;
+}
+
+/** A query value as it may stand in a URL: letters, digits and `-_.~` as they are, the rest as %XX. */
+std::string QueryValue(std::string_view text) {
+  static constexpr char kHex[] = "0123456789ABCDEF";
+  std::string out;
+  for (const char c : text) {
+    const unsigned char b = static_cast<unsigned char>(c);
+    if (IsAsciiAlnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+      out.push_back(c);
+    } else {
+      out.push_back('%');
+      out.push_back(kHex[b >> 4]);
+      out.push_back(kHex[b & 0x0f]);
+    }
+  }
+  return out;
+}
+
 /** Why a speak's options cannot be sent, or empty. Length and the voice's name are the stand's to judge. */
 std::string InvalidSpeakOptions(const Json& options) {
   const Json* grantId = options.Find("grantId");
@@ -596,13 +648,14 @@ std::string HttpBridge::GenerationErrorMessage(const std::string* code) const {
 
 // ---- requests ----
 
-void HttpBridge::Request(std::string method, std::string path, std::optional<Json> body, std::string_view fallback, ReplyDone done, HttpChunk chunk) {
+void HttpBridge::Request(std::string method, std::string path, std::optional<Json> body, std::string_view fallback, ReplyDone done, HttpChunk chunk,
+                         std::optional<RawBody> raw) {
   namespace detail = models_http_detail;
   const std::weak_ptr<int> alive = alive_;
   const std::string code(fallback);
   // A fresh token for this request, never one kept from the last.
   TokenCallback withToken = [this, alive, verb = std::move(method), route = std::move(path), payload = std::move(body), code,
-                             finish = std::move(done), piece = std::move(chunk)](bool ok, const std::string& token, const IdentityError&) {
+                             finish = std::move(done), piece = std::move(chunk), bytes = std::move(raw)](bool ok, const std::string& token, const IdentityError&) {
     if (alive.expired()) return;
     Reply reply;
     reply.code = code;
@@ -626,7 +679,11 @@ void HttpBridge::Request(std::string method, std::string path, std::optional<Jso
     // No Origin, ever: the bearer is the whole credential.
     request.headers.push_back(HttpHeader{"Authorization", "Bearer " + token});
     request.headers.push_back(HttpHeader{"Accept", piece ? "text/event-stream" : "application/json"});
-    if (payload) {
+    if (bytes) {
+      request.headers.push_back(HttpHeader{"Content-Type", bytes->contentType});
+      for (const HttpHeader& header : bytes->headers) request.headers.push_back(header);
+      request.body = bytes->bytes;
+    } else if (payload) {
       request.headers.push_back(HttpHeader{"Content-Type", "application/json"});
       request.body = payload->Dump();
     }
@@ -775,7 +832,7 @@ int HttpBridge::Call(std::string_view method, std::string_view argsJson) {
     return id;
   }
   std::optional<Json> parsed = argsJson.empty() ? std::optional<Json>(Json::MakeArray()) : Json::Parse(argsJson);
-  const bool settles = method == "generate" || method == "generateStream" || method == "judge" || method == "speak" || method == "requestSpendGrant" || method == "waitForGeneration";
+  const bool settles = method == "generate" || method == "generateStream" || method == "judge" || method == "speak" || method == "transcribe" || method == "requestSpendGrant" || method == "waitForGeneration";
   const bool reads = method == "getGenerationModels" || method == "getActiveSpendGrant" || method == "getSpendGrant" || method == "stopSpendGrant" || method == "getGeneration";
   const bool known = settles || reads || method == "init";
   if (!known || !parsed || !parsed->IsArray()) {
@@ -807,6 +864,7 @@ void HttpBridge::Start(int id, const std::string& call, const Json& args) {
   if (call == "generate" || call == "generateStream") return Generate(id, args);
   if (call == "judge") return Judge(id, args);
   if (call == "speak") return Speak(id, args);
+  if (call == "transcribe") return Transcribe(id, args);
   if (call == "waitForGeneration") return WaitFor(id, args);
   const detail::IdRoute route = detail::RouteOf(call, args.At(0));
   if (!route.error.empty()) return Reject(id, call, route.error);
@@ -1209,6 +1267,61 @@ void HttpBridge::Speak(int id, const Json& args) {
         Settle(id, std::move(result));
       },
       [this, id](std::string_view bytes) { StreamBytes(id, bytes); });
+}
+
+void HttpBridge::Transcribe(int id, const Json& args) {
+  namespace detail = models_http_detail;
+  if (FindOp(id) == nullptr) return;
+  const Json* options = detail::OptionsOf(args);
+  if (options == nullptr) return Fail(id, detail::kInvalidRequest);
+  const Json* budget = options->Find("grantId");
+  if (budget == nullptr || budget->IsNull()) return Fail(id, "transcription_requires_grant");
+  if (!detail::IsId(budget)) return Fail(id, "invalid_grant_id");
+  const Json* audio = options->Find("audio");
+  std::optional<std::string> recording = audio != nullptr && audio->IsString() ? detail::FromBase64(audio->AsString()) : std::nullopt;
+  if (!recording || recording->empty()) return Fail(id, detail::kInvalidRequest);
+  // The stand refuses a longer one by the same name; this saves the upload.
+  if (recording->size() > detail::kMaxRecordingBytes) return Fail(id, "audio_too_long");
+  std::string query;
+  for (const std::string_view named : {"language", "model"}) {
+    const Json* value = options->Find(named);
+    if (value == nullptr || value->IsNull()) continue;
+    if (!value->IsString() || value->AsString().empty() || value->AsString().size() > 150) return Fail(id, detail::kInvalidRequest);
+    query += (query.empty() ? "?" : "&") + std::string(named) + "=" + detail::QueryValue(value->AsString());
+  }
+  const Json* key = options->Find("idempotencyKey");
+  if (key != nullptr) {
+    const std::size_t length = key->IsString() ? detail::Utf16Length(key->AsString()) : 0;
+    if (length < detail::kMinKeyChars || length > detail::kMaxKeyChars || !detail::IsHeaderToken(key->AsString())) return Fail(id, "invalid_idempotency_key");
+  }
+  const std::string grantId = budget->AsString();
+  RawBody body;
+  body.bytes = std::move(*recording);
+  body.contentType = "audio/wav";
+  body.headers.push_back(HttpHeader{"Idempotency-Key", key != nullptr ? key->AsString() : NewKey()});
+  Request(
+      "POST", "/grants/" + detail::EncodeSegment(grantId) + "/transcriptions" + query, std::nullopt, detail::kTranscriptionUnavailable,
+      [this, id, grantId](Reply reply) {
+        if (FindOp(id) == nullptr) return;
+        if (!reply.ok) return Fail(id, reply);
+        const Json& view = reply.body;
+        const Json* status = view.Find("status");
+        if (!detail::IsId(view.Find("generationId")) || !detail::IsText(view.Find("grantId"), grantId) || status == nullptr || !status->IsString()) {
+          return Fail(id, "invalid_transcription_response");
+        }
+        Json result = Json::MakeObject();
+        detail::CopyField(view, result, "status");
+        detail::CopyField(view, result, "generationId");
+        detail::CopyTruthy(view, result, "error");
+        detail::CopyTruthy(view, result, "contentBlocked");
+        detail::CopyField(view, result, "text");
+        detail::CopyField(view, result, "language");
+        detail::CopyField(view, result, "durationMs");
+        detail::CopyField(view, result, "billing");
+        detail::CopyTruthy(view, result, "source");
+        Settle(id, std::move(result));
+      },
+      nullptr, std::move(body));
 }
 
 void HttpBridge::SpeechEvent(int id, const std::string& event, const Json& data) {
