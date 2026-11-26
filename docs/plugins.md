@@ -2867,7 +2867,10 @@ helper on this computer, so Live's bar speaks for that play: practice answers, t
 Code or Codex plan (**Use my plan**, at no credits), or real AI for the cap the person approved. A choice in the bar rewrites the file and reaches the next Play, not one already
 running, which the bar's own line says. Genex removes the file when Live leaves the game, on Live's
 Stop, when no helper runs and when the app quits; a file left behind names a port that no longer
-answers and is ignored, and with no file a play asks Genex as a published game does. Live has one
+answers and is ignored, and with no file a play asks Genex as a published game does. The plugin's
+`GenerateStream` reads an answer as it is written (an `OnDelta` per piece, in a published game and,
+with real AI, in a play in the editor) and its `Speak` says a line in one of Genex's voices, handing
+the game a sound that plays while it is still being made. Live has one
 helper, so a web game's page that ran in Live with a helper's key stops when an Unreal game takes
 the helper, and its Play loads it again. The packaged app the game's Play starts from
 its folder (`main/play/local-plays.ts`) is handed the same helper on a Mac and on Linux

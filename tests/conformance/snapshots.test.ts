@@ -495,6 +495,28 @@ describe("snapshot engine", () => {
  * user who keeps the parent lets the studio version it instead. Everything below is the second
  * half — what "versioned" has to mean for a run's work to survive.
  */
+describe("a repository Genex makes", () => {
+  it("copies nothing from git's own templates folder, which Windows may not let it read", async () => {
+    // Feedback cmwwkvq2u: a Git installed on another drive answered `git init` with "cannot copy
+    // '…/share/git-core/templates/description': Permission denied", and Genex never started.
+    const games = await tmpDir("no-templates-");
+    const game = path.join(games, "game");
+    const harness = path.join(games, "harness");
+    await mkdir(game);
+    await writeFile(path.join(game, "index.html"), "<p>hi</p>\n");
+    await mkdir(path.join(games, "seed"));
+    await writeFile(path.join(games, "seed", "loop.ts"), "export {};\n");
+    await ensureRepo(game);
+    await checkOutNewRepo(path.join(games, "seed"), harness, ["loop.ts"]);
+    for (const dir of [game, harness]) {
+      const dotGit = await readdir(path.join(dir, ".git"));
+      for (const name of ["description", "hooks", "info", "branches"])
+        assert.ok(!dotGit.includes(name), `${dir}: ${name} came from git's templates`);
+      assert.equal((await git(dir, ["rev-list", "--count", "HEAD"])).trim(), "1", "the first commit is made");
+    }
+  });
+});
+
 describe("a game that brought its own repository", () => {
   it("keeps a worker's edit inside it: committed when accepted, undone when lost, landed when live", async () => {
     const { engine, live, wreckage } = await nestedGame();

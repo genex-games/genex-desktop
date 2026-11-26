@@ -33,7 +33,9 @@ the setup screen opens on `git-missing`. What differs from macOS:
   and `initialize()` runs again with the rest (`refusedWriteRoot`). It stays out for the launch; a
   command that works in it or writes to it is refused (`write-refused`, which says to move the game
   or own the folder and restart), the log says `left … out of the sandbox`, and analytics hears
-  `sandbox_folder_left_out`. Any other grant failure still stops the start.
+  `sandbox_folder_left_out`. A write root a file stands in (a game's folder that became a file)
+  cannot be made a folder and is left ungranted the same way, logged `left … out of the sandbox:
+  it is not a folder`. Any other grant failure still stops the start.
 - Core startup awaits `ProcessSandbox.ensureReady()` before migrating or booting the harness.
   A failed background sandbox start reports its original error without rewinding or reseeding
   valid harness edits. A later Try again can retry initialization; broken harness code still
@@ -108,6 +110,12 @@ the setup screen opens on `git-missing`. What differs from macOS:
   writes the rights again, is not Genex's to lift: a refusal after this run's Set up fails with
   `SandboxLaunchCode.LogonRightRefused`, which names the account and the two rights for the PC's
   administrator.
+- A sandbox user Windows will not create (srt-win's `install_user_failed` with a `NetUserAdd` line
+  naming Windows' error; a field PC answered 1783 at every try; another provisioning step's
+  failure keeps srt-win's words alone) fails Set up as
+  `SandboxSetupFailure.UserNotCreated` (`windowsSetupError`): the message says a security program,
+  a work or school device policy or a password policy can block new accounts and keeps srt-win's
+  words for a report, and the start's facts carry the code to analytics once the studio opens.
 - srt-win records the setup version of its install. A PC an earlier Genex set up for an older
   srt-win (setup version 2) makes `initialize()` reject with `reinstall_required`, and the setup
   check (`windowsSetupGaps`, from `user status`' `markerVersion` and `setupVersion`) finds it
@@ -127,7 +135,13 @@ the setup screen opens on `git-missing`. What differs from macOS:
   another program's.
 - The sandbox user reads nothing in the profile unless granted, so each folder between
   `USERPROFILE` and a root gets `(S,RA)` (read attributes and synchronize, no listing) after every
-  apply, since srt-win's deny stamps replace the entry. Synchronize matters before Windows 11
+  apply, since srt-win's deny stamps replace the entry. The profile itself gets it only where its
+  parent does not let Everyone, Authenticated Users or the group list it (`ifUnlisted`): `C:\Users`
+  does on every PC Windows set up, which lets the harness read the profile's attributes as it walks
+  its own path, and a field PC's did not, so every harness stopped at `lstat` of the profile
+  (EPERM). `icacls` never stands in there, since it would walk the whole profile. The check counts
+  only what it is sure of, so a profile grant Windows refuses is logged and the start goes on, as it
+  did before Genex set one; any other refused grant stops it. Synchronize matters before Windows 11
   24H2: Node's stat opens each folder there, and every synchronous open asks for it. The entry names the `sandbox-runtime-users` group
   (`srtAncestorGrantee`; the user itself outside it): every srt host, Claude Code's own shell
   sandbox among them, stamps and cleans up the user's entries, and its cleanup took Genex's on
@@ -142,7 +156,7 @@ the setup screen opens on `git-missing`. What differs from macOS:
   did not reach is let go, leaving that folder's read-attributes entry. Each Genex records its folders in
   `%LOCALAPPDATA%\genex-sandbox-grants\<pid>.json` and revokes only those no other running Genex
   records. The SID is asked of srt-win up to three times; without it the apply fails. The harness gets the entries set again just before it starts, and one that exits during
-  boot logs `icacls` for each folder from the profile down to its files.
+  boot logs `icacls` for each folder from the profile's parent down to its files.
 - The toolchain's PATH folders under the profile (npm's global prefix, pnpm's home, nvm, Scoop) are
   granted for reading (`grantableToolDirs`), and a grant passes its entry down through every file
   under each one. pnpm's home holds its package store (`store\v3`, `store\v10`), a file
@@ -208,8 +222,11 @@ the setup screen opens on `git-missing`. What differs from macOS:
   writes nothing, so passing entries down a folder happens once: a Genex that quits keeps its
   record, and the next sync of any Genex keeps what a running one needs and takes back the rest. A
   first walk of a large folder can take minutes. The script answers a line per edit as it finishes,
-  so a batch stopped at its deadline keeps what it set and names the edit Windows was still on; the
-  log names each edit over 2 s. Denies, guards, take-backs, a write grant narrowed to reading, and grants on the folders srt-win
+  so a batch stopped at its deadline keeps what it set and names the edit Windows was still on, and
+  what it was doing there: passing entries down (with the entry under the path, or the allow the
+  path passes down, that kept the walk from waiting), checking what is under the path, or still on
+  the folder itself (field PCs stopped at ten minutes on the profile and on Chrome's `User Data`
+  with nothing more said). The log names each edit over 2 s, and why its walk could not wait. Denies, guards, take-backs, a write grant narrowed to reading, and grants on the folders srt-win
   starts from and on Genex's data folder (`urgent`) are set in full before the start goes on (10
   minutes at most per batch). Every other read grant (a toolchain on PATH) gets 30 s
   (`GRANT_BUDGET_MS`): unfinished, it only opens less, so what is not done by then is recorded to
@@ -242,7 +259,12 @@ the setup screen opens on `git-missing`. What differs from macOS:
   whose entries a standard user may not change: a field PC's agents never started) goes on the
   same way where the path's own entries already let Everyone, Authenticated Users, BUILTIN\Users or
   the group read and run it and pass that down to its files and folders, and hold no deny but
-  SYSTEM's, the Administrators' or the person's (`OpenAt`). A per-command
+  SYSTEM's, the Administrators' or the person's (`OpenAt`). A guard refused so (a field PC refused
+  every change to the profile's own entries, WRITE_DAC and all, so the guard there for `~\.ssh`
+  stopped every start) goes on where the folder's owner is the person, SYSTEM or the
+  Administrators and no entry on the folder itself lets anyone else delete what is in it
+  (`DeletesIn`), as a profile's do; a guard that would also take back an allow Genex passed down
+  still stops it. A per-command
   deny Genex already sets is not sent again. Without the group, where PowerShell cannot run the
   batch or the running user holds the SID, srt-win sets every grant and deny as before, and the
   log says so (`own entries off`). srt-win keeps a missing deny path (it makes its placeholder), a

@@ -16,8 +16,11 @@ public:
 	FGenexUnrealHttp();
 	virtual ~FGenexUnrealHttp() override;
 	virtual void Send(genex::HttpRequest Request, genex::HttpDone Done) override;
+	/** The body in pieces as it arrives (FHttpModule's stream delegate), handed over on the game thread once a frame. */
+	virtual void SendStreamed(genex::HttpRequest Request, genex::HttpChunk Chunk, genex::HttpDone Done) override;
 
 private:
+	void Start(genex::HttpRequest Request, genex::HttpChunk Chunk, genex::HttpDone Done);
 	/** Cleared on destruction, so an answer after it calls nothing. */
 	TSharedRef<bool> Alive;
 };

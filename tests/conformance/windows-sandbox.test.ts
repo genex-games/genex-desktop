@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import net from "node:net";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { mkdir, readFile, readdir, rename, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, stat, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, it } from "node:test";
@@ -37,6 +37,7 @@ import {
   type SessionMember,
   WindowsSandboxSession,
   ancestorDirs,
+  type WindowsGrants,
   ancestorGrants,
   bundledGitRoot,
   ensureHostGit,
@@ -88,6 +89,8 @@ import {
   folderAceEditor,
   folderAceOutcomes,
   folderAceProgress,
+  folderAceStop,
+  FolderAcePhase,
   folderOwnEditor,
   FOLDER_ACE_SCRIPT,
   FOLDER_ACE_TIMEOUT_MS,
@@ -249,6 +252,36 @@ describe("read-attributes grants above each root", () => {
     assert.equal(existsSync(record), false, "the record goes once everything is taken back");
   });
 
+  it("marks the profile's grant and take-back for the script alone, which grants it only where its parent hides it", async () => {
+    const holders = await tmpDir("windows-grants-");
+    const asked: FolderAceEdit[] = [];
+    const grants = holder(holders, 1, [], {
+      ifUnlisted: (dir) => dir === PROFILE,
+      edit: async (edits) => {
+        asked.push(...edits);
+        return done(edits);
+      },
+      editSync: (edits) => {
+        asked.push(...edits);
+        return done(edits);
+      },
+    });
+    await grants.sync([PROFILE, at("AppData")]);
+    await grants.sync([at("AppData")]);
+    await grants.sync([PROFILE, at("AppData")]);
+    grants.revokeAllSync();
+    assert.deepEqual(asked, [
+      { dir: PROFILE, sid: SID, op: FolderAceOp.Grant, ifUnlisted: true },
+      { dir: at("AppData"), sid: SID, op: FolderAceOp.Grant },
+      { dir: at("AppData"), sid: SID, op: FolderAceOp.Grant },
+      { dir: PROFILE, sid: SID, op: FolderAceOp.Remove, ifUnlisted: true },
+      { dir: PROFILE, sid: SID, op: FolderAceOp.Grant, ifUnlisted: true },
+      { dir: at("AppData"), sid: SID, op: FolderAceOp.Grant },
+      { dir: PROFILE, sid: SID, op: FolderAceOp.Remove, ifUnlisted: true },
+      { dir: at("AppData"), sid: SID, op: FolderAceOp.Remove },
+    ]);
+  });
+
   it("revokes a released holder asynchronously while retaining the synchronous exit fallback", async () => {
     const holders = await tmpDir("windows-grants-");
     const calls: string[][] = [];
@@ -306,6 +339,33 @@ describe("read-attributes grants above each root", () => {
     const broken: FolderAceEditor = async (edits) => edits.map(() => ({ ok: false, error: "Access is denied." }));
     await assert.rejects(
       holder(holders, 2, [], { edit: broken }).sync([at("Music", "x")]),
+      /could not let the sandbox user see the folder .*Music\\x: Access is denied\./,
+    );
+  });
+
+  it("logs a profile grant Windows refuses and goes on, where any other refused grant stops the start", async () => {
+    // The profile is granted only where its parent seems not to let the sandbox user list it, and that
+    // check answers no when unsure: a profile Windows will not change must not stop a start that went
+    // on before Genex touched it.
+    const holders = await tmpDir("windows-grants-");
+    const logged: string[] = [];
+    const batches: string[][] = [];
+    const refusesProfile: FolderAceEditor = async (edits) => {
+      batches.push(edits.map((edit) => edit.dir));
+      return edits.map((edit) => (edit.dir === PROFILE ? { ok: false, error: "Access is denied." } : { ok: true }));
+    };
+    const options = {
+      edit: refusesProfile,
+      ifUnlisted: (dir: string) => dir === PROFILE,
+      log: (line: string) => logged.push(line),
+    };
+    await holder(holders, 1, [], options).sync([PROFILE, at("AppData")]);
+    assert.deepEqual(batches, [[PROFILE, at("AppData")], [PROFILE], [PROFILE]], "tried as often as any grant");
+    assert.equal(logged.length, 1);
+    assert.match(logged[0] ?? "", /could not let the sandbox user see the folder .*: Access is denied\./);
+    const refusesAll: FolderAceEditor = async (edits) => edits.map(() => ({ ok: false, error: "Access is denied." }));
+    await assert.rejects(
+      holder(holders, 2, [], { ...options, edit: refusesAll }).sync([PROFILE, at("Music", "x")]),
       /could not let the sandbox user see the folder .*Music\\x: Access is denied\./,
     );
   });
@@ -389,6 +449,7 @@ describe("read-attributes grants above each root", () => {
       return `${dir} PC\\srt-sandbox:(RA)\r\n\r\nSuccessfully processed 1 files\r\n`;
     });
     assert.deepEqual(listed, [
+      "C:\\Users",
       PROFILE,
       at("AppData"),
       at("AppData", "Local"),
@@ -396,7 +457,7 @@ describe("read-attributes grants above each root", () => {
       at("AppData", "Local", "genex", "app-1"),
     ]);
     assert.equal(lines.length, listed.length * 2, "blank lines are dropped");
-    assert.equal(lines[2], `${at("AppData")} PC\\srt-sandbox:(RA)`);
+    assert.equal(lines[4], `${at("AppData")} PC\\srt-sandbox:(RA)`);
   });
 });
 
@@ -450,6 +511,13 @@ describe("an entry on one folder alone", () => {
       ["a list is not a line per edit", '[{"ok":true}]\n', 1, null],
       ["a batch refused whole", '{"refused":"the running user holds this SID"}', 1, null],
       ["a refusal without words", '{"ok":false}\n', 1, [{ ok: false, error: "refused" }]],
+      [
+        "what an edit was doing is no answer of its own",
+        '{"phase":"scan"}\n{"phase":"walk","open":null}\n{"ok":true,"ms":9,"open":"the folder passes an allow down"}\n',
+        1,
+        [{ ok: true, ms: 9, open: "the folder passes an allow down" }],
+      ],
+      ["a phase Genex does not know is no answer", '{"phase":"dance"}\n{"ok":true}\n', 1, null],
     ];
     for (const [label, stdout, count, expected] of table)
       assert.deepEqual(folderAceOutcomes(stdout, count), expected, label);
@@ -461,6 +529,18 @@ describe("an entry on one folder alone", () => {
       ],
       "a batch stopped part way: the lines it finished",
     );
+    const stops: Array<[string, string, unknown]> = [
+      ["no word on the edit under way", '{"ok":true}\n', null],
+      ["checking what is under it", '{"ok":true}\n{"phase":"scan"}\n', { phase: FolderAcePhase.Scan }],
+      [
+        "walking, and why it could not wait",
+        '{"phase":"scan"}\n{"phase":"walk","open":"C:\\\\x is open"}\n{"ok":tr',
+        { phase: FolderAcePhase.Walk, open: "C:\\x is open" },
+      ],
+      ["a phase belongs to its own edit", '{"phase":"walk","open":null}\n{"ok":true}\n', null],
+      ["on the folder after a scan", '{"phase":"scan"}\n{"phase":"folder"}\n', { phase: FolderAcePhase.Folder }],
+    ];
+    for (const [label, stdout, expected] of stops) assert.deepEqual(folderAceStop(stdout), expected, label);
   });
 
   it("keeps what a batch finished before its deadline, and names the edit Windows was still on", async () => {
@@ -477,10 +557,14 @@ describe("an entry on one folder alone", () => {
     });
     const batch = [PROFILE, at("anaconda3"), at("AppData", "Roaming", "npm")].map(own);
     const deadlines: Array<number | undefined> = [];
+    // Field PCs stopped at ten minutes on the profile and on Chrome's "User Data", and the log said
+    // nothing of what Windows was doing then: the script says so before each slow step.
+    const open = `${at("anaconda3", "pkgs")} is open to someone the sandbox user may be`;
+    let written = `{"ok":true,"ms":4}\n{"phase":"scan"}\n{"phase":"walk","open":${JSON.stringify(open)}}\n`;
     const stopped = folderOwnEditor({
       powershell: async (_file, _args, _env, run) => {
         deadlines.push(run?.timeoutMs);
-        throw Object.assign(new Error("Command failed"), { killed: true, stdout: '{"ok":true,"ms":4}\n' });
+        throw Object.assign(new Error("Command failed"), { killed: true, stdout: written });
       },
     });
     const outcomes = await stopped(batch, { timeoutMs: 30_000 });
@@ -488,7 +572,7 @@ describe("an entry on one folder alone", () => {
     assert.deepEqual(outcomes?.[0], { ok: true, ms: 4 }, "the profile's guard was done");
     assert.deepEqual(outcomes?.[1], {
       ok: false,
-      error: "Windows was still passing the entries down after 30 s",
+      error: `Windows was still passing the entries down after 30 s (it could not wait: ${open})`,
       timedOut: true,
     });
     assert.deepEqual(outcomes?.[2], {
@@ -496,8 +580,29 @@ describe("an entry on one folder alone", () => {
       error: "not reached: the batch ran out of time after 30 s",
       timedOut: true,
     });
+    const said: Array<[string, string]> = [
+      [
+        '{"ok":true,"ms":4}\n{"phase":"scan"}\n',
+        "Genex was still checking what is under the folder after 30 s, to leave its walk for later",
+      ],
+      ['{"ok":true,"ms":4}\n{"phase":"walk","open":null}\n', "Windows was still passing the entries down after 30 s"],
+      [
+        '{"ok":true,"ms":4}\n',
+        "Windows had not finished with the folder itself after 30 s (nothing under it was being walked)",
+      ],
+      [
+        '{"ok":true,"ms":4}\n{"phase":"scan"}\n{"phase":"folder"}\n',
+        "Windows had not finished with the folder itself after 30 s (nothing under it was being walked)",
+      ],
+    ];
+    for (const [stdout, error] of said) {
+      written = stdout;
+      const [, current] = (await stopped(batch, { timeoutMs: 30_000 })) ?? [];
+      assert.deepEqual(current, { ok: false, error, timedOut: true }, stdout);
+    }
+    deadlines.length = 0;
     await stopped(batch);
-    assert.deepEqual(deadlines, [30_000, 600_000], "ten minutes unless the run says");
+    assert.deepEqual(deadlines, [600_000], "ten minutes unless the run says");
     const quitting = new AbortController();
     const signals: Array<AbortSignal | undefined> = [];
     const aborted = folderOwnEditor({
@@ -534,6 +639,21 @@ describe("an entry on one folder alone", () => {
       ["C:\\Users\\Семён\\AppData", "/grant", `*${SID}:(S,RA)`],
       ["C:\\Users\\Семён\\it's", "/remove:g", `*${SID}`],
     ]);
+    // icacls passes the profile's entries down through everything in it: the profile is left as it is.
+    icacls.length = 0;
+    const profile = "C:\\Users\\Семён";
+    assert.deepEqual(
+      await editor([
+        { dir: profile, sid: SID, op: FolderAceOp.Grant, ifUnlisted: true },
+        { dir: profile, sid: SID, op: FolderAceOp.Remove, ifUnlisted: true },
+      ]),
+      [
+        { ok: false, error: "icacls would pass the entry down through everything in the folder: left as it is" },
+        { ok: false, error: "icacls would pass the entry down through everything in the folder: left as it is" },
+      ],
+      "said, not passed for done",
+    );
+    assert.deepEqual(icacls, [], "icacls never walks the profile");
   });
 
   it("says when icacls was stopped for time, since it walks everything under the folder", async () => {
@@ -1087,7 +1207,7 @@ Set-Acl -LiteralPath $env:GENEX_ACL_PATH -AclObject $acl`,
     });
   }
 
-  it("still refuses a grant or a guard Windows refuses, even where the sandbox user can open nothing", async () => {
+  it("still refuses a grant Windows refuses, even where the sandbox user can open nothing", async () => {
     const root = realpathSync.native(await tmpDir("folder-grant-refused-"));
     const secret = path.join(root, "User Data");
     await mkdir(path.join(secret, "Default"), { recursive: true });
@@ -1097,8 +1217,9 @@ Set-Acl -LiteralPath $env:GENEX_ACL_PATH -AclObject $acl`,
     try {
       const [aboveGrant] = await folderAceEditor()([{ dir: secret, sid: GUESTS, op: FolderAceOp.Grant }]);
       assert.equal(aboveGrant?.ok, false, "a grant above the grants");
+      // Only SYSTEM and the person may delete anything in it, so a guard there is not needed: see refusedGuards.
       const [guard] = (await folderOwnEditor()([{ ...own, guard: true, grant: null, allows: false }])) ?? [];
-      assert.equal(guard?.ok, false, "a guard");
+      assert.equal(guard?.ok === true && typeof guard.refused, "string", `a guard: ${JSON.stringify(guard)}`);
       const granted = await folderOwnEditor({ powershell: withoutPrivileges })([
         { ...own, guard: false, grant: GrantAccess.Read, allows: true },
       ]);
@@ -1170,14 +1291,116 @@ Set-Acl -LiteralPath $env:GENEX_ACL_PATH -AclObject $acl`,
     });
   }
 
-  it("passes a deny down at once where the folder itself passes Users an allow", async () => {
+  /** One shape of a profile whose entries Windows refuses to change: its extra entries, and whether the start goes on. */
+  type RefusedGuard = [string, string[], boolean, Partial<FolderOwnEdit>?];
+  const refusedGuards: RefusedGuard[] = [
+    ["only SYSTEM, which owns it, and the person may open it, as a profile", [], true],
+    ["Users may delete what is in it", [`*${USERS}:(DC)`], false],
+    ["Everyone may delete what is in it", ["*S-1-1-0:(DC)"], false],
+    ["Users may delete what is in its folders, not in it", [`*${USERS}:(OI)(CI)(IO)(DC)`], true],
+    ["the edit would also take back an allow Genex passed down", [], false, { allows: true }],
+  ];
+  for (const [shape, also, goesOn, edit = {}] of refusedGuards) {
+    it(`${goesOn ? "goes on past" : "still stops at"} a guard Windows refuses where ${shape}`, async () => {
+      // A field PC refused every change to the profile's own entries, WRITE_DAC and all: the guard
+      // there, for ~\.ssh, stopped every start, though only SYSTEM, the Administrators and the
+      // person could delete anything in the profile anyway.
+      const root = realpathSync.native(await tmpDir("folder-guard-refused-"));
+      const profile = path.join(root, "Ann");
+      await mkdir(profile);
+      // OWNER RIGHTS alone did not stop the runner's administrator from writing the entries: SYSTEM owns it.
+      refusesChanges(profile, ...also);
+      const before = ownerAndDacl(profile);
+      try {
+        const outcomes = await folderOwnEditor({ powershell: withoutPrivileges })([
+          {
+            dir: profile,
+            sid: GUESTS,
+            op: FolderAceOp.Own,
+            deny: null,
+            guard: true,
+            grant: null,
+            allows: false,
+            ...edit,
+          },
+        ]);
+        const [outcome] = outcomes ?? [];
+        assert.equal(outcome?.ok, goesOn, JSON.stringify(outcomes));
+        assert.equal(
+          outcome?.ok === true && typeof outcome.refused,
+          goesOn ? "string" : false,
+          JSON.stringify(outcomes),
+        );
+        assert.equal(ownerAndDacl(profile), before, "the folder is left as it was");
+      } finally {
+        giveBack(profile);
+      }
+    });
+  }
+
+  it("grants the profile's read-attributes entry only where its parent does not let the sandbox user list it", async () => {
+    // A field PC's harness stopped at lstat of the profile (EPERM): C:\Users did not let the
+    // sandbox user list it. Everywhere else C:\Users lets Everyone list it, and the profile, whose
+    // entries a field PC refused to change, is left alone.
+    const root = realpathSync.native(await tmpDir("folder-unlisted-"));
+    const parents: Array<[string, string[], boolean, string[]?]> = [
+      ["Everyone may list the parent, as C:\\Users lets them", ["*S-1-1-0:(RX)"], false],
+      ["Authenticated Users may list the parent", ["*S-1-5-11:(RX)"], false],
+      ["the sandbox users' group may list the parent", [`*${GUESTS}:(RX)`], false],
+      ["only Users may list the parent: a sandbox user outside Users gets nothing", [`*${USERS}:(RX)`], true],
+      ["Everyone may list only what is under the parent", ["*S-1-1-0:(OI)(CI)(IO)(RX)"], true],
+      ["Everyone may list it, but the sandbox users' group is denied", ["*S-1-1-0:(RX)"], true, [`*${GUESTS}:(RD)`]],
+      ["no one but SYSTEM and the person may", [], true],
+    ];
+    for (const [label, entries, granted, denies = []] of parents) {
+      const parent = path.join(root, randomUUID());
+      const profile = path.join(parent, "Ann");
+      await mkdir(profile, { recursive: true });
+      icacls(
+        parent,
+        "/inheritance:r",
+        "/grant:r",
+        `*${runningUser()}:(OI)(CI)(F)`,
+        "*S-1-5-18:(OI)(CI)(F)",
+        ...entries,
+      );
+      if (denies.length > 0) icacls(parent, "/deny", ...denies);
+      const edit = { dir: profile, sid: GUESTS, op: FolderAceOp.Grant, ifUnlisted: true } as const;
+      assert.deepEqual(await folderAceEditor()([edit]), [{ ok: true }], label);
+      assert.equal(guestsRead.test(sddl(profile, root)), granted, label);
+      assert.deepEqual(await folderAceEditor()([{ ...edit, op: FolderAceOp.Remove }]), [{ ok: true }], label);
+      assert.doesNotMatch(sddl(profile, root), guestsRead, `${label}: taken back`);
+    }
+  });
+
+  it("passes a deny down at once where the folder itself passes Users an allow, and says so", async () => {
     const root = realpathSync.native(await tmpDir("folder-deny-open-"));
     const secret = path.join(root, "User Data");
     await mkdir(path.join(secret, "Default"), { recursive: true });
     openToUsers(secret);
     const outcomes = await folderOwnEditor()([denyLater(secret)]);
     assert.equal(outcomes?.[0]?.ok && outcomes[0].deferred, undefined);
+    assert.equal(
+      outcomes?.[0]?.ok && outcomes[0].open,
+      "the folder passes an allow down to someone the sandbox user may be",
+    );
     assert.match(sddl(path.join(secret, "Default"), root), /\(D;OICIID;FA;;;BG\)/);
+  });
+
+  it("names the entry under a path that kept its walk from waiting", async () => {
+    // Two field PCs stopped at ten minutes passing a deny down Chrome's "User Data" at every start,
+    // and the log could not say why that walk had not waited for after the start.
+    const root = realpathSync.native(await tmpDir("folder-deny-open-below-"));
+    ownerOnly(root);
+    const secret = path.join(root, "User Data");
+    const cookies = path.join(secret, "Default", "Cookies");
+    await mkdir(path.dirname(cookies), { recursive: true });
+    await writeFile(cookies, "cookies");
+    ownerOnly(secret);
+    icacls(cookies, "/grant", `*${USERS}:(R)`);
+    const [outcome] = (await folderOwnEditor()([denyLater(secret)])) ?? [];
+    assert.equal(outcome?.ok && outcome.deferred, undefined, "walked now");
+    assert.equal(outcome?.ok && outcome.open, `${cookies} is open to someone the sandbox user may be`);
   });
 
   it("grants a folder and what is in it, and the folder entry above the grants comes and goes beside it", async () => {
@@ -1848,8 +2071,28 @@ describe("the grant session", () => {
     assert.deepEqual(s.runtime.calls, ["initialize"]);
     assert.deepEqual(s.runtime.last().filesystem.allowWrite, [WS]);
     assert.deepEqual(s.ancestors.synced, [
-      [at("AppData"), at("AppData", "Roaming"), at("AppData", "Roaming", "Genex")],
+      [PROFILE, at("AppData"), at("AppData", "Roaming"), at("AppData", "Roaming", "Genex")],
     ]);
+  });
+
+  it("names the profile above a root in it, which only a PC that keeps C:\\Users from listing it needs", async () => {
+    // A field PC's harness stopped at lstat of the profile (EPERM): the folders below it had the
+    // grant, the profile did not, and C:\Users did not let the sandbox user list it.
+    const cases: Array<[string, WindowsGrants, string[]]> = [
+      ["a root in the profile, directly", { write: [GAMES], read: [] }, [PROFILE]],
+      ["roots outside the profile", { write: [LATE], read: ["C:\\Program Files\\Genex"] }, []],
+      ["a root that holds the profile", { write: ["C:\\Users"], read: [] }, []],
+      ["the profile itself", { write: [PROFILE], read: [] }, []],
+    ];
+    for (const [label, grants, expected] of cases) {
+      const s = session();
+      await s.session.join({}, { grants, config: BASE_CONFIG });
+      assert.deepEqual(
+        s.ancestors.synced[0],
+        [...expected, ...ancestorDirs(PROFILE, [...grants.write, ...grants.read])],
+        label,
+      );
+    }
   });
 
   it("grants the folders above the roots after srt-win initializes, and again after every regrant", async () => {
@@ -3134,6 +3377,38 @@ describe("Genex's own deny entries", () => {
     );
   });
 
+  it("goes on past a guard Windows refused where the sandbox user may delete nothing in the folder anyway, and says so", async () => {
+    // A field PC refused every change to the profile's entries, WRITE_DAC and all: the guard on
+    // the profile, for ~\.ssh, stopped every start. The script answers so only where no entry on
+    // the folder lets anyone the sandbox user may be delete what is in it.
+    const logged: string[] = [];
+    const refused: FolderOwnEditor = async (edits) =>
+      edits.map((edit) =>
+        edit.guard && !edit.deny ? ({ ok: true, refused: "Access is denied." } as const) : ({ ok: true } as const),
+      );
+    const denies = holder(await tmpDir("windows-denies-"), 1, [], { edit: refused, log: (line) => logged.push(line) });
+    assert.equal(await denies.sync([guard, ssh]), true);
+    assert.deepEqual(logged, [
+      `own entries: left ${PROFILE} as it is: Windows refused the guard (Access is denied.), and the sandbox user may delete or rename nothing in it anyway`,
+    ]);
+  });
+
+  it("says why a walk Windows took long over could not wait", async () => {
+    const logged: string[] = [];
+    const open = `${at(".ssh", "id_ed25519")} is open to someone the sandbox user may be`;
+    const timed: FolderOwnEditor = async (edits) =>
+      edits.map((edit) =>
+        edit.dir === at(".ssh") ? ({ ok: true, ms: 41_000, open } as const) : ({ ok: true } as const),
+      );
+    await holder(await tmpDir("windows-denies-"), 1, [], { edit: timed, log: (line) => logged.push(line) }).sync([
+      guard,
+      ssh,
+    ]);
+    assert.deepEqual(logged, [
+      `own entries: ${at(".ssh")} took 41 s (once; they stay); its walk could not wait: ${open}`,
+    ]);
+  });
+
   it("lets a later walk Windows refused where none was needed go, and says so", async () => {
     const holders = await tmpDir("windows-denies-");
     const logged: string[] = [];
@@ -3288,6 +3563,8 @@ async function windowsSandbox(
     ownDenies?: boolean;
     /** Windows refuses srt-win's persistent grant on the workspace at the first initialize. */
     refuseWorkspace?: boolean;
+    /** A second write root, named as a game's folder is, where a file stands instead of a folder. */
+    fileRoot?: boolean;
   } = {},
 ) {
   const root = realpathSync.native(await tmpDir("windows-launch-"));
@@ -3301,6 +3578,9 @@ async function windowsSandbox(
   if (options.failInitializeIn)
     s.runtime.failInitializeIn(options.failInitializeIn.subcommand, options.failInitializeIn.code);
   if (options.refuseWorkspace) s.runtime.failInitializeWith(refusedWriteGrant(workspace));
+  const fileRoot = path.join(root, "이어서 작업 할꺼야");
+  if (options.fileRoot) await writeFile(fileRoot, "");
+  const logged: string[] = [];
   if (options.initializeError) {
     const error = options.initializeError;
     s.runtime.runtime.initialize = async () => {
@@ -3328,16 +3608,17 @@ async function windowsSandbox(
     annotateStderrWithSandboxFailures: (_command: string, stderr: string) => stderr,
   } as unknown as SandboxRuntime;
   const sandbox = await ProcessSandbox.create({
-    writableRoots: [workspace],
+    writableRoots: [workspace, ...(options.fileRoot ? [fileRoot] : [])],
     scratchDir: path.join(root, "scratch"),
     secretPaths: [secrets, path.join(root, "never-created")],
     runtime,
     platform: "win32",
     windows: { bash, session: s.session, profile: root, setupGaps: options.setupGaps },
     toolPath: async () => "",
+    log: (line: string) => logged.push(line),
     ...(options.startInBackground ? { startInBackground: true } : {}),
   });
-  return { sandbox, root, workspace, secrets, wraps, session: s, openInitialize };
+  return { sandbox, root, workspace, fileRoot, secrets, wraps, session: s, openInitialize, logged };
 }
 
 describe("ProcessSandbox on Windows", () => {
@@ -3597,6 +3878,23 @@ describe("ProcessSandbox on Windows", () => {
     assert.equal(w.session.session.active, 0);
     const elsewhere = await w.sandbox.run({ command: "true", cwd: w.sandbox.scratchDir });
     assert.equal(elsewhere.code, 0);
+  });
+
+  it("starts without a game folder a file stands in, rather than stopping every agent", async () => {
+    // Feedback cmwunhjvg: a game's folder had become a file, and making the write roots threw
+    // EEXIST, so the agents of every game would not start.
+    const w = await windowsSandbox({ fileRoot: true });
+    const result = await w.sandbox.run({ command: "true", cwd: w.workspace });
+    assert.equal(result.code, 0, result.stderr);
+    const granted = (w.session.session.applied?.write ?? []).map((dir) => path.win32.resolve(dir));
+    assert.ok(granted.includes(path.win32.resolve(w.workspace)), "the other roots are granted");
+    assert.ok(!granted.includes(path.win32.resolve(w.fileRoot)), "nothing is granted on the file");
+    assert.equal((await stat(w.fileRoot)).isFile(), true, "the file is left as it was");
+    assert.ok(
+      w.logged.some((line) => line.includes(w.fileRoot)),
+      `the log names the folder left out: ${w.logged.join("\n")}`,
+    );
+    await w.sandbox.dispose();
   });
 
   it("refuses a per-run write outside the session's grants, and releases everything", async () => {

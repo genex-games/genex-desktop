@@ -134,7 +134,22 @@ disagrees with this preface, this preface wins.
   (`{"grantId":"…","modelId":"<id>","prompt":"…","outputFormat":"text","maxCredits":<n>}`). Always
   ask with `RequestSpendGrant`: it is the one call that works both while the game is made and once
   it is published. Never write `GetActiveSpendGrant` alone, and never leave out `disclosure`: a
-  request without it is refused `invalid_request`. `GenerateStream` hands its text over whole.
+  request without it is refused `invalid_request`.
+- A character's line is asked with `GenerateStream` (the same options) and shown as it is written:
+  `OnDelta(Request, Text, SoFar)` fires for each piece, then `OnSettled`. Put the words on screen
+  from the first `OnDelta`; a player must never look at a silent character until the whole answer
+  exists. For a JSON answer `SoFar` is the JSON text so far: read the spoken field out of it as
+  it grows. With practice answers and with **Use my plan** the text still arrives in pieces.
+- A character speaks with `Speak`: `{"grantId":"…","text":"<the line>","voice":"<a voice id>","tier":"standard","style":"<how he says it>"}`.
+  Voice ids: `narrator`, `heroine`, `gruff`, `elder`, `robot`, `imp` (every tier) and `sprite`,
+  `sage`, `matron`, `herald`, `whisper`, `muse` (tiers `standard` and `economy`); `style` works
+  on those two tiers.
+  `OnSpeechStarted(Request, Sound)` hands over a `USoundWave` as soon as the first sound exists:
+  set it on an audio component at the speaker and play it; it keeps playing as the rest arrives.
+  `OnSettled` ("speak") then says how long the line is (`durationMs`). The budget must name
+  speech: add `"voice":{"speech":{"tiers":["standard"],"estimatedCharactersPerPeriod":<n>}}` to
+  the `RequestSpendGrant` options and declare speech in the game's AI budget before it is
+  published, or every line is refused `voice_not_enabled`. A microphone has no binding yet.
 - A call that wants fields back sends a schema, and the whole options text is one JSON object:
   `{"grantId":"…","modelId":"<id>","prompt":"…","outputFormat":"json","maxOutputTokens":2000,"maxCredits":<n>,"schema":{"type":"object","additionalProperties":false,"required":["line","mood"],"properties":{"line":{"type":"string","maxLength":240},"mood":{"type":"string","enum":["warm","wary","angry"]}}}}`.
   Its answer is the result's `output`, an object. Write the schema exactly this way, because the
@@ -268,7 +283,7 @@ gets no such label.
 
 ## Not in Studio yet
 
-These parts of Genex CLI 1.46.4 are left out of the card below because Studio cannot run them yet:
+These parts of Genex CLI 1.46.5 are left out of the card below because Studio cannot run them yet:
 
 - `llm bench` takes no `system` or `messages` option here. Put the system text and a typical
   history into the bench prompt itself, so the measured size is the real call's.

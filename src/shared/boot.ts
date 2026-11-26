@@ -89,6 +89,16 @@ export const SandboxLaunchCode = {
 } as const;
 export type SandboxLaunchCode = (typeof SandboxLaunchCode)[keyof typeof SandboxLaunchCode];
 
+/** Why Set up of the protected workspace failed, where Genex knows (`SandboxSetupError`). */
+export const SandboxSetupFailure = {
+  /**
+   * Windows: Windows refused to create the local account sandboxed commands run as (srt-win's
+   * `NetUserAdd` failed): a security program, a device-management policy or a password policy.
+   */
+  UserNotCreated: "sandbox-user-not-created",
+} as const;
+export type SandboxSetupFailure = (typeof SandboxSetupFailure)[keyof typeof SandboxSetupFailure];
+
 /** What a folder the Windows sandbox left out is to Genex (`UiEvent.SandboxFolderLeftOut`). */
 export const SandboxFolderKind = {
   /** A game's folder, or a folder inside the games folder. */
@@ -119,9 +129,10 @@ export type BootFailure = (typeof BootFailure)[keyof typeof BootFailure];
 
 /**
  * A held start's code: the boot's own, or the sandbox's when the sandbox is what stopped it (a setup
- * problem, or a start its commands could not make, such as Windows' reserved proxy ports).
+ * problem, a Set up that failed, or a start its commands could not make, such as Windows' reserved
+ * proxy ports).
  */
-export type BootFailureCode = BootFailure | SandboxProblemCode | SandboxLaunchCode;
+export type BootFailureCode = BootFailure | SandboxProblemCode | SandboxLaunchCode | SandboxSetupFailure;
 
 /** A step a launch's start passed through before the studio opened (`StartFacts.passed`). */
 export const StartPassage = {

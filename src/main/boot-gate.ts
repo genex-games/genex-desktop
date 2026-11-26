@@ -30,7 +30,7 @@ import {
 import type { DataMoveProgress } from "../shared/data-folder.ts";
 import { errorMessage } from "../shared/errors.ts";
 import { t } from "../shared/i18n.ts";
-import { SandboxUnavailableError } from "../substrate/sandbox-unavailable.ts";
+import { SandboxUnavailableError, sandboxStartFailureCode } from "../substrate/sandbox-unavailable.ts";
 
 /** What installing the sandbox answered: `cancelled` when the administrator prompt was dismissed. */
 export interface SandboxInstall {
@@ -155,11 +155,15 @@ function startLog() {
   };
 }
 
-/** What Set up reads of its gate: the state now, the retry, and the held screen's way back to an open studio. */
+/**
+ * What Set up reads of its gate: the state now, the retry, the held screen's way back to an open
+ * studio, and where it says why it failed, when the sandbox knows (`SandboxSetupError`).
+ */
 interface SetUpGate {
   state(): BootState;
   retry(): Promise<BootState>;
   leave(): SetupLeave | null;
+  failed(code: BootFailureCode): void;
 }
 
 /** A gate's Set up: the install behind the administrator prompt, then the gate's retry. */
@@ -200,6 +204,9 @@ function setUpRunner(options: BootGateOptions, gate: SetUpGate) {
     installing = install(problem, () => installSandbox(problem), left)
       .catch((error: unknown) => {
         options.setUpFailed?.(error);
+        // The start's facts carry it, so analytics hears why Set up failed once the studio opens.
+        const code = sandboxStartFailureCode(error);
+        if (code) gate.failed(code);
         if (!left) throw error;
         return notSetUp(left, error);
       })
@@ -266,7 +273,7 @@ export function createBootGate(platform: string, options: BootGateOptions = {}):
     return running;
   };
 
-  const setUp = setUpRunner(options, { state: () => state, retry, leave: () => leave });
+  const setUp = setUpRunner(options, { state: () => state, retry, leave: () => leave, failed: start.failed });
   return {
     state: () => (setUp.tried() ? { ...state, setupTried: true } : state),
     starting(step) {
