@@ -199,6 +199,15 @@ int32 UGenexModelsSubsystem::Speak(const FString& OptionsJson)
 	return Models.IsValid() ? Models->Speak(GenexModelsSubsystemDetail::Options(OptionsJson)) : 0;
 }
 
+int32 UGenexModelsSubsystem::Transcribe(const TArray<uint8>& Wav, const FString& OptionsJson)
+{
+	if (!Models.IsValid()) return 0;
+	genex::Json Options = GenexModelsSubsystemDetail::Options(OptionsJson);
+	// The core's calls carry JSON: the recording crosses as base64 and is sent as its own bytes.
+	if (Options.IsObject()) Options.Set("audio", GenexUnrealJson::Utf8(FBase64::Encode(Wav.GetData(), static_cast<uint32>(Wav.Num()))));
+	return Models->Transcribe(Options);
+}
+
 int32 UGenexModelsSubsystem::Judge(const FString& OptionsJson)
 {
 	return Models.IsValid() ? Models->Judge(GenexModelsSubsystemDetail::Options(OptionsJson)) : 0;

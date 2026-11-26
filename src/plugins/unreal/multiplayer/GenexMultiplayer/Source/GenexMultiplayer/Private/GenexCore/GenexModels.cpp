@@ -178,6 +178,12 @@ int Models::Speak(const Json& options) {
   return Start("speak", std::move(args));
 }
 
+int Models::Transcribe(const Json& options) {
+  Json args = Json::MakeArray();
+  args.Push(options);
+  return Start("transcribe", std::move(args));
+}
+
 int Models::Judge(const Json& options) {
   Json args = Json::MakeArray();
   args.Push(options);

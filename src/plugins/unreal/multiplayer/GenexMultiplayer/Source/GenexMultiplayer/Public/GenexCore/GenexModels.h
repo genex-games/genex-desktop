@@ -154,6 +154,10 @@ class GENEX_CORE_API Models {
    *  optionally `tier`, `style`, `language`. The sound arrives while it is made (SpeechStart, then SpeechAudio events),
    *  then the Result with what was said and what it cost. */
   int Speak(const Json& options);
+  /** A recording of the player turned into words, under a budget whose terms carry listening: `grantId` and `audio`
+   *  (one WAV file, base64), and optionally `language` and `model`. Recording is the game's own; this only sends it.
+   *  The Result carries `text` (empty when nobody spoke), `language`, `durationMs` and what it cost. */
+  int Transcribe(const Json& options);
   /** Ask the player for a standing budget. In a native build nothing is asked: the answer is the budget the player
    *  approved on the game's Genex page, or kBudgetNotApproved. */
   int RequestSpendGrant(const Json& options);

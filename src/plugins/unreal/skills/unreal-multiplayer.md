@@ -108,7 +108,8 @@ and the published game answers under a budget each player approves on its Genex 
 a character's words as they arrive, never a silent wait for the whole answer. `Speak` says one line
 in one of Genex's voices (`grantId`, `text`, `voice`, optional `tier` and `style`): play the
 `USoundWave` that `OnSpeechStarted` hands over on an audio component at the speaker, and declare
-speech in the game's AI budget, or every line is refused.
+speech in the game's AI budget, or every line is refused. `Transcribe` turns a WAV the game
+recorded from the microphone into the player's words.
 
 ## 5. Publish
 

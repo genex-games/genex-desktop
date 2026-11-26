@@ -149,7 +149,12 @@ disagrees with this preface, this preface wins.
   `OnSettled` ("speak") then says how long the line is (`durationMs`). The budget must name
   speech: add `"voice":{"speech":{"tiers":["standard"],"estimatedCharactersPerPeriod":<n>}}` to
   the `RequestSpendGrant` options and declare speech in the game's AI budget before it is
-  published, or every line is refused `voice_not_enabled`. A microphone has no binding yet.
+  published, or every line is refused `voice_not_enabled`.
+- The player speaks with `Transcribe(Wav, OptionsJson)`: record the microphone yourself while a
+  talk key is held (Unreal's `Audio::FAudioCapture`, module `AudioCaptureCore`), make one 16-bit
+  mono WAV at 16 kHz, and pass its bytes with `{"grantId":"…","language":"en"}`. `OnSettled`
+  ("transcribe") carries `text`, empty when nobody spoke: use it as the player's line. Add
+  `"transcription":{"estimatedSecondsPerPeriod":<n>}` beside `speech` in the budget's `voice`.
 - A call that wants fields back sends a schema, and the whole options text is one JSON object:
   `{"grantId":"…","modelId":"<id>","prompt":"…","outputFormat":"json","maxOutputTokens":2000,"maxCredits":<n>,"schema":{"type":"object","additionalProperties":false,"required":["line","mood"],"properties":{"line":{"type":"string","maxLength":240},"mood":{"type":"string","enum":["warm","wary","angry"]}}}}`.
   Its answer is the result's `output`, an object. Write the schema exactly this way, because the

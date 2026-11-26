@@ -25,6 +25,8 @@
 //   speak                POST /grants/{id}/speech, an event stream: `start` with the sound's format, an `audio`
 //                        per piece of it (base64 PCM, each a SpeechAudio event as it arrives), `done` with the
 //                        call's view. Playing the sound is the engine layer's.
+//   transcribe           POST /grants/{id}/transcriptions  the recording itself as the body (audio/wav), its key in
+//                        the Idempotency-Key header, `language` and `model` as query; answered in that response
 //   waitForGeneration    GET  /generations/{id} every 750 ms
 //   getGeneration        GET  /generations/{id}
 //
@@ -240,8 +242,16 @@ class GENEX_CORE_API HttpBridge final : public Bridge, public IPumped {
 
   double Now() const;
   std::string NewKey() const;
-  /** One request. With `chunk`, the answer is asked for as an event stream and its body is handed over as it arrives. */
-  void Request(std::string method, std::string path, std::optional<Json> body, std::string_view fallback, ReplyDone done, HttpChunk chunk = nullptr);
+  /** A body that is not JSON: its bytes, their content type and the headers that travel with them. */
+  struct RawBody {
+    std::string bytes;
+    std::string contentType;
+    std::vector<HttpHeader> headers;
+  };
+  /** One request. With `chunk`, the answer is asked for as an event stream and its body is handed over as it arrives.
+   *  With `raw`, that is the body instead of `body`. */
+  void Request(std::string method, std::string path, std::optional<Json> body, std::string_view fallback, ReplyDone done, HttpChunk chunk = nullptr,
+               std::optional<RawBody> raw = std::nullopt);
   void Get(std::string path, std::string_view fallback, ReplyDone done);
   void Post(std::string path, Json body, std::string_view fallback, ReplyDone done);
 
@@ -280,6 +290,7 @@ class GENEX_CORE_API HttpBridge final : public Bridge, public IPumped {
   void Deliver(int id, Op& op, std::string_view text);
   void Judge(int id, const Json& args);
   void Speak(int id, const Json& args);
+  void Transcribe(int id, const Json& args);
   /** One event of a speak's stream. */
   void SpeechEvent(int id, const std::string& event, const Json& data);
   void WaitFor(int id, const Json& args);
