@@ -350,6 +350,13 @@ export async function needsFirstCommit(dir: string): Promise<boolean> {
 const INITIAL_COMMIT = "substrate: initial";
 
 /**
+ * `git init` of a repository Genex makes, copying nothing from Git's templates folder (sample hooks,
+ * a description): a Git installed on another drive whose templates Windows would not let Genex read
+ * failed every `init` with "cannot copy …: Permission denied", and Genex never started.
+ */
+const INIT_ARGS = ["init", "-q", "--template=", "-b", "main"];
+
+/**
  * Git's bulk check-in for one call: every blob past `core.bigFileThreshold` (here every non-empty
  * file) streams into a single pack instead of a loose object file of its own. A first commit of a
  * folder with thousands of files (an adopted game) otherwise creates, writes and renames a file per
@@ -366,7 +373,7 @@ export async function ensureRepo(dir: string, deps: FirstCommitDeps = {}): Promi
   // The marker goes in before git writes anything, so no interrupted start looks finished.
   await ensureDir(dotGit);
   await writeFile(path.join(dotGit, FIRST_COMMIT_MARKER), "");
-  await git(dir, ["init", "-q", "-b", "main"]);
+  await git(dir, INIT_ARGS);
   deps.onStep?.(FirstCommitStep.Init);
   await releaseIndexLock(dotGit, deps);
   await stagePublicChanges(dir, ONE_PACK_ENV);
@@ -421,7 +428,7 @@ export async function checkOutNewRepo(fromDir: string, dir: string, files: reado
   const dotGit = path.join(dir, ".git");
   await ensureDir(dotGit);
   await writeFile(path.join(dotGit, FIRST_COMMIT_MARKER), "");
-  await git(dir, ["init", "-q", "-b", "main"]);
+  await git(dir, INIT_ARGS);
   await git(dir, ["fast-import", "--quiet", "--done"], {}, await firstCommitStream(fromDir, files));
   await git(dir, ["reset", "-q", "--hard", "HEAD"]);
   await rm(path.join(dotGit, FIRST_COMMIT_MARKER), { force: true });

@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import net from "node:net";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { mkdir, readFile, readdir, rename, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, stat, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, it } from "node:test";
@@ -3288,6 +3288,8 @@ async function windowsSandbox(
     ownDenies?: boolean;
     /** Windows refuses srt-win's persistent grant on the workspace at the first initialize. */
     refuseWorkspace?: boolean;
+    /** A second write root, named as a game's folder is, where a file stands instead of a folder. */
+    fileRoot?: boolean;
   } = {},
 ) {
   const root = realpathSync.native(await tmpDir("windows-launch-"));
@@ -3301,6 +3303,9 @@ async function windowsSandbox(
   if (options.failInitializeIn)
     s.runtime.failInitializeIn(options.failInitializeIn.subcommand, options.failInitializeIn.code);
   if (options.refuseWorkspace) s.runtime.failInitializeWith(refusedWriteGrant(workspace));
+  const fileRoot = path.join(root, "이어서 작업 할꺼야");
+  if (options.fileRoot) await writeFile(fileRoot, "");
+  const logged: string[] = [];
   if (options.initializeError) {
     const error = options.initializeError;
     s.runtime.runtime.initialize = async () => {
@@ -3328,16 +3333,17 @@ async function windowsSandbox(
     annotateStderrWithSandboxFailures: (_command: string, stderr: string) => stderr,
   } as unknown as SandboxRuntime;
   const sandbox = await ProcessSandbox.create({
-    writableRoots: [workspace],
+    writableRoots: [workspace, ...(options.fileRoot ? [fileRoot] : [])],
     scratchDir: path.join(root, "scratch"),
     secretPaths: [secrets, path.join(root, "never-created")],
     runtime,
     platform: "win32",
     windows: { bash, session: s.session, profile: root, setupGaps: options.setupGaps },
     toolPath: async () => "",
+    log: (line: string) => logged.push(line),
     ...(options.startInBackground ? { startInBackground: true } : {}),
   });
-  return { sandbox, root, workspace, secrets, wraps, session: s, openInitialize };
+  return { sandbox, root, workspace, fileRoot, secrets, wraps, session: s, openInitialize, logged };
 }
 
 describe("ProcessSandbox on Windows", () => {
@@ -3597,6 +3603,23 @@ describe("ProcessSandbox on Windows", () => {
     assert.equal(w.session.session.active, 0);
     const elsewhere = await w.sandbox.run({ command: "true", cwd: w.sandbox.scratchDir });
     assert.equal(elsewhere.code, 0);
+  });
+
+  it("starts without a game folder a file stands in, rather than stopping every agent", async () => {
+    // Feedback cmwunhjvg: a game's folder had become a file, and making the write roots threw
+    // EEXIST, so the agents of every game would not start.
+    const w = await windowsSandbox({ fileRoot: true });
+    const result = await w.sandbox.run({ command: "true", cwd: w.workspace });
+    assert.equal(result.code, 0, result.stderr);
+    const granted = (w.session.session.applied?.write ?? []).map((dir) => path.win32.resolve(dir));
+    assert.ok(granted.includes(path.win32.resolve(w.workspace)), "the other roots are granted");
+    assert.ok(!granted.includes(path.win32.resolve(w.fileRoot)), "nothing is granted on the file");
+    assert.equal((await stat(w.fileRoot)).isFile(), true, "the file is left as it was");
+    assert.ok(
+      w.logged.some((line) => line.includes(w.fileRoot)),
+      `the log names the folder left out: ${w.logged.join("\n")}`,
+    );
+    await w.sandbox.dispose();
   });
 
   it("refuses a per-run write outside the session's grants, and releases everything", async () => {

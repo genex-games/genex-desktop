@@ -33,7 +33,9 @@ the setup screen opens on `git-missing`. What differs from macOS:
   and `initialize()` runs again with the rest (`refusedWriteRoot`). It stays out for the launch; a
   command that works in it or writes to it is refused (`write-refused`, which says to move the game
   or own the folder and restart), the log says `left … out of the sandbox`, and analytics hears
-  `sandbox_folder_left_out`. Any other grant failure still stops the start.
+  `sandbox_folder_left_out`. A write root a file stands in (a game's folder that became a file)
+  cannot be made a folder and is left ungranted the same way, logged `left … out of the sandbox:
+  it is not a folder`. Any other grant failure still stops the start.
 - Core startup awaits `ProcessSandbox.ensureReady()` before migrating or booting the harness.
   A failed background sandbox start reports its original error without rewinding or reseeding
   valid harness edits. A later Try again can retry initialization; broken harness code still
