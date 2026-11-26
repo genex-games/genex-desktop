@@ -125,7 +125,12 @@ export default {
     "모델을 다운로드하는 중이에요. 다운로드가 끝나면 이 모델을 삭제해 주세요.",
   "A mountain rescue game with a dog and a sled": "개와 썰매로 산에서 구조하는 게임",
   "A museum guard game where the exhibits come alive": "전시품이 살아 움직이는 박물관 경비원 게임",
+  "AI is off in this game": "이 게임의 AI가 꺼져 있어요",
+  "AI is on": "AI가 켜져 있어요",
+  "AI is paused: not enough Genex credits": "AI 일시 중지: Genex 크레딧이 부족해요",
   "Agents get Unreal {to}’s tools.": "에이전트가 Unreal {to}의 도구를 쓸 수 있어요.",
+  "Allow {n, plural, one {{shown} credit} other {{shown} credits}}": "{n, plural, other {{shown} 크레딧}} 허용",
+  "Allowing…": "허용하는 중…",
   "An arcade shooter where your bullets bounce off the walls": "총알이 벽에 튕기는 아케이드 슈팅 게임",
   "A new build is ready to play.": "새 빌드를 플레이할 수 있어요.",
   "A new build is ready — reload to play it": "새 빌드가 준비됐어요 — 새로 고침해서 플레이하세요",
@@ -512,9 +517,11 @@ export default {
   "Build with the Cursor plan you already have.": "이미 있는 Cursor 요금제로 만들어요.",
   "Build with the Google AI plan you already have.": "이미 있는 Google AI 요금제로 만들어요.",
   "Build with the Grok account you already have.": "이미 있는 Grok 계정으로 만들어요.",
+  "Change limit": "한도 변경",
   "Changes Harness made to its own instructions. Undo any of them.":
     "Harness가 자기 지침에 한 변경이에요. 어떤 것이든 되돌릴 수 있어요.",
   "Checking that Microsoft signed the installer…": "설치 프로그램에 Microsoft 서명이 있는지 확인하고 있어요…",
+  "Couldn’t turn AI off. Try again.": "AI를 끄지 못했어요. 다시 시도해 주세요.",
   "Downloading the Visual Studio Build Tools installer from Microsoft…":
     "Microsoft에서 Visual Studio Build Tools 설치 프로그램을 내려받고 있어요…",
   "Genex keeps a copy of the project file first. What Unreal {to} saves won’t open in {from}.":
@@ -529,6 +536,12 @@ export default {
     "Microsoft의 Visual Studio Build Tools 2022를 'C++를 사용한 데스크톱 개발', .NET Framework 4.8 SDK와 함께 설치하세요.",
   "Installing Visual Studio Build Tools. Choose Yes when Windows asks; Microsoft's installer shows its progress.":
     "Visual Studio Build Tools를 설치하고 있어요. Windows가 물어보면 '예'를 고르세요. 진행 상황은 Microsoft 설치 프로그램에 표시돼요.",
+  "Keep it on": "켜 두기",
+  Left: "남음",
+  "Let {game} use AI?": "{game}에서 AI를 사용하게 할까요?",
+  "Limit {limit, plural, one {{shown} credit} other {{shown} credits}}": "한도 {limit, plural, other {{shown} 크레딧}}",
+  "Limit {limit, plural, one {{shown} credit} other {{shown} credits}} · {held} on hold for requests still running":
+    "한도 {limit, plural, other {{shown} 크레딧}} · 진행 중인 요청용으로 {held} 보류 중",
   "Microsoft's download led somewhere other than Microsoft, so Genex stopped.":
     "Microsoft 다운로드가 Microsoft가 아닌 곳으로 연결돼서 Genex가 멈췄어요.",
   "Microsoft's download link wasn't secure, so Genex didn't download it.":
@@ -546,14 +559,29 @@ export default {
   "Move {project} to Unreal {to}": "{project}을(를) Unreal {to}(으)로 옮기기",
   "Play in browser": "브라우저에서 플레이",
   "Play {title} in the browser": "{title} 브라우저에서 플레이",
+  "Press Play in Unreal: AI gives practice answers (free, made up)":
+    "Unreal에서 Play를 눌러요: AI가 연습 답변을 해요 (무료, 지어낸 답)",
+  "Real AI is on · used {spent} of {cap} credits": "실제 AI 켜짐 · {cap} 크레딧 중 {spent} 사용",
+  "Real AI is on · used {spent} of {cap} credits · {held} on hold":
+    "실제 AI 켜짐 · {cap} 크레딧 중 {spent} 사용 · {held} 보류 중",
+  "Real models answer your next Play in Unreal, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
+    "Unreal의 다음 Play에서는 실제 모델이 답하고, 네 Genex 크레딧으로 결제돼: 이번 플레이에서 최대 {cap} 크레딧 ({dollars}).",
+  "Real models answer your next Play in Unreal, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session. The game is added to your Genex account as a private draft; none of its files are uploaded.":
+    "Unreal의 다음 Play에서는 실제 모델이 답하고, 네 Genex 크레딧으로 결제돼: 이번 플레이에서 최대 {cap} 크레딧 ({dollars}). 게임은 비공개 초안으로 네 Genex 계정에 추가되고, 게임 파일은 하나도 업로드되지 않아.",
   "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
     "추천해요. Microsoft의 무료 C++ 도구예요. 이게 있으면 에이전트가 게임 로직을 C++로 쓰고, C++가 들어간 게임이나 플러그인을 Unreal로 패키징할 수 있어요. 약 7GB예요. '대신 해 주기'로 설치할 수 있어요. Windows가 물어보면 '예'를 고르세요.",
   "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++ and the .NET Framework 4.8 SDK.":
     "추천해요. Microsoft의 무료 C++ 도구예요. 이게 있으면 에이전트가 게임 로직을 C++로 쓰고, C++가 들어간 게임이나 플러그인을 Unreal로 패키징할 수 있어요. Visual Studio Build Tools를 'C++를 사용한 데스크톱 개발', .NET Framework 4.8 SDK와 함께 설치하세요.",
+  "Replaces the budget running now": "현재 예산을 대체해요",
   "Self-improvement is off. Harness keeps its own instructions as they are.":
     "자기 개선이 꺼져 있어요. Harness가 자기 지침을 그대로 둬요.",
+  "Sign in to Genex to turn AI on.": "AI를 켜려면 Genex에 로그인해 주세요.",
   "This project isn't on an older Unreal that Genex moves to {version}.":
     "이 프로젝트는 Genex가 {version}(으)로 옮기는 이전 Unreal 버전이 아니에요.",
+  "Turn AI off": "AI 끄기",
+  "Turn AI off in this game?": "이 게임의 AI를 끌까요?",
+  "Turn AI on": "AI 켜기",
+  "Turning AI off…": "AI 끄는 중…",
   "Unreal can build C++ on this PC.": "이 PC에서 Unreal이 C++를 빌드할 수 있어요.",
   "Unreal {engine} doesn't build with the C++ tools on this PC. Do it for me updates them: choose Yes when Windows asks.":
     "Unreal {engine}은 이 PC의 C++ 도구로 빌드할 수 없어요. '대신 해 주기'로 업데이트할 수 있어요. Windows가 물어보면 '예'를 고르세요.",
@@ -562,6 +590,7 @@ export default {
   "Unreal {version} isn't on this computer yet. Install it first, then move the project.":
     "Unreal {version}이(가) 아직 이 컴퓨터에 없어요. 먼저 설치한 다음 프로젝트를 옮기세요.",
   "Update Visual Studio Build Tools": "Visual Studio Build Tools 업데이트",
+  Used: "사용",
   "Visual Studio Build Tools are installed.": "Visual Studio Build Tools를 설치했어요.",
   "Visual Studio's C++ tools are ready": "Visual Studio C++ 도구가 준비됐어요",
   "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.":
@@ -1385,6 +1414,10 @@ export default {
   "Fit everything": "전체 보기",
   "Tidy up": "정리",
   "Genex is drawing": "Genex가 그리는 중",
+  "You pay for what it uses from your Genex credits, up to this limit.":
+    "게임이 쓴 만큼 Genex 크레딧으로 결제하고, 이 한도를 넘지 않아요.",
+  "Your own {plan} plan answers your next Play in Unreal, on this computer. No Genex credits are spent; your plan's limits apply, answers come slower, and voices stay practice.":
+    "Unreal의 다음 Play에서는 이 컴퓨터에서 네 {plan} 요금제가 답해. Genex 크레딧은 쓰지 않아. 요금제 한도가 적용되고, 답은 더 느리게 오고, 음성은 연습용 그대로야.",
   "{title} · next": "{title} · 다음",
   "{count, plural, one {# new pick} other {# new picks}}": "{count, plural, other {새 선택 #개}}",
   "Use this": "이걸로",
@@ -7004,7 +7037,6 @@ export default {
   "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
     "실제 AI를 쓰려면 Genex에 로그인해야 해. 설정에서 로그인한 다음 다시 해 봐. 연습 답변은 계속돼.",
   "Real AI stopped. Practice answers go on.": "실제 AI가 멈췄어. 연습 답변은 계속돼.",
-  "Real AI · {spent} of {cap} credits": "실제 AI · {cap} 중 {spent} 크레딧",
   "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
     "이 미리보기에서는 실제 모델이 답하고, 네 Genex 크레딧으로 결제돼: 이번 플레이에서 최대 {cap} 크레딧 ({dollars}).",
   "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session. The game is added to your Genex account as a private draft; none of its files are uploaded.":
@@ -7030,9 +7062,6 @@ export default {
   "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
     "로컬 모델에는 Apple 실리콘 Mac이나 64비트 Windows 또는 Linux PC가 필요해요",
   "{model} can't run on this computer.": "{model}은(는) 이 컴퓨터에서 실행할 수 없어요.",
-  "AI budget for {game}": "{game} AI 예산",
-  "AI budget: {remaining} of {limit, plural, one {{shown} credit} other {{shown} credits}} left":
-    "AI 예산: {limit, plural, other {{shown} 크레딧}} 중 {remaining} 남음",
   "AI in games is paused right now. Try again later.":
     "지금은 게임 속 AI가 일시 중지됐어요. 나중에 다시 시도해 주세요.",
   "Approving replaces the AI budget already running for this game.":
@@ -7040,17 +7069,12 @@ export default {
   "At most {n, plural, one {{shown} credit} other {{shown} credits}} for one call.":
     "한 번 호출에 최대 {n, plural, other {{shown} 크레딧}}이에요.",
   "Couldn’t set the budget. Try again.": "예산을 설정하지 못했어요. 다시 시도해 주세요.",
-  "Couldn’t stop the AI budget. Try again.": "AI 예산을 중지하지 못했어요. 다시 시도해 주세요.",
   "It ends when you stop it, when you sign out of Genex, or after 24 hours.":
     "직접 중지하거나, Genex에서 로그아웃하거나, 24시간이 지나면 끝나요.",
   "It uses {models}.": "사용하는 AI: {models}.",
   "Keep it": "유지하기",
   Limit: "한도",
   "Reading the AI budget…": "AI 예산 불러오는 중…",
-  "Set AI budget": "AI 예산 설정하기",
-  "Sign in to Genex to set an AI budget.": "AI 예산을 설정하려면 Genex에 로그인해 주세요.",
-  "Stop this AI budget?": "이 AI 예산을 중지할까요?",
-  "Stopping the AI budget…": "AI 예산 중지하는 중…",
   "That took too long, so the budget has to be read again.": "시간이 너무 오래 걸려서 예산을 다시 불러와야 해요.",
   "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per hour.":
     "게임 추정으로는 한 시간에 약 {n, plural, other {{shown} 크레딧}}이에요.",
@@ -7058,11 +7082,8 @@ export default {
     "게임 추정으로는 1분에 약 {n, plural, other {{shown} 크레딧}}이에요.",
   "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per session.":
     "게임 추정으로는 한 세션에 약 {n, plural, other {{shown} 크레딧}}이에요.",
-  "This game asks AI models for things while you play. You pay for what it uses from your Genex credits, up to the limit you set.":
-    "이 게임은 플레이하는 동안 AI 모델을 사용해요. 사용한 만큼 Genex 크레딧으로 결제하고, 설정한 한도를 넘지 않아요.",
   "This game’s AI isn’t available right now.": "지금은 이 게임의 AI를 사용할 수 없어요.",
   "This game’s voice AI isn’t available in the app yet.": "이 게임의 음성 AI는 아직 앱에서 사용할 수 없어요.",
-  "Uses AI, paid from your Genex credits.": "AI를 사용하고, Genex 크레딧으로 결제해요.",
   "Verify your Genex account’s email to pay with credits, then try again.":
     "크레딧으로 결제하려면 Genex 계정의 이메일을 인증한 뒤 다시 시도해 주세요.",
   "You don’t have enough Genex credits for this budget.": "이 예산에 쓸 Genex 크레딧이 부족해요.",

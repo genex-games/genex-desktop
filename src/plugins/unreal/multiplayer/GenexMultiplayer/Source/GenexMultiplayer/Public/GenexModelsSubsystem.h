@@ -9,7 +9,9 @@
 // and the reads run under it. A native build has no approval window, so what needs one does not
 // work: Generate without a `grantId` settles `native_unsupported`, and RequestSpendGrant asks the
 // player nothing: it answers the budget they already approved, or `budget_not_approved`.
-// GenerateStream's text arrives whole, as one OnDelta before OnSettled.
+// GenerateStream's text arrives as it is written: an OnDelta per piece, then OnSettled. Speak says one line in
+// one of Genex's voices under a budget whose terms carry speech: OnSpeechStarted hands over a sound to play, which
+// fills as the line is made, then OnSettled.
 // The engine-free half is GenexCore/GenexModels.h and GenexCore/GenexModelsHttp.h.
 //
 //   UGenexModelsSubsystem* Models = GetGameInstance()->GetSubsystem<UGenexModelsSubsystem>();
@@ -28,6 +30,8 @@
 
 namespace genex::models { class Models; }
 class FGenexModelsHttp;
+class USoundWave;
+class USoundWaveProcedural;
 
 /** A call settled: `ResultJson` is what the JavaScript call resolves with, as JSON text. For Generate, GenerateStream,
  *  Judge, RequestSpendGrant and WaitForGeneration an object with `status` (and `error` when it failed); for a read,
@@ -36,8 +40,8 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FGenexModelsSettledSignature, int
 /** A read the JavaScript call rejects (GetGenerationModels, GetGeneration, GetSpendGrant, GetActiveSpendGrant,
  *  StopSpendGrant, Init): `Error` is the code. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FGenexModelsRejectedSignature, int32, Request, const FString&, Call, const FString&, Error);
-/** GenerateStream: `Text` arrived since the last frame, `SoFar` is all of it. A native build reads the answer whole,
- *  so this fires once, with all of the text, right before OnSettled. */
+/** GenerateStream: `Text` arrived since the last frame, `SoFar` is all of it. It fires while the answer is being
+ *  written; a stand that cannot stream answers whole, and then it fires once, with all of the text, before OnSettled. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FGenexModelsDeltaSignature, int32, Request, const FString&, Text, const FString&, SoFar);
 /** GenerateStream with a JSON answer: the schema's first string property (`Name`) as far as written (`Text`). Only a
  *  page's bridge sends it; nothing fires it in a native build. */
@@ -46,6 +50,11 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FGenexModelsPartialFieldSignature
  *  true while it waits for the player's next one, false once it has run or given up. A native build opens no window,
  *  so nothing fires it there. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FGenexModelsGestureSignature, int32, Request, const FString&, Call, bool, bWaiting);
+
+/** Speak: the line's sound exists and is being filled. Play `Sound` now (an audio component at the speaker, or
+ *  PlaySound2D): it plays what has arrived and keeps playing as more does. It fires at most once for a call, and not
+ *  at all for a line that failed before any sound was made. */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FGenexModelsSpeechStartedSignature, int32, Request, USoundWave*, Sound);
 
 /** For C++ callers: one call's end. `bRejected` false: `Body` is the result as JSON text; true: `Body` is the code. */
 DECLARE_MULTICAST_DELEGATE_FourParams(FGenexModelsEndedNative, int32 /*Request*/, const FString& /*Call*/, bool /*bRejected*/, const FString& /*Body*/);
@@ -82,9 +91,15 @@ public:
 	 *  `native_unsupported`. */
 	UFUNCTION(BlueprintCallable, Category = "Genex|Models")
 	int32 Generate(const FString& OptionsJson);
-	/** The same call under a budget. Its text arrives whole: one OnDelta with all of it, then OnSettled. */
+	/** The same call under a budget, answered as it is written: an OnDelta per piece of text, then OnSettled. */
 	UFUNCTION(BlueprintCallable, Category = "Genex|Models")
 	int32 GenerateStream(const FString& OptionsJson);
+	/** One line said in one of Genex's voices, under a budget whose terms carry speech. `OptionsJson`: `grantId`,
+	 *  `text`, `voice` (a voice's id from Genex's list), and optionally `tier`, `style` (how to say it) and `language`.
+	 *  OnSpeechStarted hands over the sound as soon as the first of it exists; OnSettled ("speak") says how it ended
+	 *  and what it cost. A build with no sound output still settles; it only plays nothing. */
+	UFUNCTION(BlueprintCallable, Category = "Genex|Models")
+	int32 Speak(const FString& OptionsJson);
 	/** The budget's classifier: typed questions about the game's own state. */
 	UFUNCTION(BlueprintCallable, Category = "Genex|Models")
 	int32 Judge(const FString& OptionsJson);
@@ -113,7 +128,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Genex|Models")
 	bool Cancel(int32 Request);
 	/** The platform's player-facing sentence for an error code (empty: none): show it, or an in-fiction line keyed
-	 *  off the same code, never the raw code. */
+	 *  off the same code, never the raw code. Every code Genex answers a call with has the sentence a web game
+	 *  shows for it; a code this plugin does not know reads as the general one. */
 	UFUNCTION(BlueprintPure, Category = "Genex|Models")
 	FString GenerationErrorMessage(const FString& Code) const;
 	/** Hands over what settled or arrived since the last call. Runs once per frame by itself. */
@@ -130,6 +146,8 @@ public:
 	FGenexModelsPartialFieldSignature OnPartialField;
 	UPROPERTY(BlueprintAssignable, Category = "Genex|Models")
 	FGenexModelsGestureSignature OnGesture;
+	UPROPERTY(BlueprintAssignable, Category = "Genex|Models")
+	FGenexModelsSpeechStartedSignature OnSpeechStarted;
 	/** OnSettled and OnRejected in one, for C++. */
 	FGenexModelsEndedNative OnEndedNative;
 
@@ -140,4 +158,8 @@ private:
 	TSharedPtr<FGenexModelsHttp> Http;
 	TSharedPtr<genex::models::Models> Models;
 	FTSTicker::FDelegateHandle TickerHandle;
+	/** The sounds of the lines still being made, by request. A sound stays alive after its line settles for as long
+	 *  as whatever plays it holds it. */
+	UPROPERTY(Transient)
+	TMap<int32, TObjectPtr<USoundWaveProcedural>> Speech;
 };

@@ -338,9 +338,14 @@ export class GenexCliService {
 
   /** A command the pinned CLI is too old to run is refused, with what is true to tell the person. */
   async #checkCliRuns(request: GenexCliRequest): Promise<void> {
-    if (!request.declaration) return;
-    if (isAtLeast(await this.#cliVersion(), GAME_DECLARATION_FIRST)) return;
-    throw new GenexCliRefusal(GenexCliRefusalCode.Unavailable, GENEX_CLI_PROMPT.BudgetNeedsUpdate);
+    if (!request.declaration && !request.newer) return;
+    const pinned = await this.#cliVersion();
+    if (request.declaration && !isAtLeast(pinned, GAME_DECLARATION_FIRST)) {
+      throw new GenexCliRefusal(GenexCliRefusalCode.Unavailable, GENEX_CLI_PROMPT.BudgetNeedsUpdate);
+    }
+    if (request.newer && !isAtLeast(pinned, request.newer.first)) {
+      throw new GenexCliRefusal(GenexCliRefusalCode.Unavailable, request.newer.refusal);
+    }
   }
 
   /** What the bound game's folder declares for a command that reads a declaration; null for any other. */

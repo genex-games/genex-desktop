@@ -43,7 +43,7 @@ export function StageAiBar({
   if (!on.previewOnStage && !on.cardOnStage) return null;
   return (
     <>
-      <PreviewAiBar project={project} />
+      <PreviewAiBar project={project} editor={on.cardOnStage} />
       {on.cardOnStage ? <EditorPlayAiNote project={project} /> : null}
     </>
   );

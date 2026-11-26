@@ -29,6 +29,7 @@ import {
 } from "../../src/renderer/play/ai-budget-model.ts";
 import { GamePhase } from "../../src/renderer/play/native-model.ts";
 import { createAiBudgetStore } from "../../src/renderer/state/ai-budget.ts";
+import { AI_BUDGET_WORDS } from "../../src/renderer/words.ts";
 import {
   type AiBudgetDeclared,
   AiBudgetPeriod,
@@ -414,5 +415,33 @@ describe("The AI budget store", () => {
     await store.stop("iron-tide");
     assert.equal(store.getState().games["iron-tide"]?.current, null);
     assert.equal(await store.open("iron-tide"), null);
+  });
+});
+
+/**
+ * A person read "198 of 200 credits left" as what one call had cost (2026-11-25): a budget holds
+ * each running call's ceiling, so 200 with one call in flight is used 0, on hold 2, left 198. The
+ * page never prints a bare pair of numbers; these are the words each number stands under.
+ */
+describe("The AI budget's words", () => {
+  it("names the limit, and what is on hold only while something is", () => {
+    assert.equal(AI_BUDGET_WORDS.limitLine(200, 0), "Limit 200 credits");
+    assert.equal(AI_BUDGET_WORDS.limitLine(1, 0), "Limit 1 credit");
+    assert.equal(AI_BUDGET_WORDS.limitLine(200, 2), "Limit 200 credits · 2 on hold for requests still running");
+    assert.equal(AI_BUDGET_WORDS.used, "Used");
+    assert.equal(AI_BUDGET_WORDS.left, "Left");
+  });
+  it("asks one question, and its button repeats what it allows", () => {
+    assert.equal(AI_BUDGET_WORDS.title("Iron Tide"), "Let Iron Tide use AI?");
+    assert.equal(AI_BUDGET_WORDS.allow(240), "Allow 240 credits");
+    assert.equal(AI_BUDGET_WORDS.allow(1), "Allow 1 credit");
+    assert.equal(AI_BUDGET_WORDS.notNow, "Not now");
+  });
+  it("says the state as words, on and off with the same verb", () => {
+    assert.equal(AI_BUDGET_WORDS.off, "AI is off in this game");
+    assert.equal(AI_BUDGET_WORDS.on, "AI is on");
+    assert.equal(AI_BUDGET_WORDS.turnOn, "Turn AI on");
+    assert.equal(AI_BUDGET_WORDS.turnOff, "Turn AI off");
+    assert.match(AI_BUDGET_WORDS.paused, /paused.*not enough Genex credits/);
   });
 });

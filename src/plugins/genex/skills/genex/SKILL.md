@@ -24,7 +24,7 @@ passages of advice Studio does not ship taken out. Where it disagrees with this 
   options. Studio passes `--out-dir` and `--no-wait` itself, and delivered files land in the game,
   so wire in those local paths. In a Godot game they land in its project (`godot/assets/...`),
   which the game loads as `res://assets/...`.
-- `doctor`, `budget`, `llm models`, `llm status`, `llm cancel`, `shop list`, `shop add`,
+- `doctor`, `budget`, `llm models`, `llm status`, `llm cancel`, `llm usage`, `llm calls`, `shop list`, `shop add`,
   `items list` and `items search`: `genex__cli`. `budget --assets` is not available: Studio's own
   asset allowance and the user's approval govern asset spending. `shop add` asks nobody: it makes
   a store item's draft, which spends nothing and sells nothing until Studio puts it on sale with the game's publish,
@@ -67,10 +67,10 @@ refuses for too few credits keeps its card in Studio, which says so and offers G
 Make it. So never relay the balance, price or refill date, and never retry: add at most one short
 sentence saying what waits for credits, and carry on.
 
-<!-- upstream https://genex.games/SKILL.md v1.46.2 sha256 35b8d4c64005d739955dcd96c259b6833f2ba8b9d03181b1f57c8ad0a838a379 -->
+<!-- upstream https://genex.games/SKILL.md v1.46.5 sha256 f9987cc09ec5fa25fadc4824152599ad2e5884c569fdda095e36401b89f3cf1d -->
 ---
 name: genex
-version: 1.46.2
+version: 1.46.5
 description: >-
   Game-dev asset generation for your agent: 3D models (segment/rig/animate), images, video,
   textures, sound effects, music, voice, and rigged characters - generated from

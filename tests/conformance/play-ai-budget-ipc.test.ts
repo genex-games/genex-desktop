@@ -12,6 +12,7 @@ import {
   FIXTURE_BUDGET_GAMES,
   FIXTURE_BUDGET_TTL_MS,
   FIXTURE_CALL_CREDITS,
+  FIXTURE_HELD_CREDITS,
   FIXTURE_SPEND_EVERY_MS,
   FixtureBudgetCase,
 } from "../../src/main/dev/fixture-ai-budget.ts";
@@ -312,14 +313,19 @@ describe("The fixture's budget answers", () => {
   it("spends a running budget as time passes, until it is used up", () => {
     const { clock, call, approve } = launch();
     assert.equal(approve(6).status, 200);
-    /** What the running budget has spent and has left; null once none runs. */
+    /** What the running budget has spent, holds for a call still running, and has left; null once none runs. */
     const amounts = (): unknown[] | null => {
       const { current } = call(AiBudgetRoute.budget(PROJECT), "GET").body;
-      return isRecord(current) ? [current.spentCredits, current.remainingCredits] : null;
+      return isRecord(current) ? [current.spentCredits, current.heldCredits, current.remainingCredits] : null;
     };
-    assert.deepEqual(amounts(), [0, 6]);
+    assert.deepEqual(amounts(), [0, 0, 6], "nothing is on hold before the first call");
     clock.now += FIXTURE_SPEND_EVERY_MS;
-    assert.deepEqual(amounts(), [FIXTURE_CALL_CREDITS, 6 - FIXTURE_CALL_CREDITS]);
+    // Used, on hold and left are three numbers that add up to the limit: the page shows each under its word.
+    assert.deepEqual(amounts(), [
+      FIXTURE_CALL_CREDITS,
+      FIXTURE_HELD_CREDITS,
+      6 - FIXTURE_CALL_CREDITS - FIXTURE_HELD_CREDITS,
+    ]);
     clock.now += FIXTURE_SPEND_EVERY_MS;
     assert.equal(amounts(), null, "a budget that spent its limit is no longer running");
   });

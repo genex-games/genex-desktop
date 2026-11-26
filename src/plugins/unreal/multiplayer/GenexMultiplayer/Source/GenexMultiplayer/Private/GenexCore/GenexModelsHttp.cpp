@@ -7,6 +7,7 @@
 #include "GenexCore/GenexLog.h"
 #include "GenexCore/GenexUrl.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -20,6 +21,9 @@ constexpr std::string_view kRuntimePath = "/api/runtime";
 /** embed-sdk's own code for "this could not be asked at all", and the two a door of its own falls back to. */
 constexpr std::string_view kUnavailable = "generation_unavailable";
 constexpr std::string_view kJudgeUnavailable = "judge_unavailable";
+constexpr std::string_view kSpeechUnavailable = "speech_unavailable";
+/** A spoken line and a voice's id, as the stand bounds them (a longer one is refused there by name). */
+constexpr std::size_t kMaxVoiceIdChars = 64;
 constexpr std::string_view kGrantUnavailable = "grant_unavailable";
 constexpr std::string_view kInvalidRequest = "invalid_request";
 constexpr std::string_view kNoPlayerSession = "no_player_session";
@@ -359,6 +363,28 @@ std::string InvalidJudgeOptions(const Json& options) {
   return std::string();
 }
 
+/** Why a speak's options cannot be sent, or empty. Length and the voice's name are the stand's to judge. */
+std::string InvalidSpeakOptions(const Json& options) {
+  const Json* grantId = options.Find("grantId");
+  if (grantId == nullptr || grantId->IsNull()) return "speech_requires_grant";
+  if (!IsId(grantId)) return "invalid_grant_id";
+  const Json* text = options.Find("text");
+  const Json* voice = options.Find("voice");
+  const bool said = text != nullptr && text->IsString() && text->AsString().find_first_not_of(" \t\r\n") != std::string::npos;
+  const bool named = voice != nullptr && voice->IsString() && !voice->AsString().empty() && Utf16Length(voice->AsString()) <= kMaxVoiceIdChars;
+  if (!said || !named) return std::string(kInvalidRequest);
+  for (const std::string_view optional : {"tier", "style", "language"}) {
+    const Json* value = options.Find(optional);
+    if (value != nullptr && !value->IsString()) return std::string(kInvalidRequest);
+  }
+  const Json* key = options.Find("idempotencyKey");
+  if (key != nullptr) {
+    const std::size_t length = key->IsString() ? Utf16Length(key->AsString()) : 0;
+    if (length < kMinKeyChars || length > kMaxKeyChars) return "invalid_idempotency_key";
+  }
+  return std::string();
+}
+
 /** A token fit for an Authorization header: printable ASCII with no space, bounded (a CR/LF would split the
  *  header). */
 bool IsHeaderToken(const std::string& token) {
@@ -393,10 +419,13 @@ std::string RandomUuid() {
   return out;
 }
 
-Json FailedResult(std::string_view code) {
+Json FailedResult(std::string_view code, std::string_view reason = {}, std::string_view at = {}) {
   Json result = Json::MakeObject();
   result.Set("status", "failed");
   result.Set("error", code);
+  // Which rule a refusal broke and where, when Genex said (`invalid_schema`): for the game's maker to read.
+  if (!reason.empty()) result.Set("reason", reason);
+  if (!at.empty()) result.Set("at", at);
   return result;
 }
 
@@ -567,13 +596,13 @@ std::string HttpBridge::GenerationErrorMessage(const std::string* code) const {
 
 // ---- requests ----
 
-void HttpBridge::Request(std::string method, std::string path, std::optional<Json> body, std::string_view fallback, ReplyDone done) {
+void HttpBridge::Request(std::string method, std::string path, std::optional<Json> body, std::string_view fallback, ReplyDone done, HttpChunk chunk) {
   namespace detail = models_http_detail;
   const std::weak_ptr<int> alive = alive_;
   const std::string code(fallback);
   // A fresh token for this request, never one kept from the last.
   TokenCallback withToken = [this, alive, verb = std::move(method), route = std::move(path), payload = std::move(body), code,
-                             finish = std::move(done)](bool ok, const std::string& token, const IdentityError&) {
+                             finish = std::move(done), piece = std::move(chunk)](bool ok, const std::string& token, const IdentityError&) {
     if (alive.expired()) return;
     Reply reply;
     reply.code = code;
@@ -596,13 +625,13 @@ void HttpBridge::Request(std::string method, std::string path, std::optional<Jso
     request.url = base + std::string(detail::kRuntimePath) + route;
     // No Origin, ever: the bearer is the whole credential.
     request.headers.push_back(HttpHeader{"Authorization", "Bearer " + token});
-    request.headers.push_back(HttpHeader{"Accept", "application/json"});
+    request.headers.push_back(HttpHeader{"Accept", piece ? "text/event-stream" : "application/json"});
     if (payload) {
       request.headers.push_back(HttpHeader{"Content-Type", "application/json"});
       request.body = payload->Dump();
     }
     Log(LogLevel::Debug, "genex models: " + verb + " " + route);
-    http_->Send(std::move(request), [alive, verb, route, code, onReply = finish](HttpResponse response) {
+    HttpDone answered = [alive, verb, route, code, onReply = finish](HttpResponse response) {
       if (alive.expired()) return;
       Reply answer;
       answer.code = code;
@@ -616,11 +645,20 @@ void HttpBridge::Request(std::string method, std::string path, std::optional<Jso
       } else {
         const Json* error = json ? json->Find("error") : nullptr;
         if (error != nullptr && error->IsString()) answer.code = error->AsString();
+        // Optional, beside the code: which rule broke and where. Kept only in their own shape.
+        const Json* reason = json ? json->Find("reason") : nullptr;
+        if (reason != nullptr && reason->IsString() && IsRefusalReason(reason->AsString())) answer.reason = reason->AsString();
+        const Json* at = json ? json->Find("at") : nullptr;
+        if (at != nullptr && at->IsString() && IsRefusalReason(at->AsString())) answer.at = at->AsString();
         // The status only: an answer's body is the server's text, and is never logged.
         Log(LogLevel::Info, "genex models: " + verb + " " + route + " failed (" + std::to_string(answer.status) + ")");
       }
       onReply(std::move(answer));
-    });
+    };
+    if (!piece) return http_->Send(std::move(request), std::move(answered));
+    http_->SendStreamed(std::move(request), [alive, piece](std::string_view bytes) {
+      if (!alive.expired()) piece(bytes);
+    }, std::move(answered));
   };
   if (!options_.token) {
     withToken(false, std::string(), IdentityError());
@@ -648,7 +686,11 @@ void HttpBridge::Resolve(int id, std::string_view call, Json result) {
   queue_.Push(std::move(event));
 }
 
-void HttpBridge::Reject(int id, std::string_view call, std::string_view code) {
+void HttpBridge::Reject(int id, std::string_view call, const Reply& refused) { Reject(id, call, refused.code, refused.status, refused.reason, refused.at); }
+
+void HttpBridge::Reject(int id, std::string_view call, std::string_view code, int httpStatus, std::string_view reason, std::string_view at) {
+  // Never lost: a read that failed says why in the log, as a call that failed does (Settle).
+  Log(LogLevel::Warning, FailureLogLine(call, code, httpStatus, reason, at, true));
   Json event = Json::MakeObject();
   event.Set("type", "rejected");
   event.Set("id", id);
@@ -662,27 +704,41 @@ HttpBridge::Op* HttpBridge::FindOp(int id) {
   return found != ops_.end() ? &found->second : nullptr;
 }
 
-void HttpBridge::Settle(int id, Json result) {
+void HttpBridge::Settle(int id, Json result, int httpStatus) {
   const auto found = ops_.find(id);
   if (found == ops_.end()) return;
   Op op = std::move(found->second);
   ops_.erase(found);
   SetWaiting();
-  // A stream's text arrives whole: one Delta, so a game written for streaming shows it.
+  // What of a stream's text was not yet a Delta, so a game written for streaming shows all of it: the whole answer
+  // when it was answered whole, the rest when the stream broke off and the call was read to its end.
   const Json* output = result.Find("output");
   const bool succeeded = models_http_detail::IsText(result.Find("status"), "succeeded");
-  if (op.stream && succeeded && output != nullptr && output->IsString() && !output->AsString().empty()) {
-    Json delta = Json::MakeObject();
-    delta.Set("type", "delta");
-    delta.Set("id", id);
-    delta.Set("text", *output);
-    delta.Set("soFar", *output);
-    queue_.Push(std::move(delta));
+  if (op.stream && succeeded && output != nullptr && output->IsString()) {
+    const std::string& whole = output->AsString();
+    const bool grows = whole.size() > op.soFar.size() && whole.compare(0, op.soFar.size(), op.soFar) == 0;
+    if (grows) Deliver(id, op, std::string_view(whole).substr(op.soFar.size()));
+  }
+  // THE CODE IS NEVER LOST. A call that ended with one writes one Warning line: the call, the code, the HTTP status
+  // of a refusal, which rule broke when Genex said, and what the game's maker changes. A game that shows only a
+  // sentence, or nothing, still leaves why in the log. Nothing of the prompt, the token or an answer's text is in it
+  // (FailureLogLine keeps a code only in a code's shape and a reason only in a reason's).
+  const Json* error = result.Find("error");
+  if (!succeeded && error != nullptr && error->IsString()) {
+    const auto said = [&result](std::string_view key) {
+      const Json* value = result.Find(key);
+      return value != nullptr && value->IsString() ? value->AsString() : std::string();
+    };
+    Log(LogLevel::Warning, FailureLogLine(op.call, error->AsString(), httpStatus, said("reason"), said("at")));
   }
   Resolve(id, op.call, std::move(result));
 }
 
 void HttpBridge::Fail(int id, std::string_view code) { Settle(id, models_http_detail::FailedResult(code)); }
+
+void HttpBridge::Fail(int id, const Reply& refused) {
+  Settle(id, models_http_detail::FailedResult(refused.code, refused.reason, refused.at), refused.status);
+}
 
 int HttpBridge::Pending() {
   Advance();
@@ -719,7 +775,7 @@ int HttpBridge::Call(std::string_view method, std::string_view argsJson) {
     return id;
   }
   std::optional<Json> parsed = argsJson.empty() ? std::optional<Json>(Json::MakeArray()) : Json::Parse(argsJson);
-  const bool settles = method == "generate" || method == "generateStream" || method == "judge" || method == "requestSpendGrant" || method == "waitForGeneration";
+  const bool settles = method == "generate" || method == "generateStream" || method == "judge" || method == "speak" || method == "requestSpendGrant" || method == "waitForGeneration";
   const bool reads = method == "getGenerationModels" || method == "getActiveSpendGrant" || method == "getSpendGrant" || method == "stopSpendGrant" || method == "getGeneration";
   const bool known = settles || reads || method == "init";
   if (!known || !parsed || !parsed->IsArray()) {
@@ -735,6 +791,7 @@ int HttpBridge::Call(std::string_view method, std::string_view argsJson) {
     op.call = call;
     op.stream = method == "generateStream";
     op.judge = method == "judge";
+    op.speech = method == "speak";
     ops_.emplace(id, std::move(op));
   }
   // A call made while `init` still settles waits for it, as a page's bridge makes it wait.
@@ -749,6 +806,7 @@ void HttpBridge::Start(int id, const std::string& call, const Json& args) {
   if (call == "requestSpendGrant") return RequestGrant(id, args);
   if (call == "generate" || call == "generateStream") return Generate(id, args);
   if (call == "judge") return Judge(id, args);
+  if (call == "speak") return Speak(id, args);
   if (call == "waitForGeneration") return WaitFor(id, args);
   const detail::IdRoute route = detail::RouteOf(call, args.At(0));
   if (!route.error.empty()) return Reject(id, call, route.error);
@@ -811,7 +869,7 @@ void HttpBridge::Read(int id, const std::string& call, std::string path, bool po
   namespace detail = models_http_detail;
   ReplyDone done = [this, id, call](Reply reply) {
     if (reply.ok) return Resolve(id, call, std::move(reply.body));
-    Reject(id, call, reply.code);
+    Reject(id, call, reply);
   };
   if (post) return Post(std::move(path), Json::MakeObject(), detail::kUnavailable, std::move(done));
   Get(std::move(path), detail::kUnavailable, std::move(done));
@@ -823,7 +881,7 @@ void HttpBridge::ActiveGrant(int id) {
     const std::string_view call = "getActiveSpendGrant";
     // `grant_not_found` is the answer "none".
     if (reply.status == 404) return Resolve(id, call, Json());
-    if (!reply.ok) return Reject(id, call, reply.code);
+    if (!reply.ok) return Reject(id, call, reply);
     if (!detail::IsId(reply.body.Find("id"))) return Reject(id, call, "invalid_grant_response");
     Resolve(id, call, std::move(reply.body));
   });
@@ -842,7 +900,7 @@ void HttpBridge::RequestGrant(int id, const Json& args) {
   // budget the player approved on the game's Genex page, or that there is none.
   Get("/grants/current", detail::kGrantUnavailable, [this, id](Reply reply) {
     if (reply.status == 404) return Fail(id, kBudgetNotApproved);
-    if (!reply.ok) return Fail(id, reply.code);
+    if (!reply.ok) return Fail(id, reply);
     if (!detail::IsId(reply.body.Find("id"))) return Fail(id, "invalid_grant_response");
     std::optional<Json> answer = detail::GrantOutcome(reply.body);
     if (!answer) return Fail(id, kBudgetNotApproved);
@@ -866,7 +924,7 @@ void HttpBridge::AskForGrant(int id, const Json& options) {
   Post("/grants", std::move(body), detail::kGrantUnavailable, [this, id, timeoutMs](Reply reply) {
     Op* op = FindOp(id);
     if (op == nullptr) return;
-    if (!reply.ok) return Fail(id, reply.code);
+    if (!reply.ok) return Fail(id, reply);
     if (!detail::IsId(reply.body.Find("id"))) return Fail(id, "invalid_grant_response");
     if (std::optional<Json> answer = detail::GrantOutcome(reply.body)) return Settle(id, std::move(*answer));
     op->grant = true;
@@ -929,13 +987,122 @@ void HttpBridge::Generate(int id, const Json& args) {
   });
 }
 
+void HttpBridge::Deliver(int id, Op& op, std::string_view text) {
+  if (text.empty()) return;
+  op.soFar.append(text);
+  Json delta = Json::MakeObject();
+  delta.Set("type", "delta");
+  delta.Set("id", id);
+  delta.Set("text", std::string(text));
+  delta.Set("soFar", op.soFar);
+  queue_.Push(std::move(delta));
+}
+
+void HttpBridge::SendStream(int id, const std::string& grantId, double timeoutMs, Json body) {
+  namespace detail = models_http_detail;
+  Op* op = FindOp(id);
+  if (op == nullptr) return;
+  op->streaming = true;
+  op->grantId = grantId;
+  op->deadlineMs = Now() + timeoutMs;
+  SetWaiting();
+  // Kept for a stand with no stream door: the very same call, its key included, asked generate's way.
+  Json again = body;
+  Request(
+      "POST", "/grants/" + detail::EncodeSegment(grantId) + "/generations/stream", std::move(body), detail::kUnavailable,
+      [this, id, grantId, timeoutMs, whole = std::move(again)](Reply reply) {
+        Op* ended = FindOp(id);
+        // Settled by its `done` event, cancelled, or timed out: nothing is left to do.
+        if (ended == nullptr || ended->polling) return;
+        ended->streaming = false;
+        const bool known = !ended->generationId.empty();
+        // 404 with no code of the lane: this stand has no such door (an older helper, an older API).
+        const bool noDoor = !reply.ok && reply.status == 404 && !known && (reply.code == detail::kUnavailable || reply.code == "not_found");
+        if (noDoor) {
+          noStreamDoor_ = true;
+          return SendGeneration(id, grantId, timeoutMs, whole);
+        }
+        // The stream ended, or broke, before it said how the call ended. The stand reads the model's answer to its
+        // end and settles the call whatever became of the stream, so a call with an id is read like any other.
+        if (known) return StartPoll(id, std::max(0.0, ended->deadlineMs - Now()));
+        if (!reply.ok) return Fail(id, reply);
+        Fail(id, "invalid_generation_response");
+      },
+      [this, id](std::string_view bytes) { StreamBytes(id, bytes); });
+}
+
+void HttpBridge::StreamBytes(int id, std::string_view bytes) {
+  // An event stream: `event:` and `data:` lines, a blank line ends the event, `:` starts a comment (the stand's ping).
+  std::size_t from = 0;
+  while (from <= bytes.size()) {
+    Op* op = FindOp(id);
+    if (op == nullptr || !op->streaming) return;
+    const std::size_t end = bytes.find('\n', from);
+    if (end == std::string_view::npos) {
+      op->streamLine.append(bytes.substr(from));
+      return;
+    }
+    std::string line = std::move(op->streamLine);
+    op->streamLine.clear();
+    line.append(bytes.substr(from, end - from));
+    from = end + 1;
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    if (line.empty()) {
+      const std::string event = std::move(op->streamEvent);
+      const std::string data = std::move(op->streamData);
+      op->streamEvent.clear();
+      op->streamData.clear();
+      if (!event.empty()) StreamEvent(id, event, data);
+      continue;
+    }
+    const auto value = [&line](std::string_view field) {
+      std::string_view rest = std::string_view(line).substr(field.size());
+      if (!rest.empty() && rest.front() == ' ') rest.remove_prefix(1);
+      return std::string(rest);
+    };
+    if (line.rfind("event:", 0) == 0) op->streamEvent = value("event:");
+    else if (line.rfind("data:", 0) == 0) op->streamData += value("data:");
+  }
+}
+
+void HttpBridge::StreamEvent(int id, const std::string& event, const std::string& data) {
+  namespace detail = models_http_detail;
+  Op* op = FindOp(id);
+  if (op == nullptr) return;
+  const std::optional<Json> parsed = Json::Parse(data);
+  if (!parsed || !parsed->IsObject()) return;
+  if (op->speech) return SpeechEvent(id, event, *parsed);
+  if (event == "start") {
+    const Json* generation = parsed->Find("generationId");
+    if (op->generationId.empty() && detail::IsId(generation)) op->generationId = generation->AsString();
+    return;
+  }
+  if (event == "delta") {
+    const Json* text = parsed->Find("text");
+    if (text != nullptr && text->IsString()) Deliver(id, *op, text->AsString());
+    return;
+  }
+  if (event != "done") return;
+  // The call's view, as POST /generations answers it: the same checks, the same ending.
+  const Json& view = *parsed;
+  if (!detail::IsId(view.Find("id")) || !detail::IsText(view.Find("grantId"), op->grantId)) return Fail(id, "invalid_generation_response");
+  op->generationId = view.Find("id")->AsString();
+  if (std::optional<Json> ended = detail::Outcome(view)) return Settle(id, std::move(*ended));
+  // Not this request's to answer (no free slot, a call another request already made, the player's own plan):
+  // the stand says so at once, and the call is read until it ends.
+  op->streaming = false;
+  StartPoll(id, std::max(0.0, op->deadlineMs - Now()));
+}
+
 void HttpBridge::SendGeneration(int id, const std::string& grantId, double timeoutMs, Json body) {
   namespace detail = models_http_detail;
+  const Op* asked = FindOp(id);
+  if (asked != nullptr && asked->stream && !grantId.empty() && !noStreamDoor_) return SendStream(id, grantId, timeoutMs, std::move(body));
   const std::string path = grantId.empty() ? std::string("/generations") : "/grants/" + detail::EncodeSegment(grantId) + "/generations";
   Post(path, std::move(body), detail::kUnavailable, [this, id, grantId, timeoutMs](Reply reply) {
     Op* op = FindOp(id);
     if (op == nullptr) return;
-    if (!reply.ok) return Fail(id, reply.code);
+    if (!reply.ok) return Fail(id, reply);
     const Json& view = reply.body;
     const bool ofBudget = grantId.empty() || detail::IsText(view.Find("grantId"), grantId);
     if (!detail::IsId(view.Find("id")) || !ofBudget) return Fail(id, "invalid_generation_response");
@@ -986,7 +1153,7 @@ void HttpBridge::Judge(int id, const Json& args) {
   Post("/grants/" + detail::EncodeSegment(grantId) + "/judgments", std::move(body), detail::kJudgeUnavailable, [this, id, grantId, waitMs](Reply reply) {
     Op* op = FindOp(id);
     if (op == nullptr) return;
-    if (!reply.ok) return Fail(id, reply.code);
+    if (!reply.ok) return Fail(id, reply);
     const Json& view = reply.body;
     if (!detail::IsId(view.Find("generationId")) || !detail::IsText(view.Find("grantId"), grantId)) return Fail(id, "invalid_judgment_response");
     if (detail::IsText(view.Find("status"), "dispatching")) {
@@ -1004,6 +1171,95 @@ void HttpBridge::Judge(int id, const Json& args) {
     detail::CopyTruthy(view, result, "source");
     Settle(id, std::move(result));
   });
+}
+
+void HttpBridge::Speak(int id, const Json& args) {
+  namespace detail = models_http_detail;
+  Op* op = FindOp(id);
+  if (op == nullptr) return;
+  const Json* options = detail::OptionsOf(args);
+  if (options == nullptr) return Fail(id, detail::kInvalidRequest);
+  const std::string invalid = detail::InvalidSpeakOptions(*options);
+  if (!invalid.empty()) return Fail(id, invalid);
+  const std::string grantId = options->Find("grantId")->AsString();
+  const Json* key = options->Find("idempotencyKey");
+  Json body = Json::MakeObject();
+  body.Set("idempotencyKey", key != nullptr ? *key : Json(NewKey()));
+  for (const std::string_view sent : {"text", "voice", "tier", "style", "language"}) {
+    if (const Json* value = options->Find(sent)) body.Set(sent, *value);
+  }
+  op->streaming = true;
+  op->grantId = grantId;
+  op->deadlineMs = Now() + detail::TimeoutOf(options->Find("timeoutMs"), http_limits::kGenerationWaitMs);
+  SetWaiting();
+  Request(
+      "POST", "/grants/" + detail::EncodeSegment(grantId) + "/speech", std::move(body), detail::kSpeechUnavailable,
+      [this, id](Reply reply) {
+        Op* ended = FindOp(id);
+        // Settled by its `done` event, or timed out: nothing is left to do.
+        if (ended == nullptr) return;
+        ended->streaming = false;
+        if (!reply.ok && ended->generationId.empty()) return Fail(id, reply);
+        // The stream ended, or broke, with no `done`: what was heard is all there is. The line is settled on the
+        // stand either way, and a spoken line cannot be read again, so this is how the call ends here.
+        Json result = Json::MakeObject();
+        result.Set("status", "unknown");
+        if (!ended->generationId.empty()) result.Set("generationId", ended->generationId);
+        result.Set("error", "speech_cut");
+        Settle(id, std::move(result));
+      },
+      [this, id](std::string_view bytes) { StreamBytes(id, bytes); });
+}
+
+void HttpBridge::SpeechEvent(int id, const std::string& event, const Json& data) {
+  namespace detail = models_http_detail;
+  Op* op = FindOp(id);
+  if (op == nullptr) return;
+  if (event == "start") {
+    const Json* generation = data.Find("generationId");
+    const Json* encoding = data.Find("encoding");
+    const Json* rate = data.Find("sampleRate");
+    const Json* channels = data.Find("channels");
+    const bool valid = detail::IsId(generation) && encoding != nullptr && encoding->IsString() && rate != nullptr && rate->IsNumber() && channels != nullptr && channels->IsNumber();
+    if (!valid || op->speechStarted) return;
+    op->speechStarted = true;
+    op->generationId = generation->AsString();
+    Json started = Json::MakeObject();
+    started.Set("type", "speechStart");
+    started.Set("id", id);
+    started.Set("encoding", *encoding);
+    started.Set("sampleRate", *rate);
+    started.Set("channels", *channels);
+    queue_.Push(std::move(started));
+    return;
+  }
+  if (event == "audio") {
+    const Json* bytes = data.Find("data");
+    // Sound before its format was said cannot be played, and is not passed on.
+    if (!op->speechStarted || bytes == nullptr || !bytes->IsString() || bytes->AsString().empty()) return;
+    Json audio = Json::MakeObject();
+    audio.Set("type", "speechAudio");
+    audio.Set("id", id);
+    audio.Set("data", *bytes);
+    queue_.Push(std::move(audio));
+    return;
+  }
+  if (event != "done") return;
+  if (!detail::IsId(data.Find("generationId")) || !detail::IsText(data.Find("grantId"), op->grantId) || data.Find("status") == nullptr || !data.Find("status")->IsString()) {
+    return Fail(id, "invalid_speech_response");
+  }
+  Json result = Json::MakeObject();
+  detail::CopyField(data, result, "status");
+  detail::CopyField(data, result, "generationId");
+  detail::CopyTruthy(data, result, "error");
+  detail::CopyTruthy(data, result, "contentBlocked");
+  detail::CopyField(data, result, "voice");
+  detail::CopyField(data, result, "tier");
+  detail::CopyField(data, result, "characters");
+  detail::CopyField(data, result, "durationMs");
+  detail::CopyField(data, result, "billing");
+  detail::CopyTruthy(data, result, "source");
+  Settle(id, std::move(result));
 }
 
 void HttpBridge::WaitFor(int id, const Json& args) {
@@ -1064,10 +1320,23 @@ void HttpBridge::Step(int id) {
 
 void HttpBridge::Advance() {
   std::vector<int> waiting;
+  std::vector<int> late;
+  const double now = Now();
   for (const auto& entry : ops_) {
     if (entry.second.polling && !entry.second.readInFlight) waiting.push_back(entry.first);
+    if (entry.second.streaming && now >= entry.second.deadlineMs) late.push_back(entry.first);
   }
   for (const int id : waiting) Step(id);
+  for (const int id : late) {
+    const Op* op = FindOp(id);
+    if (op == nullptr) continue;
+    // Waiting time only, as a read that runs out: the call goes on, and waitForGeneration resumes one with an id.
+    Json result = Json::MakeObject();
+    result.Set("status", "pending");
+    if (!op->generationId.empty()) result.Set("generationId", op->generationId);
+    result.Set("error", models_http_detail::kWaitTimeout);
+    Settle(id, std::move(result));
+  }
 }
 
 void HttpBridge::Update(double /*nowMs*/) {
@@ -1078,7 +1347,7 @@ void HttpBridge::Update(double /*nowMs*/) {
 void HttpBridge::SetWaiting() {
   if (!options_.usePump) return;
   bool waiting = false;
-  for (const auto& entry : ops_) waiting = waiting || entry.second.polling;
+  for (const auto& entry : ops_) waiting = waiting || entry.second.polling || entry.second.streaming;
   if (waiting && !registered_) {
     registered_ = true;
     Pump::Register(this);

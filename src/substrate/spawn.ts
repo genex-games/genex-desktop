@@ -54,6 +54,7 @@ import {
   ROBLOX_ASSISTANT_SETTINGS,
   sandboxedCliHomes,
 } from "./credential-homes.ts";
+import { ensureDirsWhereMade } from "./fsx.ts";
 import { isInside } from "./paths.ts";
 import { envValue } from "./toolchain.ts";
 import {
@@ -360,6 +361,9 @@ const MESSAGE = {
   NotInitialized: "sandbox-runtime is not initialized",
   NoStreams: "the process started without its stdio pipes",
   EmptyArgv: "sandbox-runtime returned an empty command",
+  /** A write root that could not be made a folder: the session starts without it. */
+  WriteRootNotMade: (dir: string, error: unknown) =>
+    `left ${dir} out of the sandbox: it is not a folder and could not be made one, so no sandboxed command works in it this launch: ${errorMessage(error)}`,
 } as const;
 
 /**
@@ -698,6 +702,8 @@ export class ProcessSandbox {
   #initError: Error | null = null;
   #log: ((line: string) => void) | null = null;
   #onWriteRefused: ((dir: string) => void) | undefined;
+  /** Windows: the write roots that could not be made folders at the start (a file stands there), left ungranted. */
+  #unmadeRoots: ReadonlySet<string> = new Set();
   /** Linux: the bubblewrap sandbox-runtime runs, when not the system's on PATH. */
   #bubblewrap: string | null = null;
   #toolPath: (() => Promise<string>) | null = null;
@@ -931,7 +937,13 @@ export class ProcessSandbox {
     const bash = this.#seams.bash === undefined ? await findGitBash() : this.#seams.bash;
     if (!bash) throw new SandboxUnavailableError(gitMissingProblem());
     const profile = longPath(this.#seams.profile ?? os.homedir(), this.#platform);
-    await Promise.all(this.policy.allowWrite.map((dir) => mkdir(dir, { recursive: true })));
+    // A root a file stands in (a game folder that became a file) is left ungranted and logged:
+    // throwing here stopped the agents of every game.
+    const roots = [...this.policy.allowWrite];
+    const made = new Set(
+      await ensureDirsWhereMade(roots, (dir, error) => this.#log?.(MESSAGE.WriteRootNotMade(dir, error))),
+    );
+    this.#unmadeRoots = new Set(roots.filter((dir) => !made.has(dir)));
     const toolDirs = [(await this.toolPath()) ?? "", process.env.PATH ?? ""].flatMap((value) => value.split(";"));
     const gitRoot = gitRootOf(bash);
     const installDir = path.dirname(longPath(process.execPath, this.#platform));
@@ -971,7 +983,7 @@ export class ProcessSandbox {
    */
   #windowsGrants(backend: Pick<WindowsBackend, "read">): WindowsGrants {
     return this.#longGrants({
-      write: this.policy.allowWrite,
+      write: this.policy.allowWrite.filter((dir) => !this.#unmadeRoots.has(dir)),
       read: [...this.policy.allowRead, ...backend.read],
     });
   }

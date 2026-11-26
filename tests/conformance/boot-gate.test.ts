@@ -12,6 +12,7 @@ import {
   BootFailure,
   BootPhase,
   SandboxProblemCode,
+  SandboxSetupFailure,
   SandboxSetupOutcome,
   SandboxTool,
   StartStep,
@@ -21,7 +22,7 @@ import {
 } from "../../src/shared/boot.ts";
 import { FEEDBACK_TEXT_MAX_CHARS, type FeedbackDraft, FeedbackScreen } from "../../src/shared/feedback.ts";
 import type { WindowControls } from "../../src/shared/studio-api.ts";
-import { SandboxUnavailableError } from "../../src/substrate/sandbox-unavailable.ts";
+import { SandboxSetupError, SandboxUnavailableError } from "../../src/substrate/sandbox-unavailable.ts";
 
 const PROBLEM: SandboxProblem = {
   code: SandboxProblemCode.MissingTools,
@@ -384,6 +385,29 @@ describe("Set up (Windows)", () => {
       "Error: srt-win install: WFP filter install failed",
       "Error: WFP egress fence could not be verified",
     ]);
+  });
+
+  it("keeps why a Set up failed among the start's facts, when the sandbox knows, for analytics", async () => {
+    let install = async (): Promise<{ cancelled: boolean }> => {
+      throw new Error("srt-win install: WFP filter install failed");
+    };
+    const gate = createBootGate(StudioPlatform.Windows, { installSandbox: () => install() });
+    gate.hold(NOT_PROVISIONED, async () => {});
+    await assert.rejects(gate.setUp());
+    assert.equal(gate.started().failure, null, "a failure Genex has no code for says nothing");
+    install = async () => {
+      throw new SandboxSetupError(SandboxSetupFailure.UserNotCreated, 1783, "NetUserAdd(srt-sandbox): 1783");
+    };
+    await assert.rejects(gate.setUp(), /Windows did not let Genex create the local account/);
+    assert.equal(gate.started().failure, SandboxSetupFailure.UserNotCreated);
+    install = async () => ({ cancelled: false });
+    await gate.setUp();
+    assert.equal(gate.state().phase, BootPhase.Ready);
+    assert.equal(
+      gate.started().failure,
+      SandboxSetupFailure.UserNotCreated,
+      "the start that opened says what it got past",
+    );
   });
 
   it("after an install that went through, a Set up whose startup failed only starts again", async () => {

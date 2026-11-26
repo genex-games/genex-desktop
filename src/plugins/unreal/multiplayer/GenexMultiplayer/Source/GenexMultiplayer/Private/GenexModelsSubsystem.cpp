@@ -9,6 +9,8 @@
 #include "GenexMultiplayerModule.h"
 #include "GenexSettings.h"
 #include "GenexUnrealJson.h"
+#include "Misc/Base64.h"
+#include "Sound/SoundWaveProcedural.h"
 #include "Subsystems/SubsystemCollection.h"
 
 #include <functional>
@@ -37,6 +39,19 @@ public:
 			return;
 		}
 		Http->Send(std::move(Request), std::move(Done));
+	}
+
+	virtual void SendStreamed(genex::HttpRequest Request, genex::HttpChunk Chunk, genex::HttpDone Done) override
+	{
+		genex::IHttp* Http = Identity.IsValid() ? Identity->Transport() : nullptr;
+		if (!Http)
+		{
+			genex::HttpResponse Response;
+			Response.transportError = "genex: no HTTP transport";
+			Done(std::move(Response));
+			return;
+		}
+		Http->SendStreamed(std::move(Request), std::move(Chunk), std::move(Done));
 	}
 
 private:
@@ -141,6 +156,7 @@ void UGenexModelsSubsystem::Deinitialize()
 {
 	if (TickerHandle.IsValid()) FTSTicker::GetCoreTicker().RemoveTicker(TickerHandle);
 	TickerHandle.Reset();
+	Speech.Reset();
 	// The bridge first: it holds the transport by address.
 	Models.Reset();
 	Http.Reset();
@@ -176,6 +192,11 @@ int32 UGenexModelsSubsystem::Generate(const FString& OptionsJson)
 int32 UGenexModelsSubsystem::GenerateStream(const FString& OptionsJson)
 {
 	return Models.IsValid() ? Models->GenerateStream(GenexModelsSubsystemDetail::Options(OptionsJson)) : 0;
+}
+
+int32 UGenexModelsSubsystem::Speak(const FString& OptionsJson)
+{
+	return Models.IsValid() ? Models->Speak(GenexModelsSubsystemDetail::Options(OptionsJson)) : 0;
 }
 
 int32 UGenexModelsSubsystem::Judge(const FString& OptionsJson)
@@ -240,6 +261,8 @@ void UGenexModelsSubsystem::Poll()
 		case genex::models::Event::Type::Result:
 		{
 			const FString Result = GenexUnrealJson::ToText(Event.result);
+			// The line is whole: whatever plays its sound keeps it alive from here.
+			Speech.Remove(Event.id);
 			OnEndedNative.Broadcast(Event.id, Call, false, Result);
 			OnSettled.Broadcast(Event.id, Call, Result);
 			break;
@@ -257,6 +280,28 @@ void UGenexModelsSubsystem::Poll()
 		case genex::models::Event::Type::PartialField:
 			OnPartialField.Broadcast(Event.id, FString(UTF8_TO_TCHAR(Event.name.c_str())), FString(UTF8_TO_TCHAR(Event.text.c_str())));
 			break;
+		case genex::models::Event::Type::SpeechStart:
+		{
+			// 16-bit PCM is what a procedural sound takes as it is; any other encoding is a line with no sound.
+			if (Event.name != "pcm_s16le" || Speech.Contains(Event.id)) break;
+			USoundWaveProcedural* Sound = NewObject<USoundWaveProcedural>(this);
+			Sound->SetSampleRate(Event.sampleRate);
+			Sound->NumChannels = Event.channels;
+			Sound->Duration = INDEFINITELY_LOOPING_DURATION;
+			Sound->SoundGroup = SOUNDGROUP_Voice;
+			Sound->bLooping = false;
+			Speech.Add(Event.id, Sound);
+			OnSpeechStarted.Broadcast(Event.id, Sound);
+			break;
+		}
+		case genex::models::Event::Type::SpeechAudio:
+		{
+			const TObjectPtr<USoundWaveProcedural>* Sound = Speech.Find(Event.id);
+			if (Sound == nullptr || !*Sound) break;
+			TArray<uint8> Bytes;
+			if (FBase64::Decode(FString(UTF8_TO_TCHAR(Event.text.c_str())), Bytes) && Bytes.Num() > 0) (*Sound)->QueueAudio(Bytes.GetData(), Bytes.Num());
+			break;
+		}
 		case genex::models::Event::Type::Gesture:
 			OnGesture.Broadcast(Event.id, Call, Event.waiting);
 			break;

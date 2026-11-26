@@ -6511,30 +6511,46 @@ const creditsShown = (credits: number): string =>
 
 /** A native game's AI budget: the line under its page's primary block and the sheet that sets it (`play/AiBudget.tsx`). */
 export const AI_BUDGET_WORDS = {
-  /** The line: the game uses AI and no budget runs. */
-  offer: t("Uses AI, paid from your Genex credits."),
-  set: t("Set AI budget"),
+  /** The line: the game uses AI and no budget runs. The state, then the one thing to press. */
+  off: t("AI is off in this game"),
+  turnOn: t("Turn AI on"),
   unavailable: t("This game’s AI isn’t available right now."),
   voice: t("This game’s voice AI isn’t available in the app yet."),
-  /** The line while a budget runs: "AI budget: 85 of 100 credits left". */
-  left: (remaining: number, limit: number) =>
-    t("AI budget: {remaining} of {limit, plural, one {{shown} credit} other {{shown} credits}} left", {
-      remaining: creditsShown(remaining),
-      limit,
-      shown: creditsShown(limit),
-    }),
-  stop: t("Stop"),
-  change: t("Change"),
-  /** Stop asks once, on the line itself. */
-  stopAsk: t("Stop this AI budget?"),
-  stopKeep: t("Keep it"),
-  stopping: t("Stopping the AI budget…"),
-  stopFailed: t("Couldn’t stop the AI budget. Try again."),
+  /** The line while a budget runs: its state as words. */
+  on: t("AI is on"),
+  /** It runs, but the account has too few credits for the next call. */
+  paused: t("AI is paused: not enough Genex credits"),
+  /**
+   * A running budget's numbers are never a bare pair ("198 of 200" read as what one call cost):
+   * each stands under its own word, and credits set aside for calls still running are named.
+   */
+  used: t("Used"),
+  left: t("Left"),
+  amount: (credits: number) => creditsShown(credits),
+  limitLine: (limit: number, held: number) =>
+    held > 0
+      ? t(
+          "Limit {limit, plural, one {{shown} credit} other {{shown} credits}} · {held} on hold for requests still running",
+          { limit, shown: creditsShown(limit), held: creditsShown(held) },
+        )
+      : t("Limit {limit, plural, one {{shown} credit} other {{shown} credits}}", {
+          limit,
+          shown: creditsShown(limit),
+        }),
+  turnOff: t("Turn AI off"),
+  change: t("Change limit"),
+  /** Turn AI off asks once, on the line itself. */
+  stopAsk: t("Turn AI off in this game?"),
+  stopKeep: t("Keep it on"),
+  stopping: t("Turning AI off…"),
+  stopFailed: t("Couldn’t turn AI off. Try again."),
   // The sheet.
-  title: (game: string) => t("AI budget for {game}", { game }),
-  what: t(
-    "This game asks AI models for things while you play. You pay for what it uses from your Genex credits, up to the limit you set.",
-  ),
+  /** The title is the question, the one sentence under it says who pays, and the limit is the largest thing. */
+  title: (game: string) => t("Let {game} use AI?", { game }),
+  what: t("You pay for what it uses from your Genex credits, up to this limit."),
+  details: t("Details"),
+  /** A short tag for the unusual fact; its whole sentence is under Details. */
+  replacesTag: t("Replaces the budget running now"),
   /** What the game uses, by the names genex.games gave, an AI judge last; null with nothing to name. */
   uses: (models: readonly string[], judge: boolean): string | null => {
     const used = judge ? [...models, t("an AI judge")] : models;
@@ -6567,9 +6583,11 @@ export const AI_BUDGET_WORDS = {
     t("{n, plural, one {{shown} credit} other {{shown} credits}}", { n: credits, shown: creditsShown(credits) }),
   replaces: t("Approving replaces the AI budget already running for this game."),
   ends: t("It ends when you stop it, when you sign out of Genex, or after 24 hours."),
-  approve: t("Approve"),
-  approving: t("Approving…"),
-  cancel: t("Cancel"),
+  /** The button repeats what it allows, so the sheet is answerable from the button alone. */
+  allow: (credits: number) =>
+    t("Allow {n, plural, one {{shown} credit} other {{shown} credits}}", { n: credits, shown: creditsShown(credits) }),
+  allowing: t("Allowing…"),
+  notNow: t("Not now"),
   loading: t("Reading the AI budget…"),
   failure: {
     [SheetFailure.Credits]: t("You don’t have enough Genex credits for this budget."),
@@ -6577,7 +6595,7 @@ export const AI_BUDGET_WORDS = {
     [SheetFailure.Expired]: t("That took too long, so the budget has to be read again."),
     [SheetFailure.Paused]: t("AI in games is paused right now. Try again later."),
     [SheetFailure.Unavailable]: t("This game’s AI isn’t available right now."),
-    [SheetFailure.SignedOut]: t("Sign in to Genex to set an AI budget."),
+    [SheetFailure.SignedOut]: t("Sign in to Genex to turn AI on."),
     [SheetFailure.Other]: t("Couldn’t set the budget. Try again."),
   } satisfies Record<SheetFailure, string>,
   getCredits: t("Get credits"),

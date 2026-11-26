@@ -1,5 +1,7 @@
 #include "GenexUnrealHttp.h"
 
+#include "Containers/Ticker.h"
+#include "HAL/CriticalSection.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
@@ -19,6 +21,33 @@ FString Origin(const FString& Url)
 
 /** Seconds a sign-in request may take end to end. */
 constexpr float TimeoutSeconds = 30.f;
+/** Seconds an answer read in pieces may take end to end: a model writing, a line being spoken. */
+constexpr float StreamTimeoutSeconds = 180.f;
+/** Seconds such an answer may say nothing at all; the stand sends a comment line every fifteen. */
+constexpr float StreamSilenceSeconds = 45.f;
+
+/** The body of an answer read in pieces. The HTTP thread appends, the game thread takes. */
+struct FStreamed
+{
+	FCriticalSection Lock;
+	/** Arrived and not handed over yet. */
+	std::string Fresh;
+	/** Everything that arrived: `done` still carries the whole body. */
+	std::string Whole;
+	genex::HttpChunk Chunk;
+	FTSTicker::FDelegateHandle Ticker;
+
+	/** Game thread: hand over what arrived since the last call. */
+	void HandOver()
+	{
+		std::string Bytes;
+		{
+			FScopeLock Scope(&Lock);
+			Bytes.swap(Fresh);
+		}
+		if (!Bytes.empty() && Chunk) Chunk(Bytes);
+	}
+};
 }
 
 FGenexUnrealHttp::FGenexUnrealHttp() : Alive(MakeShared<bool>(true)) {}
@@ -29,6 +58,16 @@ FGenexUnrealHttp::~FGenexUnrealHttp()
 }
 
 void FGenexUnrealHttp::Send(genex::HttpRequest Request, genex::HttpDone Done)
+{
+	Start(MoveTemp(Request), nullptr, MoveTemp(Done));
+}
+
+void FGenexUnrealHttp::SendStreamed(genex::HttpRequest Request, genex::HttpChunk Chunk, genex::HttpDone Done)
+{
+	Start(MoveTemp(Request), MoveTemp(Chunk), MoveTemp(Done));
+}
+
+void FGenexUnrealHttp::Start(genex::HttpRequest Request, genex::HttpChunk Chunk, genex::HttpDone Done)
 {
 	using namespace GenexUnrealHttpDetail;
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Http = FHttpModule::Get().CreateRequest();
@@ -45,25 +84,65 @@ void FGenexUnrealHttp::Send(genex::HttpRequest Request, genex::HttpDone Done)
 		Body.Append(reinterpret_cast<const uint8*>(Request.body.data()), static_cast<int32>(Request.body.size()));
 		Http->SetContent(MoveTemp(Body));
 	}
-	Http->SetTimeout(TimeoutSeconds);
 	TWeakPtr<bool> WeakAlive = Alive;
+	// Read in pieces: the HTTP thread only appends; the game thread hands the pieces over once a frame, so the core
+	// is still called from one thread.
+	TSharedPtr<FStreamed, ESPMode::ThreadSafe> Streamed;
+	if (Chunk)
+	{
+		Streamed = MakeShared<FStreamed, ESPMode::ThreadSafe>();
+		Streamed->Chunk = MoveTemp(Chunk);
+		Http->SetTimeout(StreamTimeoutSeconds);
+		Http->SetActivityTimeout(StreamSilenceSeconds);
+		Http->SetResponseBodyReceiveStreamDelegateV2(FHttpRequestStreamDelegateV2::CreateLambda([Streamed](void* Bytes, int64& Length) {
+			if (Bytes == nullptr || Length <= 0) return;
+			FScopeLock Scope(&Streamed->Lock);
+			Streamed->Fresh.append(static_cast<const char*>(Bytes), static_cast<size_t>(Length));
+			Streamed->Whole.append(static_cast<const char*>(Bytes), static_cast<size_t>(Length));
+		}));
+		Streamed->Ticker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([WeakAlive, Streamed](float) {
+			TSharedPtr<bool> StillAlive = WeakAlive.Pin();
+			if (!StillAlive.IsValid() || !*StillAlive) return false;
+			Streamed->HandOver();
+			return true;
+		}));
+	}
+	else
+	{
+		Http->SetTimeout(TimeoutSeconds);
+	}
 	const FString Wanted = Origin(Url);
 	// Exactly once: the completion delegate or the failed start below, whichever comes first.
 	TSharedRef<genex::HttpDone> Once = MakeShared<genex::HttpDone>(MoveTemp(Done));
 	Http->OnProcessRequestComplete().BindLambda(
-		[WeakAlive, Wanted, Once](FHttpRequestPtr, FHttpResponsePtr Response, bool bConnected) {
+		[WeakAlive, Wanted, Once, Streamed](FHttpRequestPtr, FHttpResponsePtr Response, bool bConnected) {
+			if (Streamed.IsValid()) FTSTicker::GetCoreTicker().RemoveTicker(Streamed->Ticker);
 			TSharedPtr<bool> StillAlive = WeakAlive.Pin();
 			if (!StillAlive.IsValid() || !*StillAlive || !*Once) return;
 			genex::HttpDone Callback = MoveTemp(*Once);
 			*Once = nullptr;
 			genex::HttpResponse Out;
-			if (!bConnected || !Response.IsValid())
+			const bool bRedirected = Response.IsValid() && !Wanted.IsEmpty() && !Response->GetEffectiveURL().IsEmpty() && Origin(Response->GetEffectiveURL()) != Wanted;
+			if (Streamed.IsValid() && !bRedirected)
+			{
+				// Every piece before `done`, whatever became of the connection: what arrived, arrived.
+				Streamed->HandOver();
+			}
+			if (!Response.IsValid() || (!bConnected && !Streamed.IsValid()))
 			{
 				Out.transportError = "no answer";
 			}
-			else if (!Wanted.IsEmpty() && Origin(Response->GetEffectiveURL()) != Wanted && !Response->GetEffectiveURL().IsEmpty())
+			else if (bRedirected)
 			{
 				Out.transportError = "redirected to another origin";
+			}
+			else if (Streamed.IsValid())
+			{
+				// A stream cut off after it began is a broken connection, with what arrived in the pieces.
+				Out.status = Response->GetResponseCode();
+				if (!bConnected || Out.status == 0) { Out.status = 0; Out.transportError = "the stream broke"; }
+				FScopeLock Scope(&Streamed->Lock);
+				Out.body = Streamed->Whole;
 			}
 			else
 			{
@@ -75,6 +154,7 @@ void FGenexUnrealHttp::Send(genex::HttpRequest Request, genex::HttpDone Done)
 		});
 	if (!Http->ProcessRequest() && *Once)
 	{
+		if (Streamed.IsValid()) FTSTicker::GetCoreTicker().RemoveTicker(Streamed->Ticker);
 		genex::HttpDone Callback = MoveTemp(*Once);
 		*Once = nullptr;
 		genex::HttpResponse Out;

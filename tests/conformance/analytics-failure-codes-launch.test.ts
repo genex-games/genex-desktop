@@ -30,6 +30,7 @@ import {
   BootPhase,
   SandboxLaunchCode,
   SandboxProblemCode,
+  SandboxSetupFailure,
   type StartFacts,
   StartPassage,
   StartStep,
@@ -568,6 +569,11 @@ describe("P7: how the app started", () => {
       [ready.start_passed, ready.start_failure, ready.start_retries],
       [[StartPassage.SandboxSetup, StartPassage.FailureRetried], SandboxProblemCode.NotProvisioned, CountBucket.Few],
     );
+    const setUpFailed = launchEvents.appReadyProperties(state, 900, 400, {
+      ...start,
+      failure: SandboxSetupFailure.UserNotCreated,
+    });
+    assert.equal(setUpFailed.start_failure, SandboxSetupFailure.UserNotCreated, "a Set up Windows refused the account");
     assert.equal(
       launchEvents.appReadyProperties(state, 900, 400).start_passed,
       undefined,

@@ -117,7 +117,12 @@ export default {
     "有模型正在下载。请等下载完成后再删除这个模型。",
   "A mountain rescue game with a dog and a sled": "带着狗和雪橇的山地救援游戏",
   "A museum guard game where the exhibits come alive": "展品会活过来的博物馆保安游戏",
+  "AI is off in this game": "这个游戏的 AI 已关闭",
+  "AI is on": "AI 已开启",
+  "AI is paused: not enough Genex credits": "AI 已暂停：Genex 积分不足",
   "Agents get Unreal {to}’s tools.": "智能体可以使用 Unreal {to} 的工具。",
+  "Allow {n, plural, one {{shown} credit} other {{shown} credits}}": "允许 {n, plural, other {{shown} 积分}}",
+  "Allowing…": "正在允许…",
   "An arcade shooter where your bullets bounce off the walls": "子弹会在墙上反弹的街机射击游戏",
   "A new build is ready to play.": "新构建已可以游玩。",
   "A new build is ready — reload to play it": "新构建已就绪——重新加载即可游玩",
@@ -491,9 +496,11 @@ export default {
   "Build with the Cursor plan you already have.": "用你已有的 Cursor 套餐来制作。",
   "Build with the Google AI plan you already have.": "用你已有的 Google AI 套餐来制作。",
   "Build with the Grok account you already have.": "用你已有的 Grok 账号来制作。",
+  "Change limit": "更改上限",
   "Changes Harness made to its own instructions. Undo any of them.":
     "Harness 对自己指令所做的修改。任何一项都可以撤销。",
   "Checking that Microsoft signed the installer…": "正在确认安装程序由 Microsoft 签名…",
+  "Couldn’t turn AI off. Try again.": "无法关闭 AI，请重试。",
   "Downloading the Visual Studio Build Tools installer from Microsoft…":
     "正在从 Microsoft 下载 Visual Studio Build Tools 安装程序…",
   "Genex keeps a copy of the project file first. What Unreal {to} saves won’t open in {from}.":
@@ -508,6 +515,12 @@ export default {
     "从 Microsoft 安装 Visual Studio Build Tools 2022，并勾选“使用 C++ 的桌面开发”和 .NET Framework 4.8 SDK。",
   "Installing Visual Studio Build Tools. Choose Yes when Windows asks; Microsoft's installer shows its progress.":
     "正在安装 Visual Studio Build Tools。Windows 询问时请选“是”；Microsoft 的安装程序会显示进度。",
+  "Keep it on": "保持开启",
+  Left: "剩余",
+  "Let {game} use AI?": "允许 {game} 使用 AI 吗？",
+  "Limit {limit, plural, one {{shown} credit} other {{shown} credits}}": "上限 {limit, plural, other {{shown} 积分}}",
+  "Limit {limit, plural, one {{shown} credit} other {{shown} credits}} · {held} on hold for requests still running":
+    "上限 {limit, plural, other {{shown} 积分}} · 为进行中的请求预留 {held}",
   "Microsoft's download led somewhere other than Microsoft, so Genex stopped.":
     "Microsoft 的下载指向了 Microsoft 以外的地方，所以 Genex 停止了。",
   "Microsoft's download link wasn't secure, so Genex didn't download it.":
@@ -525,14 +538,29 @@ export default {
   "Move {project} to Unreal {to}": "把 {project} 迁移到 Unreal {to}",
   "Play in browser": "在浏览器中游玩",
   "Play {title} in the browser": "在浏览器中游玩 {title}",
+  "Press Play in Unreal: AI gives practice answers (free, made up)":
+    "在 Unreal 里按 Play：AI 给出练习回答（免费、编的）",
+  "Real AI is on · used {spent} of {cap} credits": "真实 AI 已开启 · 已用 {spent} / {cap} 积分",
+  "Real AI is on · used {spent} of {cap} credits · {held} on hold":
+    "真实 AI 已开启 · 已用 {spent} / {cap} 积分 · 预留 {held}",
+  "Real models answer your next Play in Unreal, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
+    "Unreal 的下一次 Play 由真实模型回答，用你的 Genex 积分付费：这次游戏最多 {cap} 积分（{dollars}）。",
+  "Real models answer your next Play in Unreal, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session. The game is added to your Genex account as a private draft; none of its files are uploaded.":
+    "Unreal 的下一次 Play 由真实模型回答，用你的 Genex 积分付费：这次游戏最多 {cap} 积分（{dollars}）。游戏会作为私密草稿添加到你的 Genex 账号；它的文件一个都不会上传。",
   "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
     "推荐。Microsoft 免费的 C++ 工具：有了它们，代理就能用 C++ 编写游戏逻辑，Unreal 也能打包含 C++ 的游戏或插件。约 7 GB。“帮我完成”会自动安装：Windows 询问时请选“是”。",
   "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++ and the .NET Framework 4.8 SDK.":
     "推荐。Microsoft 免费的 C++ 工具：有了它们，代理就能用 C++ 编写游戏逻辑，Unreal 也能打包含 C++ 的游戏或插件。请安装 Visual Studio Build Tools，并勾选“使用 C++ 的桌面开发”和 .NET Framework 4.8 SDK。",
+  "Replaces the budget running now": "会替换正在使用的预算",
   "Self-improvement is off. Harness keeps its own instructions as they are.":
     "自我改进已关闭。Harness 会保持自己的指令不变。",
+  "Sign in to Genex to turn AI on.": "登录 Genex 即可开启 AI。",
   "This project isn't on an older Unreal that Genex moves to {version}.":
     "这个项目不在 Genex 可迁移到 {version} 的旧版 Unreal 上。",
+  "Turn AI off": "关闭 AI",
+  "Turn AI off in this game?": "关闭这个游戏的 AI 吗？",
+  "Turn AI on": "开启 AI",
+  "Turning AI off…": "正在关闭 AI…",
   "Unreal can build C++ on this PC.": "Unreal 可以在这台电脑上编译 C++。",
   "Unreal {engine} doesn't build with the C++ tools on this PC. Do it for me updates them: choose Yes when Windows asks.":
     "Unreal {engine} 无法用这台电脑上的 C++ 工具编译。“帮我完成”会更新它们：Windows 询问时请选“是”。",
@@ -541,6 +569,7 @@ export default {
   "Unreal {version} isn't on this computer yet. Install it first, then move the project.":
     "这台电脑上还没有 Unreal {version}。请先安装，再迁移项目。",
   "Update Visual Studio Build Tools": "更新 Visual Studio Build Tools",
+  Used: "已用",
   "Visual Studio Build Tools are installed.": "Visual Studio Build Tools 已安装。",
   "Visual Studio's C++ tools are ready": "Visual Studio 的 C++ 工具已就绪",
   "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.":
@@ -1333,6 +1362,10 @@ export default {
   "Fit everything": "显示全部",
   "Tidy up": "整理",
   "Genex is drawing": "Genex 正在画",
+  "You pay for what it uses from your Genex credits, up to this limit.":
+    "游戏用多少，就从你的 Genex 积分里付多少，不超过这个上限。",
+  "Your own {plan} plan answers your next Play in Unreal, on this computer. No Genex credits are spent; your plan's limits apply, answers come slower, and voices stay practice.":
+    "Unreal 的下一次 Play 由你自己的 {plan} 订阅在这台电脑上回答。不花 Genex 积分；受你订阅的限额约束，回答会慢一些，语音仍是练习用的。",
   "{title} · next": "{title} · 接下来",
   "{count, plural, one {# new pick} other {# new picks}}": "{count, plural, other {# 个新选择}}",
   "Use this": "用这个",
@@ -6771,7 +6804,6 @@ export default {
   "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
     "真实 AI 需要你登录 Genex。在设置里登录，然后再试一次。练习回答会继续。",
   "Real AI stopped. Practice answers go on.": "真实 AI 已停止。练习回答会继续。",
-  "Real AI · {spent} of {cap} credits": "真实 AI · {spent} / {cap} 积分",
   "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
     "这个预览里由真实模型回答，用你的 Genex 积分付费：这次游戏最多 {cap} 积分（{dollars}）。",
   "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session. The game is added to your Genex account as a private draft; none of its files are uploaded.":
@@ -6797,25 +6829,17 @@ export default {
   "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
     "本地模型需要搭载 Apple 芯片的 Mac，或 64 位 Windows / Linux 电脑",
   "{model} can't run on this computer.": "{model} 无法在这台电脑上运行。",
-  "AI budget for {game}": "{game} 的 AI 预算",
-  "AI budget: {remaining} of {limit, plural, one {{shown} credit} other {{shown} credits}} left":
-    "AI 预算：剩余 {remaining} / {limit, plural, other {{shown} 积分}}",
   "AI in games is paused right now. Try again later.": "游戏中的 AI 目前已暂停，请稍后再试。",
   "Approving replaces the AI budget already running for this game.": "批准后，将替换这款游戏正在使用的 AI 预算。",
   "At most {n, plural, one {{shown} credit} other {{shown} credits}} for one call.":
     "每次调用最多 {n, plural, other {{shown} 积分}}。",
   "Couldn’t set the budget. Try again.": "无法设置预算，请重试。",
-  "Couldn’t stop the AI budget. Try again.": "无法停止 AI 预算，请重试。",
   "It ends when you stop it, when you sign out of Genex, or after 24 hours.":
     "你停止它、退出登录 Genex 或 24 小时后，它就会结束。",
   "It uses {models}.": "它会使用 {models}。",
   "Keep it": "保留",
   Limit: "上限",
   "Reading the AI budget…": "正在读取 AI 预算…",
-  "Set AI budget": "设置 AI 预算",
-  "Sign in to Genex to set an AI budget.": "登录 Genex 即可设置 AI 预算。",
-  "Stop this AI budget?": "停止这个 AI 预算？",
-  "Stopping the AI budget…": "正在停止 AI 预算…",
   "That took too long, so the budget has to be read again.": "等待太久，需要重新读取预算。",
   "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per hour.":
     "游戏预计每小时约 {n, plural, other {{shown} 积分}}。",
@@ -6823,11 +6847,8 @@ export default {
     "游戏预计每分钟约 {n, plural, other {{shown} 积分}}。",
   "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per session.":
     "游戏预计每次游玩约 {n, plural, other {{shown} 积分}}。",
-  "This game asks AI models for things while you play. You pay for what it uses from your Genex credits, up to the limit you set.":
-    "这款游戏会在你游玩时调用 AI 模型。用掉的部分从你的 Genex 积分中支付，不超过你设置的上限。",
   "This game’s AI isn’t available right now.": "这款游戏的 AI 目前不可用。",
   "This game’s voice AI isn’t available in the app yet.": "这款游戏的语音 AI 暂时无法在应用中使用。",
-  "Uses AI, paid from your Genex credits.": "使用 AI，从你的 Genex 积分中支付。",
   "Verify your Genex account’s email to pay with credits, then try again.":
     "请先验证 Genex 账号的邮箱才能用积分支付，然后重试。",
   "You don’t have enough Genex credits for this budget.": "你的 Genex 积分不够设置这个预算。",

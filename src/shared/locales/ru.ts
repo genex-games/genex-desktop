@@ -136,7 +136,13 @@ export default {
     "Сейчас скачивается модель. Удали эту, когда загрузка закончится.",
   "A mountain rescue game with a dog and a sled": "Спасение в горах с собакой и санями",
   "A museum guard game where the exhibits come alive": "Игра про охранника музея, где оживают экспонаты",
+  "AI is off in this game": "ИИ в этой игре выключен",
+  "AI is on": "ИИ включён",
+  "AI is paused: not enough Genex credits": "ИИ на паузе: не хватает кредитов Genex",
   "Agents get Unreal {to}’s tools.": "Агенты получат инструменты Unreal {to}.",
+  "Allow {n, plural, one {{shown} credit} other {{shown} credits}}":
+    "Разрешить {n, plural, one {{shown} кредит} few {{shown} кредита} many {{shown} кредитов} other {{shown} кредита}}",
+  "Allowing…": "Разрешаем…",
   "An arcade shooter where your bullets bounce off the walls": "Аркадный шутер, где пули отскакивают от стен",
   "A new build is ready to play.": "Новая сборка готова — можно играть.",
   "A new build is ready — reload to play it": "Новая сборка готова — перезагрузи, чтобы поиграть",
@@ -539,9 +545,11 @@ export default {
   "Build with the Cursor plan you already have.": "Собирай на тарифе Cursor, который у тебя уже есть.",
   "Build with the Google AI plan you already have.": "Собирай на тарифе Google AI, который у тебя уже есть.",
   "Build with the Grok account you already have.": "Собирай на аккаунте Grok, который у тебя уже есть.",
+  "Change limit": "Изменить лимит",
   "Changes Harness made to its own instructions. Undo any of them.":
     "Изменения, которые Harness внёс в свои инструкции. Любое можно отменить.",
   "Checking that Microsoft signed the installer…": "Проверяем, что установщик подписан Microsoft…",
+  "Couldn’t turn AI off. Try again.": "Не удалось выключить ИИ. Попробуй ещё раз.",
   "Downloading the Visual Studio Build Tools installer from Microsoft…":
     "Скачиваем установщик Visual Studio Build Tools с сайта Microsoft…",
   "Genex keeps a copy of the project file first. What Unreal {to} saves won’t open in {from}.":
@@ -556,6 +564,13 @@ export default {
     "Установи Visual Studio Build Tools 2022 от Microsoft с набором «Разработка классических приложений на C++» и .NET Framework 4.8 SDK.",
   "Installing Visual Studio Build Tools. Choose Yes when Windows asks; Microsoft's installer shows its progress.":
     "Устанавливаем Visual Studio Build Tools. Нажми «Да», когда Windows спросит; установщик Microsoft покажет, как идёт установка.",
+  "Keep it on": "Оставить включённым",
+  Left: "Осталось",
+  "Let {game} use AI?": "Разрешить «{game}» использовать ИИ?",
+  "Limit {limit, plural, one {{shown} credit} other {{shown} credits}}":
+    "Лимит {limit, plural, one {{shown} кредит} few {{shown} кредита} many {{shown} кредитов} other {{shown} кредита}}",
+  "Limit {limit, plural, one {{shown} credit} other {{shown} credits}} · {held} on hold for requests still running":
+    "Лимит {limit, plural, one {{shown} кредит} few {{shown} кредита} many {{shown} кредитов} other {{shown} кредита}} · {held} придержано под запросы, которые ещё идут",
   "Microsoft's download led somewhere other than Microsoft, so Genex stopped.":
     "Загрузка Microsoft вела не на сайт Microsoft, поэтому Genex остановился.",
   "Microsoft's download link wasn't secure, so Genex didn't download it.":
@@ -573,14 +588,29 @@ export default {
   "Move {project} to Unreal {to}": "Перенести {project} на Unreal {to}",
   "Play in browser": "Играть в браузере",
   "Play {title} in the browser": "Играть в «{title}» в браузере",
+  "Press Play in Unreal: AI gives practice answers (free, made up)":
+    "Нажми Play в Unreal: ИИ даст пробные ответы (бесплатно, выдуманные)",
+  "Real AI is on · used {spent} of {cap} credits": "Настоящий ИИ включён · потрачено {spent} из {cap} кредитов",
+  "Real AI is on · used {spent} of {cap} credits · {held} on hold":
+    "Настоящий ИИ включён · потрачено {spent} из {cap} кредитов · {held} придержано",
+  "Real models answer your next Play in Unreal, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
+    "Настоящие модели ответят в твоём следующем Play в Unreal, за твои кредиты Genex: не больше {cap} кредитов ({dollars}) за эту игровую сессию.",
+  "Real models answer your next Play in Unreal, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session. The game is added to your Genex account as a private draft; none of its files are uploaded.":
+    "Настоящие модели ответят в твоём следующем Play в Unreal, за твои кредиты Genex: не больше {cap} кредитов ({dollars}) за эту игровую сессию. Игра добавится в твой аккаунт Genex как закрытый черновик; её файлы никуда не загружаются.",
   "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. About 7 GB. Do it for me installs them: choose Yes when Windows asks.":
     "Рекомендуем. Бесплатные инструменты C++ от Microsoft: с ними агент пишет логику твоей игры на C++, а Unreal собирает игру или плагин с C++. Около 7 ГБ. «Сделать за меня» установит их: нажми «Да», когда Windows спросит.",
   "Recommended. Microsoft's free C++ tools: with them the agent writes your game's logic in C++, and Unreal packages a game or plugin with C++. Install Visual Studio Build Tools with Desktop development with C++ and the .NET Framework 4.8 SDK.":
     "Рекомендуем. Бесплатные инструменты C++ от Microsoft: с ними агент пишет логику твоей игры на C++, а Unreal собирает игру или плагин с C++. Установи Visual Studio Build Tools с набором «Разработка классических приложений на C++» и .NET Framework 4.8 SDK.",
+  "Replaces the budget running now": "Заменит текущий бюджет",
   "Self-improvement is off. Harness keeps its own instructions as they are.":
     "Самоулучшение выключено. Harness не меняет свои инструкции.",
+  "Sign in to Genex to turn AI on.": "Войди в Genex, чтобы включить ИИ.",
   "This project isn't on an older Unreal that Genex moves to {version}.":
     "Этот проект не на старой версии Unreal, которую Genex переносит на {version}.",
+  "Turn AI off": "Выключить ИИ",
+  "Turn AI off in this game?": "Выключить ИИ в этой игре?",
+  "Turn AI on": "Включить ИИ",
+  "Turning AI off…": "Выключаем ИИ…",
   "Unreal can build C++ on this PC.": "Unreal может собирать C++ на этом ПК.",
   "Unreal {engine} doesn't build with the C++ tools on this PC. Do it for me updates them: choose Yes when Windows asks.":
     "Unreal {engine} не работает с инструментами C++ на этом ПК. «Сделать за меня» обновит их: нажми «Да», когда Windows спросит.",
@@ -589,6 +619,7 @@ export default {
   "Unreal {version} isn't on this computer yet. Install it first, then move the project.":
     "Unreal {version} ещё нет на этом компьютере. Сначала установи его, потом перенеси проект.",
   "Update Visual Studio Build Tools": "Обновить Visual Studio Build Tools",
+  Used: "Потрачено",
   "Visual Studio Build Tools are installed.": "Visual Studio Build Tools установлены.",
   "Visual Studio's C++ tools are ready": "Инструменты C++ из Visual Studio готовы",
   "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.":
@@ -1427,6 +1458,10 @@ export default {
   "Fit everything": "Вписать всё",
   "Tidy up": "Навести порядок",
   "Genex is drawing": "Genex рисует",
+  "You pay for what it uses from your Genex credits, up to this limit.":
+    "Ты платишь кредитами Genex за то, что игра использует, не больше этого лимита.",
+  "Your own {plan} plan answers your next Play in Unreal, on this computer. No Genex credits are spent; your plan's limits apply, answers come slower, and voices stay practice.":
+    "В твоём следующем Play в Unreal ответит твой собственный тариф {plan}, на этом компьютере. Кредиты Genex не тратятся; действуют лимиты твоего тарифа, ответы приходят медленнее, а голоса остаются пробными.",
   "{title} · next": "{title} · дальше",
   "{count, plural, one {# new pick} other {# new picks}}":
     "{count, plural, one {# новый выбор} few {# новых выбора} many {# новых выборов} other {# нового выбора}}",
@@ -7211,7 +7246,6 @@ export default {
   "Real AI needs you signed in to Genex. Sign in from Settings, then try again. Practice answers go on.":
     "Для настоящего ИИ нужно войти в Genex. Войди в настройках и попробуй снова. Пробные ответы продолжаются.",
   "Real AI stopped. Practice answers go on.": "Настоящий ИИ остановился. Пробные ответы продолжаются.",
-  "Real AI · {spent} of {cap} credits": "Настоящий ИИ · {spent} из {cap} кредитов",
   "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.":
     "В этом превью отвечают настоящие модели, за твои кредиты Genex: не больше {cap} кредитов ({dollars}) за эту игровую сессию.",
   "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session. The game is added to your Genex account as a private draft; none of its files are uploaded.":
@@ -7238,26 +7272,18 @@ export default {
   "Local models need an Apple Silicon Mac or a 64-bit Windows or Linux PC":
     "Для локальных моделей нужен Mac с Apple Silicon или 64-битный ПК с Windows или Linux",
   "{model} can't run on this computer.": "{model} не запустится на этом компьютере.",
-  "AI budget for {game}": "Бюджет на ИИ для «{game}»",
-  "AI budget: {remaining} of {limit, plural, one {{shown} credit} other {{shown} credits}} left":
-    "Бюджет на ИИ: осталось {remaining} из {limit, plural, one {{shown} кредита} few {{shown} кредитов} many {{shown} кредитов} other {{shown} кредита}}",
   "AI in games is paused right now. Try again later.": "ИИ в играх сейчас на паузе. Попробуй позже.",
   "Approving replaces the AI budget already running for this game.":
     "Новый бюджет заменит тот, что уже действует в этой игре.",
   "At most {n, plural, one {{shown} credit} other {{shown} credits}} for one call.":
     "Не больше {n, plural, one {{shown} кредита} few {{shown} кредитов} many {{shown} кредитов} other {{shown} кредита}} за один запрос.",
   "Couldn’t set the budget. Try again.": "Не удалось задать бюджет. Попробуй ещё раз.",
-  "Couldn’t stop the AI budget. Try again.": "Не удалось остановить бюджет на ИИ. Попробуй ещё раз.",
   "It ends when you stop it, when you sign out of Genex, or after 24 hours.":
     "Он закончится, когда ты его остановишь, выйдешь из Genex или через 24 часа.",
   "It uses {models}.": "Она использует {models}.",
   "Keep it": "Оставить",
   Limit: "Лимит",
   "Reading the AI budget…": "Загружаем бюджет на ИИ…",
-  "Set AI budget": "Задать бюджет на ИИ",
-  "Sign in to Genex to set an AI budget.": "Войди в Genex, чтобы задать бюджет на ИИ.",
-  "Stop this AI budget?": "Остановить этот бюджет на ИИ?",
-  "Stopping the AI budget…": "Останавливаем бюджет на ИИ…",
   "That took too long, so the budget has to be read again.":
     "Прошло слишком много времени, бюджет нужно загрузить заново.",
   "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per hour.":
@@ -7266,11 +7292,8 @@ export default {
     "По оценке игры — около {n, plural, one {{shown} кредита} few {{shown} кредитов} many {{shown} кредитов} other {{shown} кредита}} в минуту.",
   "The game estimates about {n, plural, one {{shown} credit} other {{shown} credits}} per session.":
     "По оценке игры — около {n, plural, one {{shown} кредита} few {{shown} кредитов} many {{shown} кредитов} other {{shown} кредита}} за сессию.",
-  "This game asks AI models for things while you play. You pay for what it uses from your Genex credits, up to the limit you set.":
-    "Пока ты играешь, эта игра обращается к ИИ-моделям. Ты платишь за это кредитами Genex — не больше лимита, который задашь.",
   "This game’s AI isn’t available right now.": "ИИ этой игры сейчас недоступен.",
   "This game’s voice AI isn’t available in the app yet.": "Голосовой ИИ этой игры пока недоступен в приложении.",
-  "Uses AI, paid from your Genex credits.": "Использует ИИ за твои кредиты Genex.",
   "Verify your Genex account’s email to pay with credits, then try again.":
     "Подтверди почту аккаунта Genex, чтобы платить кредитами, и попробуй ещё раз.",
   "You don’t have enough Genex credits for this budget.": "На этот бюджет не хватает кредитов Genex.",

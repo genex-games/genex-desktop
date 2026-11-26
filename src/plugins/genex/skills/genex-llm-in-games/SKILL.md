@@ -9,6 +9,22 @@ disagrees with this preface, this preface wins.
 - `npx genex llm models`, `llm status` and `llm cancel <id>`: `genex__cli`, for example
   `genex__cli {"command":"llm models","options":{"all":true}}` or
   `genex__cli {"command":"llm cancel","args":"<id>"}`.
+- `npx genex llm usage`: `genex__cli {"command":"llm usage","options":{"days":1}}` (`days` 1 to 90,
+  7 when left out). The published game's model calls as its owner sees them: how many, what
+  players were charged, and the code of each call that failed (`failuresByCode`). It lists only
+  calls Genex admitted. A call refused before that (low credits, a ceiling or a model outside the
+  approved budget, an ended sign-in) is not in it, so no calls after a play that failed means the
+  call was refused, not that it never arrived.
+- `npx genex llm calls`: `genex__cli {"command":"llm calls","options":{"failed":true,"limit":10}}`
+  (`failed` true for the calls that did not answer, `limit` 1 to 100, 20 when left out). The same
+  game's recent calls one by one: when, which model, how it ended and with which code, its ceiling
+  and what was charged, the token cap it ran with and the one it asked for, the tokens it used
+  (thinking counted apart), whether it was cut off, and the budget's per-call ceiling. A failed
+  call carries a `hint` saying what to change, and `refusedBeforeStart` lists the codes of calls
+  refused before they started, which leave no row here, each with what to change. Run it first
+  when the person reports a failed play of the published game; for a cut-off answer it says
+  which limit cut it. Where Studio answers that it cannot list calls yet (an older Genex), use
+  `llm usage`.
 - `npx genex llm bench "<prompt>" --schema ./answer.schema.json --samples 3 --max-credits <n>`:
   `genex__cli-paid`, with the prompt in `args` and the flags in `options`:
   `{"command":"llm bench","args":"<prompt>","options":{"schema":"answer.schema.json","samples":3,"max-credits":5}}`.
@@ -33,7 +49,7 @@ disagrees with this preface, this preface wins.
 - `llm price` is not available: it reprints a file the CLI leaves in the folder it ran in, and
   Studio removes that folder after every command. Write the bench's numbers into the game when you
   read them, and bench again only when the prompt, the schema or the model changed.
-- Project commands (`llm bench`, `llm status`, `llm cancel`) need the game's hosted project:
+- Project commands (`llm bench`, `llm status`, `llm cancel`, `llm usage`, `llm calls`) need the game's hosted project:
   publish a draft with `genex__publish {"operation":"draft"}` first. `init --convert` does not
   apply in Studio.
 
@@ -46,13 +62,37 @@ disagrees with this preface, this preface wins.
   (so a period's credits are its calls × 1). Each sits in a named constant whose comment says it is
   provisional, until `llm bench` measures it. This replaces the card's rule that only a benched
   figure is declared. When a bench runs, its figures replace the provisional ones.
+- The provisional 4 is right only for an inexpensive model. A ceiling must cover what the model's
+  input alone may cost, or the call is refused `provider_budget_insufficient` before it runs. The
+  rule, from the model's row in `llm models` (`inputUsdPerMillion`, `outputUsdPerMillion`) and the
+  catalog's `feeBps`:
+  `maxCredits` ≥ ((prompt bytes + schema bytes + 2048) × `inputUsdPerMillion` + `maxOutputTokens` × `outputUsdPerMillion`) × (1 + `feeBps` / 10000) / 10000, rounded up.
+  A model at 0.75 in and 3.75 out fits 1; one at 10 in and 50 out needs 8 for a 1.5 KB prompt and
+  512 tokens, so 4 is refused. Work the number out for the model the game names, set the call's
+  `maxCredits` to it and `perCallMaxCredits` to at least twice that, and write the sum in the
+  constant's comment. On `provider_budget_insufficient` raise both `maxCredits` and the declared
+  `perCallMaxCredits` (`llm budget set` again for a native game); never retry it unchanged. The
+  practice helper prices nothing, so only this sum, or a bench, shows the refusal before players do.
 - A ceiling also bounds how long an answer may be, so a provisional one needs short answers: the
   prompt states the answer's length, every string in the schema has a `maxLength`, and the call
   passes `maxOutputTokens`. Each ceiling is one named constant, so one edit raises it.
-- A call that ends `provider_token_limit` was cut off because its ceiling is too low for that model:
-  the game plays the written line with its label, and the next call of that prompt declares twice
-  the `maxCredits`, up to the budget's `perCallMaxCredits` (16), for the rest of the session. That is
-  why the provisional budget allows 16 a call while a call starts at 4. A bench settles the figures.
+- A call that ends `provider_token_limit` was cut off, by one of two limits, and the result says
+  which. When the result's `maxCredits` is lower than the `maxCredits` the call declared, the
+  length cut it, not the ceiling, and raising `maxCredits` changes nothing. Most current models
+  think before they write (Gemini 3.8 Flash, GPT-6 Astra and Claude Fable 5.1 always do), the
+  thinking is counted against the call's `maxOutputTokens`, and a game can turn it down only
+  where `llm models` lists `reasoningEffort` for that model; where it lists none, there is no
+  setting to pass. So a cap sized for the answer alone (the stand's default is 512) can end with
+  no answer at all. Give such a call room: `maxOutputTokens` 2000 to 4000 for a
+  short line on Gemini 3.8 Flash, with the answer's own length still stated in the prompt and the
+  schema's `maxLength`, and work the ceiling rule above again with that number so the call's
+  `maxCredits` and the declared `perCallMaxCredits` fund it. When the two are equal, the
+  ceiling cut it: the next call of that prompt declares twice the `maxCredits`, up to the budget's
+  `perCallMaxCredits` (16), for the rest of the session. A call's `maxCredits` can never be above
+  the approved budget's `perCallMaxCredits`. Either way the game plays the written line with its
+  label, and after two cut-offs in a row for the same prompt it stops calling for the session
+  rather than retry. That is why the provisional budget allows 16 a call while a call starts at 4. A bench
+  settles the figures.
 - Ask for the bench once. When its `genex__cli-paid` card is not approved, declined or left
   unanswered, ask no more and keep the feature on with the provisional ceilings; the final message
   says the ceilings are provisional and that a bench would replace them.
@@ -94,7 +134,34 @@ disagrees with this preface, this preface wins.
   (`{"grantId":"…","modelId":"<id>","prompt":"…","outputFormat":"text","maxCredits":<n>}`). Always
   ask with `RequestSpendGrant`: it is the one call that works both while the game is made and once
   it is published. Never write `GetActiveSpendGrant` alone, and never leave out `disclosure`: a
-  request without it is refused `invalid_request`. `GenerateStream` hands its text over whole.
+  request without it is refused `invalid_request`.
+- A character's line is asked with `GenerateStream` (the same options) and shown as it is written:
+  `OnDelta(Request, Text, SoFar)` fires for each piece, then `OnSettled`. Put the words on screen
+  from the first `OnDelta`; a player must never look at a silent character until the whole answer
+  exists. For a JSON answer `SoFar` is the JSON text so far: read the spoken field out of it as
+  it grows. With practice answers and with **Use my plan** the text still arrives in pieces.
+- A character speaks with `Speak`: `{"grantId":"…","text":"<the line>","voice":"<a voice id>","tier":"standard","style":"<how he says it>"}`.
+  Voice ids: `narrator`, `heroine`, `gruff`, `elder`, `robot`, `imp` (every tier) and `sprite`,
+  `sage`, `matron`, `herald`, `whisper`, `muse` (tiers `standard` and `economy`); `style` works
+  on those two tiers.
+  `OnSpeechStarted(Request, Sound)` hands over a `USoundWave` as soon as the first sound exists:
+  set it on an audio component at the speaker and play it; it keeps playing as the rest arrives.
+  `OnSettled` ("speak") then says how long the line is (`durationMs`). The budget must name
+  speech: add `"voice":{"speech":{"tiers":["standard"],"estimatedCharactersPerPeriod":<n>}}` to
+  the `RequestSpendGrant` options and declare speech in the game's AI budget before it is
+  published, or every line is refused `voice_not_enabled`. A microphone has no binding yet.
+- A call that wants fields back sends a schema, and the whole options text is one JSON object:
+  `{"grantId":"…","modelId":"<id>","prompt":"…","outputFormat":"json","maxOutputTokens":2000,"maxCredits":<n>,"schema":{"type":"object","additionalProperties":false,"required":["line","mood"],"properties":{"line":{"type":"string","maxLength":240},"mood":{"type":"string","enum":["warm","wary","angry"]}}}}`.
+  Its answer is the result's `output`, an object. Write the schema exactly this way, because the
+  plugin sends it as written and a schema Genex cannot serve is refused `invalid_schema` before
+  the call runs (a published game's first call failed this way): `schema` is an object inside the
+  options, never JSON text (a quoted string); it goes with `outputFormat` `json`; every object, at
+  any depth, has `properties` and `additionalProperties: false`; and it uses only the dialect's
+  keywords: `type`, `description`, `title`, `properties`, `required`, `additionalProperties`,
+  `items`, `enum`, `minimum`, `maximum`, `minLength`, `maxLength`, `minItems`, `maxItems`, five
+  levels deep at most, with no `$ref`, `anyOf`, `pattern`, `format` or `default`. Build the
+  options with Unreal's JSON writer or one raw string literal, never by pasting a schema string
+  into another string.
 - While the game is being made, a play in the Unreal editor answers. Genex runs its practice
   helper for the game and the plugin sends that play's calls to it: `RequestSpendGrant` is approved
   at once and every call answers, free and made up, marked `[practice]`, exactly as in a web
@@ -125,6 +192,32 @@ disagrees with this preface, this preface wins.
   and a one-time call is `native_unsupported`: the game plays its written lines with its label.
   Never start the packaged app yourself from a shell to test its AI, and never report that answer
   as a broken feature.
+- The published game's budget is the declared one, never what the game's own `RequestSpendGrant`
+  options say: the plugin does not send them there. So every `Generate` names a `modelId` that is
+  in the declaration's `models` and a `maxCredits` no higher than its `perCallMaxCredits`, and you
+  change the declaration (`llm budget set`) whenever you change either in the code. A practice play
+  cannot show a mismatch: the helper approves what the game asks for.
+- A call that fails settles `status` `failed` with the reason's code in `error`, and, when Genex
+  says so beside the code, which rule broke in `reason` and where in `at` (for `invalid_schema`,
+  such as `ref_not_supported` at `schema.properties.mood`). The game shows
+  `GenerationErrorMessage(<error>)`, a sentence for that code, and keeps the code readable: small
+  after the sentence or on a debug key, with `reason` and `at` beside it when the result has
+  them. The plugin also writes the code itself, with the HTTP status and those two,
+  as one line starting `genex models:` in Unreal's log, and in a packaged Shipping game, which
+  keeps no Unreal log, in `Genex.log` in the game's log folder. So nobody rebuilds a game to learn
+  a code: when the person reports a failed play of the published game, read the code before
+  changing anything. Run `llm calls` with `failed` true (above), ask what the screen said, and ask for that file.
+  What the codes mean: `invalid_schema` the schema breaks a rule above (`reason` and `at` say which and where);
+  `grant_insufficient_funds` the player's credits do not
+  cover the call (they top up, the budget resumes); `grant_price_unreasonable` the call's
+  `maxCredits` is above the declared `perCallMaxCredits`; `model_not_available` the `modelId` is
+  not in the declared `models`, or Genex does not serve it; `provider_budget_insufficient` the
+  `maxCredits` is below what this model's input may cost (the ceiling rule above: raise it and the
+  declared `perCallMaxCredits`); `provider_token_limit` the answer was
+  cut off (raise `maxOutputTokens` when the result's `maxCredits` is below the call's, else
+  `maxCredits`: the rule above);
+  `session_revoked` the sign-in that approved the budget ended, so they approve again;
+  `budget_not_approved` nobody approved a budget. Say which one it was, and never guess between them.
 - The final message for an Unreal game that calls a model says in one line that a Play in the
   Unreal editor answers with practice answers until the person presses Use my plan or Use real AI
   above the game in Live (Genex's own Play of the packaged app is answered the same way on a Mac
@@ -190,13 +283,13 @@ gets no such label.
 
 ## Not in Studio yet
 
-These parts of Genex CLI 1.46.2 are left out of the card below because Studio cannot run them yet:
+These parts of Genex CLI 1.46.5 are left out of the card below because Studio cannot run them yet:
 
 - `llm bench` takes no `system` or `messages` option here. Put the system text and a typical
   history into the bench prompt itself, so the measured size is the real call's.
-- Practice mode (`llm practice`), creator-paid budgets (`llm sponsor`, `sponsored: true`) and
-  `llm usage` are commands Studio does not run. `features.sponsor` may read true on a stand; a game
-  made here still asks the player for the budget.
+- Practice mode (`llm practice`) and creator-paid budgets (`llm sponsor`, `sponsored: true`) are
+  commands Studio does not run. `features.sponsor` may read true on a stand; a game made here
+  still asks the player for the budget.
 - Model calls from a multiplayer server room (`shareWithRooms`, `lendSpendGrantToRoom`,
   `ctx.models`) are not built here. `features.roomCalls` may read true on a stand; a game made here
   calls the model from the player's page.
@@ -217,7 +310,7 @@ player text) is `play-time-models` in the `genex-recommendations` plugin.
 
 Other commands map onto Studio tools as the `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-llm-in-games/SKILL.md v1.46.2 sha256 a82075f1266ce9225eaa99c7aa558f1d72e8cd3571efc8327bcafc9ca4060546 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-llm-in-games/SKILL.md v1.46.5 sha256 37bf08622702adbf0efba8a764dc4b36128dae5a71cf3e08e876dc481b2f222e -->
 ---
 name: genex-llm-in-games
 description: Call a language model from a running game — NPCs that answer in their own words, AI opponents, teammates and agents that plan and act, a narrator or game master, a judge of what the player typed, quests written per save — and let players talk to characters that answer aloud. The PLAYER pays and approves on a Genex surface. Covers one-time calls and standing budgets, the ceiling, streaming, the judge, voice and every refusal.
@@ -453,11 +546,10 @@ npx genex llm status        # this project's open calls: active, or awaiting the
 npx genex llm cancel <id>   # stop an ACTIVE call; a stopped one is reported, not cancelled
 ```
 
-## The schema dialect (exact — anything else is refused)
+## The schema dialect (write exactly this)
 
-`schema` is validated by the platform before the call, and a refused schema is
-`invalid_schema` at the door — nothing is charged, nothing runs. The accepted
-subset, and it is the whole subset:
+`schema` is read by the platform before the call. Write it as a JSON object in
+this subset, and it is the whole subset:
 
 - `type`: `object`, `array`, `string`, `number`, `integer`, `boolean`, `null`
 - objects: `properties`, `required`, and `additionalProperties: false` on
@@ -467,10 +559,28 @@ subset, and it is the whole subset:
 - `minimum` / `maximum`, `minLength` / `maxLength`, `minItems` / `maxItems`
 - `description` and `title`, on any node
 
-Everything else is refused, including `$schema`, `default`, `examples`,
-`pattern`, `format`, `anyOf` / `oneOf` / `allOf` and `$ref`. Keep the schema
-in one file (`./answer.schema.json`), benchmark with that file, and ship the
-same object — a schema that passed the bench passes the game.
+A schema that is nearly this is repaired and served, not refused, on a stand
+that repairs schemas and in `genex llm practice` (CLI 1.46.3+): an object that
+leaves out `additionalProperties: false` is closed, a schema sent as JSON text
+is parsed, a call with a `schema` is a JSON call whatever its `outputFormat`
+says, `const` becomes a one-value `enum`, `["string","null"]` becomes `string`,
+and every other keyword is left out (`$schema`, `default`, `examples`,
+`pattern`, `format`, …). **Left out means not enforced**: no answer is checked
+against a `pattern` or a `format`, so say that rule in the property's
+`description` and check it in the game.
+
+What the subset cannot express is still `invalid_schema` at the door (nothing
+is charged, nothing runs), and the refusal says which rule and where:
+`{ "error": "invalid_schema", "reason": "ref_not_supported", "at": "schema.properties.npc" }`.
+The reasons: `ref_not_supported` (`$ref`), `combinator_not_supported` (a real
+`anyOf` / `oneOf` / `allOf` choice), `properties_missing` (an object that lists
+none), `items_missing` (an array that names none), `type_missing`,
+`type_not_supported`, `too_deep` (more than five levels below the top),
+`too_many_properties` (over 32), `property_name_not_allowed`,
+`enum_not_allowed`, `bound_not_allowed` and `not_a_schema`.
+
+Keep the schema in one file (`./answer.schema.json`), benchmark with that
+file, and ship the same object — a schema that passed the bench passes the game.
 
 ## Standing budgets
 
@@ -579,8 +689,8 @@ There is no compensation lane, so this is all work you do before the call:
 - **Validate inputs first** — a malformed prompt is still billed.
 - **Always set `schema` for `outputFormat: 'json'`** — unschema'd JSON is the
   commonest way a call is charged and the result is unusable. Write it in the
-  accepted dialect above; a refused schema is `invalid_schema` and costs
-  nothing, but it is a feature that never runs.
+  accepted dialect above; a schema that cannot be served is `invalid_schema`
+  and costs nothing, but it is a feature that never runs.
 - **Keep prompts short.** Long context is most of the bill.
 - **Never loop `generate()` without a grant**, and never retry in a loop — each
   attempt is a separate charge, and a one-time call is at least one whole credit.
@@ -622,7 +732,7 @@ These are source contracts, not a claim that every stand runs this lane —
 - [ ] The picker offers the featured set, labelled with the server's own `label`
 - [ ] `maxCredits` — and a budget's `perCallMaxCredits` / `perCallEstimateCredits` — are the figures `npx genex llm bench` printed, verbatim, or the provisional ceilings — never a charged number
 - [ ] No coin spelling (`estimateCoins`, `perCallMaxCoins`, `estimatedCoinsPerPeriod`) in new code
-- [ ] The schema uses only the accepted dialect (no `$ref`, `pattern`, `format`, `anyOf`, `default`)
+- [ ] The schema uses only the accepted dialect (no `$ref`, no real `anyOf`; a `pattern` or `format` is not enforced)
 - [ ] A bench refused as `generation_limit` was answered with `npx genex llm status`, never a retry
 - [ ] `generate()` / `requestSpendGrant()` is the first statement of a click handler
 - [ ] A repeated-call feature uses a grant; a one-off uses `generate()`
@@ -639,6 +749,28 @@ These are source contracts, not a claim that every stand runs this lane —
 - [ ] `content_blocked` and a queued call are handled
 
 ## Troubleshooting
+
+**A published game's call failed — run this first:**
+
+```bash
+npx genex llm calls --failed   # this game's failed calls, newest first; --limit <1-100>, --json
+```
+
+It reads what the server recorded for each call (the game's owner only; no
+player, prompt or answer is in it): the error code, the call's ceiling beside
+the budget's, what it was charged, and its output tokens against the cap it ran
+with. Under a code you can fix, one line says what to change. Without
+`--failed` it lists the answered calls too. A call refused before it started
+(`grant_price_unreasonable`, `provider_budget_insufficient`,
+`model_not_available`, `invalid_schema`) is not in the list — the game got that
+code as the call's own answer, so log `res.error` in the game.
+
+**The budget dropped but the call says `chargedCredits: 0`** — nothing was
+overcharged. While a call runs the budget HOLDS that call's `maxCredits`, so
+`remainingCredits` drops by the ceiling, not by the cost, and the hold comes
+back when the call settles. What was really spent is `spentCredits`. A call
+under a budget always reads `chargedCredits: 0`: its cost is on the budget
+(`metered.chargedUsdPicos`), a fraction of a credit at a time.
 
 **Everything on this lane 404s** — runtime generation is off on this stand.
 Nothing to fix in the game.
@@ -731,16 +863,29 @@ stand's provider configuration refusing the model — tell the operator, and
 build nothing around it in the game.
 
 **`provider_token_limit`** — the answer was cut off: the model ran out of room
-before it finished, and the attempt is still billed. The declared `maxCredits`
-is too low for the answer's length — re-benchmark and declare what the bench
-prints, never a charged number — or the answer is longer than one call on this
-stand may produce, and the fix is a shorter answer (fewer fields, shorter
-strings, a length the prompt states).
+before it finished, and the attempt is still billed. Run
+`npx genex llm calls --failed` first: it says which cause it was, with the
+call's own numbers. Three causes, most likely first. The model thinks before it
+writes (most current models do, Gemini 3.8 Flash among them) and the thinking
+is spent from the same `maxOutputTokens`: an answer that comes back empty at a
+small cap is this one. Give the call room (`maxOutputTokens` of 2,000 or more
+for a short line on such a model), and where the stand lists `reasoningEffort`
+for the model on `npx genex llm models`, ask for its lowest. The declared
+`maxCredits` is too low for the answer's length: re-benchmark and declare what
+the bench prints, never a charged number. A call under a budget can never run
+above the budget's declared `perCallMaxCredits`, whatever the call itself asks
+for. Or the answer is longer than one call on this stand may produce, and the
+fix is a shorter answer (fewer fields, shorter strings, a length the prompt
+states). After two cut-offs in a row stop calling and tell the player; never
+retry in a loop.
 
-**`invalid_schema`** — the schema uses a keyword outside the accepted dialect
-(`$ref`, `pattern`, `format`, `anyOf`, `default`, `examples`, `$schema`), or an
-object without `additionalProperties: false`. Nothing was charged. Rewrite it in
-the subset above; `description` and `title` are allowed.
+**`invalid_schema`** — the schema holds something the accepted dialect cannot
+express. Nothing was charged. Read `reason` and `at` beside the code (the HTTP
+answer's body, the practice helper's answer): they name the rule and the place,
+as listed under "The schema dialect". A refusal with no `reason` comes from a
+stand that does not repair schemas: there, every object needs
+`additionalProperties: false` and no keyword outside the subset is allowed
+(`$ref`, `pattern`, `format`, `anyOf`, `default`, `examples`, `$schema`).
 
 **`grant_concurrency` / `grant_rate_limited`** — the game calls faster than the
 grant's own limits.

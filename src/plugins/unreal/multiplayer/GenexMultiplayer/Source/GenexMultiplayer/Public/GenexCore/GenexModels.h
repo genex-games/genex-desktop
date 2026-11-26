@@ -52,6 +52,11 @@ struct Event {
     /** The call opens the Genex approval window and a browser needs a click, tap or key press for that:
      *  `waiting` is true while it waits for the player's next one, false once it has run or given up. */
     Gesture,
+    /** Speak: the sound's format, before any of it. `name` is the encoding (`pcm_s16le`), with `sampleRate` and
+     *  `channels`. */
+    SpeechStart,
+    /** Speak: the next piece of the sound, whole samples, in order. `text` is its bytes as base64. */
+    SpeechAudio,
   };
   Type type = Type::Result;
   int id = 0;
@@ -63,6 +68,8 @@ struct Event {
   std::string soFar;
   std::string name;
   bool waiting = false;
+  int sampleRate = 0;
+  int channels = 0;
 };
 
 /** One drain as events. A reader skips what it cannot read and keeps the rest: text that is not a JSON array is no
@@ -70,9 +77,32 @@ struct Event {
  *  type needs is missing or of another type (BRIDGE.md). */
 GENEX_CORE_API std::vector<Event> ReadEvents(std::string_view drainJson);
 
-/** Two of the platform's sentences (embed-sdk's generationErrorMessage): the one for kNativeUnsupported, and the
- *  general one, which any other code, or none (nullptr), reads as. */
+/** The platform's sentence for a code (embed-sdk's generationErrorMessage, the whole table: GenexModelsSentences.cpp).
+ *  A code the table does not name, or none (nullptr), reads as the general one. */
 GENEX_CORE_API std::string NativeErrorMessage(const std::string* code);
+
+/** Whether the table has a sentence of its own for `code`: it is one of the platform's codes, not a server's free text. */
+GENEX_CORE_API bool HasErrorSentence(std::string_view code);
+
+/** Whether `text` has a code's shape: lower-case words joined by underscores, at most 64 characters and three digits
+ *  (`provider_http_429`). What a log may repeat of an answer's `error`: a prompt, a token or a sentence never has it. */
+GENEX_CORE_API bool IsErrorCode(std::string_view text);
+
+/** Whether `text` reads as what Genex says beside a refusal's code: its `reason` (a short fixed code, such as
+ *  `ref_not_supported`) or its `at` (a place, such as `schema.properties.mood`, or `schema.properties.*` for a
+ *  property whose name is not a plain word): 1 to 300 characters of letters, digits, spaces and `_.,:$#*-`. Anything
+ *  else in an answer is not kept and never logged. */
+GENEX_CORE_API bool IsRefusalReason(std::string_view text);
+
+/** For the game's MAKER, never for a player: what to change when a call ends with `code`, or empty for a code nobody
+ *  fixes in the game. Written after the code in the log line of a failed call. */
+GENEX_CORE_API std::string_view ErrorMakerNote(std::string_view code);
+
+/** The log line of a call that ended with a code: the call, the code (when it has a code's shape), the HTTP status
+ *  (0: none), the reason and the place (each when it reads as Genex's) and the maker's note. Nothing else of a request
+ *  or an answer. */
+GENEX_CORE_API std::string FailureLogLine(std::string_view call, std::string_view code, int httpStatus, std::string_view reason, std::string_view at = {},
+                                          bool rejected = false);
 
 /** How the calls reach a page. This build's is the native one; a test passes its own. */
 class GENEX_CORE_API Bridge {
@@ -120,6 +150,10 @@ class GENEX_CORE_API Models {
   int GenerateStream(const Json& options);
   /** The budget's classifier: typed questions about the game's own state. */
   int Judge(const Json& options);
+  /** One line said in one of Genex's voices, under a budget whose terms carry speech: `grantId`, `text`, `voice`, and
+   *  optionally `tier`, `style`, `language`. The sound arrives while it is made (SpeechStart, then SpeechAudio events),
+   *  then the Result with what was said and what it cost. */
+  int Speak(const Json& options);
   /** Ask the player for a standing budget. In a native build nothing is asked: the answer is the budget the player
    *  approved on the game's Genex page, or kBudgetNotApproved. */
   int RequestSpendGrant(const Json& options);

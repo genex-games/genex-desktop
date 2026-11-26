@@ -567,20 +567,30 @@ is.
   models for things while it is played, paid from the player's Genex credits under a budget the
   player sets on the game's page before Play. The maker declares it for the published game with the
   Genex CLI; genex.games is the authority on every number, and the app never computes a price.
-  - **The line.** Under the primary block, while the page offers Install, Play or Update or the
+  - **One shape for every state**, the website's ("A game's AI budget" on genex.games' design
+    page): the state or the question as words, at most one sentence, the amount as the largest
+    thing, everything else behind one closed Details, one button that leads and one quiet one. A
+    budget's numbers are never a bare pair ("198 of 200 credits left" was read as what one call
+    cost): Used and Left stand under their own words, and credits on hold for calls still running
+    are named.
+  - **The block.** Under the primary block, while the page offers Install, Play or Update or the
     game runs. A game that declared nothing shows nothing, as does a read that failed, a
     genex.games that serves no budgets (any 404) and a signed-out app that never read the game. A
-    declared budget nobody approved reads "Uses AI, paid from your Genex credits." with **Set AI
-    budget** (signed out since the read, the button signs in first); a declared model that is not
-    served now reads as unavailable, with nothing to press. A running budget reads "AI budget: 85
-    of 100 credits left" with **Stop**, asked once on the line itself, and **Change** while the
-    game is not running. While the game runs under a budget the count is read again every 30
-    seconds and when the window comes back (`watchBudget`).
-  - **The sheet** (`DialogSurface`): what the budget is, the models' names and an AI judge when
-    one is declared, the most one call may cost and the game's estimate when genex.games gave
-    one, a slider over the limits the quote offers starting on its default, that approving
-    replaces a running budget, and when it ends (the player's stop, signing out of Genex, 24
-    hours). Approve shows the budget only once genex.games answers that it runs. A refusal gets
+    declared budget nobody approved reads "AI is off in this game" with **Turn AI on** (signed out
+    since the read, the button signs in first); a declared model that is not served now reads as
+    unavailable, with nothing to press. A running budget reads "AI is on" with **Turn AI off**,
+    asked once in place, and **Change limit** while the game is not running; under it Used and
+    Left over one bar whose empty part is what is left, then "Limit 200 credits · 2 on hold for
+    requests still running". A budget paused for want of credits reads "AI is paused: not enough
+    Genex credits" with **Get credits** and no numbers. While the game runs under a budget the
+    count is read again every 30 seconds and when the window comes back (`watchBudget`).
+  - **The sheet** (`DialogSurface`): "Let {game} use AI?", one sentence on who pays, the limit as
+    its largest thing over a slider (the limits the quote offers, starting on its default), the
+    game's estimate when genex.games gave one, a short tag when approving replaces a running
+    budget, and one closed **Details** with the rest (the models' names and an AI judge, the most
+    one call may cost, what it replaces, when it ends: the player's stop, signing out of Genex,
+    24 hours). **Allow N credits** repeats the limit and **Not now** closes. Allow shows the
+    budget only once genex.games answers that it runs. A refusal gets
     one sentence and its next step (`sheetFailureOf`, `sheetNext`): not enough credits (Get
     credits), an unverified email, a quote that lapsed (Try again opens a new one), AI in games
     paused, signed out (Sign in, then a new quote), anything else.

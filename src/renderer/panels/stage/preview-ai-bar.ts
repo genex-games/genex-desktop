@@ -38,26 +38,49 @@ export function capDollars(credits: number): string {
   return `$${Number.isInteger(dollars) ? dollars : dollars.toFixed(2)}`;
 }
 
-/** The bar's words. */
+/**
+ * The bar's words. `editor` is the Unreal card: the game runs in Unreal's own Play, not in a
+ * preview here, so the bar says where to press Play and never says "this preview".
+ */
 export const PREVIEW_AI_WORDS = {
-  practice: () => t("Practice answers (free, made up)"),
+  practice: (editor = false) =>
+    editor
+      ? t("Press Play in Unreal: AI gives practice answers (free, made up)")
+      : t("Practice answers (free, made up)"),
   realAi: () => t("Use real AI"),
-  confirm: (cap: number, onGenex = true) =>
-    onGenex
+  confirm: (cap: number, onGenex = true, editor = false) => {
+    const values = { cap: String(cap), dollars: capDollars(cap) };
+    if (editor)
+      return onGenex
+        ? t(
+            "Real models answer your next Play in Unreal, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.",
+            values,
+          )
+        : t(
+            "Real models answer your next Play in Unreal, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session. The game is added to your Genex account as a private draft; none of its files are uploaded.",
+            values,
+          );
+    return onGenex
       ? t(
           "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session.",
-          { cap: String(cap), dollars: capDollars(cap) },
+          values,
         )
       : t(
           "Real models answer in this preview, paid from your Genex credits: at most {cap} credits ({dollars}) for this play session. The game is added to your Genex account as a private draft; none of its files are uploaded.",
-          { cap: String(cap), dollars: capDollars(cap) },
-        ),
+          values,
+        );
+  },
   myPlan: () => t("Use my plan"),
-  planConfirm: (plan: string) =>
-    t(
-      "Your own {plan} plan answers in this preview, on this computer. No Genex credits are spent; your plan's limits apply, answers come slower, and voices stay practice.",
-      { plan },
-    ),
+  planConfirm: (plan: string, editor = false) =>
+    editor
+      ? t(
+          "Your own {plan} plan answers your next Play in Unreal, on this computer. No Genex credits are spent; your plan's limits apply, answers come slower, and voices stay practice.",
+          { plan },
+        )
+      : t(
+          "Your own {plan} plan answers in this preview, on this computer. No Genex credits are spent; your plan's limits apply, answers come slower, and voices stay practice.",
+          { plan },
+        ),
   planChoice: () => t("The plan that answers"),
   startingPlan: (plan: string) => t("Starting {plan}…", { plan }),
   plan: (plan: string) => t("{plan} answers · your own plan, no credits", { plan }),
@@ -66,8 +89,15 @@ export const PREVIEW_AI_WORDS = {
   start: () => t("Start"),
   cancel: () => t("Cancel"),
   starting: () => t("Starting real AI…"),
-  live: (spent: number, cap: number) =>
-    t("Real AI · {spent} of {cap} credits", { spent: String(spent), cap: String(cap) }),
+  /** Never a bare pair: the number that is used says so, and credits on hold for calls still running are named. */
+  live: (spent: number, cap: number, held = 0) =>
+    held > 0
+      ? t("Real AI is on · used {spent} of {cap} credits · {held} on hold", {
+          spent: String(spent),
+          cap: String(cap),
+          held: String(held),
+        })
+      : t("Real AI is on · used {spent} of {cap} credits", { spent: String(spent), cap: String(cap) }),
   stop: () => t("Stop"),
   capReached: () => t("The cap is used up"),
   addMore: (cap: number) => t("Add {cap} more", { cap: String(cap) }),
