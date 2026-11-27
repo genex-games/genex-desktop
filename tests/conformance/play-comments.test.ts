@@ -228,6 +228,8 @@ describe("Who may answer a purchase sheet", () => {
       gallery: unused as PlayIpcDeps["gallery"],
       gameLinks: gameLinks(),
       localGame: async () => null,
+      gameOfFolder: async () => null,
+      projectFolder: async () => null,
       remix: async () => "",
       remixReady: async () => ({}),
       viewer: () => viewer,

@@ -31,6 +31,8 @@ export interface LayoutPrefs {
 export interface LayoutState extends LayoutPrefs {
   /** The width under a drag in progress, or null. */
   chatDragWidth: number | null;
+  /** The window is the small chat kept over another program (`main/beside-window.ts`); never persisted. */
+  beside: boolean;
 }
 
 export const clampChatWidth = (width: number): number => Math.max(CHAT_MIN, Math.min(CHAT_MAX, width));
@@ -51,6 +53,11 @@ export function chatWidthDragged(state: LayoutState, width: number): LayoutState
 /** The pointer let go: the width it left is the width kept. */
 export function chatWidthCommitted(state: LayoutState): LayoutState {
   return state.chatDragWidth === null ? state : { ...state, chatWidth: state.chatDragWidth, chatDragWidth: null };
+}
+
+/** The window became the small chat over another program, or the full window again. */
+export function besideChanged(state: LayoutState, beside: boolean): LayoutState {
+  return state.beside === beside ? state : { ...state, beside };
 }
 
 export function stageViewChosen(state: LayoutState, view: StageView): LayoutState {
@@ -101,6 +108,7 @@ export function createLayoutStore(storage: KeyValueStorage | null = browserStora
         chatWidth: CHAT_DEFAULT,
         stageView: StageView.Live,
         chatDragWidth: null,
+        beside: false,
       }),
       {
         name: "studio.layout",

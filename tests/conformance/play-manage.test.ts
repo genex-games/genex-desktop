@@ -505,6 +505,8 @@ describe("Play's manage channels", () => {
       gallery: unused as PlayIpcDeps["gallery"],
       gameLinks: gameLinks(),
       localGame: async () => null,
+      gameOfFolder: async () => null,
+      projectFolder: async () => null,
       remix: async () => "",
       remixReady: async () => ({}),
       viewer: () => null,

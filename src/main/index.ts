@@ -30,6 +30,7 @@ import {
   net,
   protocol,
   powerSaveBlocker,
+  screen,
   ShareMenu,
   shell,
   utilityProcess,
@@ -195,6 +196,8 @@ import {
   TicketDelivery,
 } from "./play/gallery.ts";
 import { authorityHostsOf, fastHostsOf, relayHostsOf, startGenexGateway } from "./play/genex-gateway.ts";
+import { type BesideWindowHost, besideBounds, besideWindow } from "./beside-window.ts";
+import { gameHoldingFolder, unrealProjectFolder } from "./play/editor-game.ts";
 import { GAME_LINK_SCHEME, gameLinkIn, gameLinks } from "./play/game-links.ts";
 import { thisComputer } from "./play/native-host.ts";
 import { type InstallOutcome, type NativeInstaller, nativeInstalls } from "./play/native-installs.ts";
@@ -658,6 +661,8 @@ const runSharing = createRunSharing({
 /** Built with the core (it needs the plugins root and the app version); the Plugins dialog is its only caller. */
 let marketplace: PluginMarketplace | null = null;
 let window: BrowserWindow | null = null;
+/** Whether the studio window is the small chat beside an editor, and the shape it goes back to. */
+const studioBeside = besideWindow(MAIN_WINDOW);
 let preview: GamePreview | null = null;
 /** The Live game's full screen in the current window. */
 let gameScreen: GameFullScreen | null = null;
@@ -2177,6 +2182,7 @@ function watchWindowLifecycle(win: BrowserWindow): void {
   });
   win.on("closed", () => {
     window = null;
+    studioBeside.forget();
     void codexLogin.dismiss();
     void claudeLogin.cancel();
     void terminals.dispose();
@@ -2458,6 +2464,8 @@ function playIpcDeps(studio: StudioCore): PlayIpcDeps {
     reveal: (file) => shell.showItemInFolder(file),
     gameLinks: gameLinkQueue,
     localGame: (slug) => studio.genexGameOfSlug(slug),
+    gameOfFolder: async (folder) => gameHoldingFolder(await studio.games.list(), folder),
+    projectFolder: unrealProjectFolder,
     pageRead: (game) => void reportPageRead(studio, game),
   };
 }
@@ -2604,6 +2612,7 @@ async function main(): Promise<void> {
     gate: bootGate,
     report: (draft) => sendFeedback(draft, bootFeedbackSources()),
     setWindowControls: (controls) => windowControls.paint(window, controls),
+    setWindowBeside: (on) => setStudioWindowBeside(on),
     quit: () => app.quit(),
   });
   registerUpdateIpc(bootHandle, {
@@ -2740,6 +2749,52 @@ function holdOnMissingData(dir: string): void {
     app.relaunch();
     app.exit(0);
   });
+}
+
+/** The studio window as going beside an editor moves it, with the screen it is on. */
+function besideHostOf(win: BrowserWindow): BesideWindowHost {
+  return {
+    getBounds: () => win.getBounds(),
+    setBounds: (bounds) => win.setBounds(bounds),
+    setMinimumSize: (width, height) => win.setMinimumSize(width, height),
+    // Above other apps' windows, the editor's included, as a floating panel is.
+    setAlwaysOnTop: (on) => win.setAlwaysOnTop(on, "floating"),
+    isMaximized: () => win.isMaximized(),
+    unmaximize: () => win.unmaximize(),
+    isFullScreen: () => win.isFullScreen(),
+    workArea: () => screen.getDisplayMatching(win.getBounds()).workArea,
+  };
+}
+
+/** Make the studio window the small chat beside an editor, or full again; answers whether it is small now. */
+function setStudioWindowBeside(on: boolean): boolean {
+  if (!window || window.isDestroyed()) {
+    studioBeside.forget();
+    return false;
+  }
+  const win = window;
+  studioBeside.set(besideHostOf(win), on);
+  if (studioBeside.on()) void keepBesidePlace(win);
+  return studioBeside.on();
+}
+
+/** How long a system may take to settle a window it was just told to move. */
+const BESIDE_SETTLE_MS = 150;
+
+/**
+ * Windows has left the small window short of the place it was asked to take (its first move after
+ * the size limits change): once the move has settled, a window still elsewhere is put there again,
+ * and the log says where it was.
+ */
+async function keepBesidePlace(win: BrowserWindow): Promise<void> {
+  const host = besideHostOf(win);
+  const asked = besideBounds(host.workArea());
+  await sleep(BESIDE_SETTLE_MS);
+  if (win.isDestroyed() || !studioBeside.on()) return;
+  const got = win.getBounds();
+  const placed = got.x === asked.x && got.y === asked.y && got.width === asked.width && got.height === asked.height;
+  studioLog.write("main", `small chat window asked ${JSON.stringify(asked)} got ${JSON.stringify(got)}`);
+  if (!placed) win.setBounds(asked);
 }
 
 /** Is `event` from the studio window's own top frame (not a plugin page or a game)? */
@@ -2939,18 +2994,28 @@ function claimTheMac(): boolean {
   return true;
 }
 
+/** The one link a fixture launch names (`STUDIO_FIXTURE_GAME_LINK`), handed to it as the system would. */
+const fixtureGameLink = fixtureProviders ? process.env.STUDIO_FIXTURE_GAME_LINK : undefined;
+
 /**
  * The real studio answers `genex://` links: the system starts it, or hands it, each one, and one it
- * was started with waits for the page. A developer or test launch leaves the system's handler alone.
+ * was started with waits for the page. A developer or test launch leaves the system's handler alone;
+ * a fixture launch takes only the link its launch names.
  */
 function answerGameLinks(): void {
-  if (isSmoke || dev) return;
-  // An unpackaged Mac build is Electron's own app, which declares no scheme: it would take the
-  // links from an installed Genex, so only Windows and Linux name it with this folder.
-  if (app.isPackaged) app.setAsDefaultProtocolClient(GAME_LINK_SCHEME);
-  else if (process.platform !== "darwin")
-    app.setAsDefaultProtocolClient(GAME_LINK_SCHEME, process.execPath, [path.resolve(process.argv[1] ?? ".")]);
-  gameLinkQueue.arrive(gameLinkIn(process.argv));
+  // A fixture launch may name one link (`STUDIO_FIXTURE_GAME_LINK`), so what a link opens can be
+  // checked through dev control on any system without touching the system's handler.
+  if (isSmoke || (dev && !fixtureGameLink)) return;
+  // A fixture's link arrives once its game is open: the page that would take
+  // it at start is replaced by the fixture's reload, and the link is handed over only once.
+  if (!dev) {
+    // An unpackaged Mac build is Electron's own app, which declares no scheme: it would take the
+    // links from an installed Genex, so only Windows and Linux name it with this folder.
+    if (app.isPackaged) app.setAsDefaultProtocolClient(GAME_LINK_SCHEME);
+    else if (process.platform !== "darwin")
+      app.setAsDefaultProtocolClient(GAME_LINK_SCHEME, process.execPath, [path.resolve(process.argv[1] ?? ".")]);
+    gameLinkQueue.arrive(gameLinkIn(process.argv));
+  }
   gameLinkQueue.listen({
     show: () => void showForLink(),
     announce: () => pushUiEvent({ type: UiEvent.PlayGameLink, payload: {} }),
@@ -3143,6 +3208,7 @@ async function launchStudio(studio: StudioCore): Promise<StartedStudio | null> {
     if (!booted) return null;
     if (fixture) await activateChatFixture(studio, fixture);
     if (fixture?.project) await openFixtureGame(studio, win, fixture.project);
+    gameLinkQueue.arrive(fixtureGameLink);
     announceReady(userData);
     showFixtureAgentsFailure(userData);
     const view = requirePreview();

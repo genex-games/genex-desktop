@@ -2,7 +2,8 @@
 server lists: the play tools, the loop tools and the build tools. The build tools load last and
 apart, so the play and loop tools still register if they can't (a project without Geometry
 Script). With the build tools, once the editor has its level, the helper also hides in game the
-mannequin of motion characters an older helper hid only in the editor (genex_build.motion)."""
+mannequin of motion characters an older helper hid only in the editor (genex_build.motion). Last,
+it puts the Genex button on the level editor's toolbar (genex_chat.button)."""
 
 import unreal
 
@@ -27,3 +28,10 @@ else:
 
 _genex_registration = Registration(_genex_toolsets)
 unreal.log(f'Genex editor helper tools registered: {_genex_registration.register()}')
+
+try:
+    from genex_chat import button as _genex_button
+
+    unreal.log(f'Genex editor helper toolbar button added: {_genex_button.add_button()}')
+except Exception as error:  # noqa: BLE001 - an editor without a toolbar (a commandlet) still has its tools
+    unreal.log_warning(f'Genex editor helper did not add its toolbar button: {error}')

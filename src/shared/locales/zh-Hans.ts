@@ -6854,4 +6854,6 @@ export default {
   "You don’t have enough Genex credits for this budget.": "你的 Genex 积分不够设置这个预算。",
   "{n, plural, one {{shown} credit} other {{shown} credits}}": "{n, plural, other {{shown} 积分}}",
   "an AI judge": "AI 裁判",
+  "Full window": "完整窗口",
+  "Back to the full Genex window, with the game beside the chat": "回到完整的 Genex 窗口，游戏显示在聊天旁边",
 } satisfies LocaleCatalog;

@@ -169,6 +169,8 @@ const FIXTURE_SAFE = [
   "studio:boot.quit",
   // Recolours this window's own title-bar controls; nothing outside the window changes.
   "studio:window.controls",
+  // Resizes and moves this window, and keeps it above others; nothing outside the window changes.
+  "studio:window.beside",
   // Reads which update main holds; a fixture profile never downloads one (update-ready seeds a stand-in).
   "studio:update",
   // A studio:dev launch never checks (`autoUpdateDecision`): it answers off, or the update-ready stand-in.

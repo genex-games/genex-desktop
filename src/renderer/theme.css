@@ -1270,6 +1270,20 @@
   display: grid;
   grid-template-columns: min(var(--chat-width), 52%) minmax(0, 1fr);
 }
+/* The small chat window kept over another program (shell/beside-window.ts): the chat alone, the
+   stage and the width handle away until Full window. */
+.studio-shell[data-beside="true"] .studio-workspace {
+  grid-template-columns: minmax(0, 1fr);
+}
+.studio-shell[data-beside="true"] .studio-workspace > [data-workspace-stage],
+.studio-shell[data-beside="true"] .studio-workspace [role="separator"][aria-orientation="vertical"] {
+  display: none;
+}
+/* The small window's header keeps room for the game's name beside Full window: the folder and
+   terminal buttons wait for the full window (the terminal's shortcut still opens it). */
+.studio-shell[data-beside="true"] [data-chat-header] :is([data-reveal-folder], [data-terminal-toggle]) {
+  display: none;
+}
 /* Home: one line and one composer over the workspace, nothing selected (shell/HomeScreen.tsx). */
 .home-layer {
   position: absolute;

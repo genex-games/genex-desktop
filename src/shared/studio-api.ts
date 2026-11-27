@@ -400,6 +400,12 @@ export interface StudioApi {
    * of their own on Windows while `seeThrough`; macOS ignores it.
    */
   setWindowControls(controls: WindowControls): Promise<void>;
+  /**
+   * Make the studio window a small chat that stays above other windows at the right edge of its
+   * screen (`true`), as the Genex button in a game engine's editor asks, or give it back its size and
+   * place (`false`). Answers whether it is the small chat now: a full-screen window stays as it is.
+   */
+  setWindowBeside(on: boolean): Promise<boolean>;
   /** The new version of the app downloaded in the background, or null; `onEvent` announces later ones. */
   readyUpdate(): Promise<ReadyUpdate | null>;
   /**

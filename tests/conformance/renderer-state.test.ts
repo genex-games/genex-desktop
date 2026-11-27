@@ -718,7 +718,7 @@ describe("agent screens, toasts and layout", () => {
     const layout = createLayoutStore(storage);
     assert.deepEqual(
       { ...layout.getState() },
-      { sidebarOpen: false, chatWidth: 500, stageView: "assets", chatDragWidth: null },
+      { sidebarOpen: false, chatWidth: 500, stageView: "assets", chatDragWidth: null, beside: false },
     );
     layout.setState((state) => chatWidthDragged(state, 900), true);
     layout.setState((state) => chatWidthDragged(state, 450), true);
@@ -733,7 +733,7 @@ describe("agent screens, toasts and layout", () => {
     const fresh = createLayoutStore(memoryStorage({ "studio.chatWidth": "9000", "studio.previewView": "gone" }));
     assert.deepEqual(
       { ...fresh.getState() },
-      { sidebarOpen: true, chatWidth: 434, stageView: "live", chatDragWidth: null },
+      { sidebarOpen: true, chatWidth: 434, stageView: "live", chatDragWidth: null, beside: false },
     );
   });
 

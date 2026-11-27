@@ -7089,4 +7089,6 @@ export default {
   "You don’t have enough Genex credits for this budget.": "이 예산에 쓸 Genex 크레딧이 부족해요.",
   "{n, plural, one {{shown} credit} other {{shown} credits}}": "{n, plural, other {{shown} 크레딧}}",
   "an AI judge": "AI 심판",
+  "Full window": "전체 창",
+  "Back to the full Genex window, with the game beside the chat": "게임이 채팅 옆에 보이는 Genex 전체 창으로 돌아가요",
 } satisfies LocaleCatalog;

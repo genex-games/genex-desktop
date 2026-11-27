@@ -172,10 +172,15 @@ export const isPlaySlug = (value: unknown): value is string => typeof value === 
 /**
  * What a `genex://` link opens in the studio page: the game's page in Play (`slug`), or, for a
  * `genex://create/<slug>` link to a game of this library, that game (`project`) with Publish open.
+ * A link from an editor's Genex button (`chat`) opens only that game's chat and has no `slug`; when
+ * no game of this library holds the editor's project, `folder` is that project's folder, which the
+ * page offers to open as a game.
  */
 export interface GameLinkOpen {
   slug: string;
   project?: string;
+  chat?: boolean;
+  folder?: string;
 }
 
 /** The game itself, served on its own subdomain of `games` (genex.games' own unless a development profile says). */
