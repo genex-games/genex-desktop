@@ -97,6 +97,14 @@ class ChatButton(HelperCase):
         self.assertFalse(button.add_button())
         self.assertEqual(menus.menu.entries, [])
 
+    def test_the_genex_plugins_own_button_is_not_doubled(self) -> None:
+        menus = self.editor()
+        unreal.GenexChatLibrary = type('GenexChatLibrary', (), {'open_chat': staticmethod(lambda: None)})
+        self.addCleanup(delattr, unreal, 'GenexChatLibrary')
+        button = importlib.import_module('genex_chat.button')
+        self.assertFalse(button.add_button())
+        self.assertEqual(menus.menu.entries, [])
+
 
 if __name__ == '__main__':
     unittest.main()

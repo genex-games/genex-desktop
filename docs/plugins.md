@@ -480,6 +480,10 @@ The helper also puts a **Genex** button on the level editor's toolbar at each ed
 (`genex_chat/button.py`, Unreal's own comment icon: a picture of ours needs a compiled Slate
 style). A press asks the computer to open `genex://editor/<the project's folder>`, and Genex comes
 forward, or starts, on that game's chat ([play](play.md), Links).
+A standalone plugin for Epic's marketplace, `fab/unreal/Genex` (its [README](../fab/unreal/README.md)),
+puts the same button there as the word GENEX from one compiled editor module, and sends a computer
+without Genex to the page to get it; the helper adds no button of its own in an editor that has
+that plugin (it looks for `unreal.GenexChatLibrary.open_chat`).
 The Genex editor helper's build and play tools (below) answer a refusal or a failure as `{error}`
 inside a call Epic counts as done, so the bridge marks such an answer `isError` (the toolset named
 short or qualified, in any case): the agent and the chat read it as a failed call, in the helper's

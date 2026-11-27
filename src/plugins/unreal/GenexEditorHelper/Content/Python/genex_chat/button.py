@@ -17,6 +17,10 @@ TOOL_TIP = 'Open this project\'s chat in Genex'
 ICON_STYLE = 'EditorStyle'
 ICON = 'Icons.Comment'
 COMMAND = 'import genex_chat.button; genex_chat.button.open_genex()'
+# The class Genex's own Unreal plugin (the one from Epic's marketplace) adds: with it in the editor,
+# the button is already on the toolbar, with the Genex logo.
+PLUGIN_BUTTON = 'GenexChatLibrary'
+PLUGIN_PRESS = 'open_chat'
 
 
 def project_link() -> str:
@@ -34,7 +38,10 @@ def open_genex() -> str:
 
 
 def add_button() -> bool:
-    """Put the Genex button on the level editor's toolbar; False when this editor has no such toolbar."""
+    """Put the Genex button on the level editor's toolbar; False when this editor has no such toolbar,
+    or when the Genex plugin has put its own button there."""
+    if hasattr(getattr(unreal, PLUGIN_BUTTON, None), PLUGIN_PRESS):
+        return False
     menus = unreal.ToolMenus.get()
     if menus.find_menu(TOOLBAR) is None:
         return False
