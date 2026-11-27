@@ -1,0 +1,24 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0.0",
+	"FriendlyName": "Genex",
+	"Description": "Adds a Genex button to the level editor's toolbar. It opens this project's chat in the Genex desktop app as a small window over the editor, where AI agents build, play-test and publish the game. Without Genex on this computer, the button opens the page to get it.",
+	"Category": "Editor",
+	"CreatedBy": "Genex",
+	"CreatedByURL": "https://genex.games",
+	"DocsURL": "https://genex.games/unreal-engine",
+	"MarketplaceURL": "",
+	"SupportURL": "https://github.com/genex-games/genex-desktop/issues",
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "GenexEditor",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit",
+			"PlatformAllowList": ["Win64", "Mac", "Linux"]
+		}
+	]
+}
