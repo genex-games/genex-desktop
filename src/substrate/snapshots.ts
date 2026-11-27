@@ -325,6 +325,8 @@ export const INDEX_LOCK_WAIT_MS = 2 * MINUTE_MS;
 /** How often it looks again, and how old an unheld lock must be before it is a dead start's. */
 const INDEX_LOCK_POLL_MS = 2 * SECOND_MS;
 const INDEX_LOCK_STALE_MS = 30 * SECOND_MS;
+/** The size of a git index's header: a shorter file is no index. */
+const INDEX_HEADER_BYTES = 12;
 /** Errors from removing a lock that a running process still has open (Windows). */
 const LOCK_HELD_CODES = new Set(["EBUSY", "EPERM", "EACCES"]);
 
@@ -365,8 +367,25 @@ const INIT_ARGS = ["init", "-q", "--template=", "-b", "main"];
  */
 const ONE_PACK_ENV = { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.bigFileThreshold", GIT_CONFIG_VALUE_0: "1" };
 
-/** `git init` + an initial commit if the directory is not a repo yet, or finish one an earlier start left. */
+/** The first commits under way in this process, by folder: a second call for one joins it. */
+const firstCommits = new Map<string, Promise<void>>();
+
+/**
+ * `git init` + an initial commit if the directory is not a repo yet, or finish one an earlier start
+ * left. A folder asked for again while its first commit runs (Open pressed twice on a folder of many
+ * gigabytes) waits for that one: two `git add` over one new repository each write the whole pack, and
+ * the first to end breaks the other's index.
+ */
 export async function ensureRepo(dir: string, deps: FirstCommitDeps = {}): Promise<void> {
+  const key = path.resolve(dir);
+  const under = firstCommits.get(key);
+  if (under) return under;
+  const made = firstCommit(dir, deps).finally(() => firstCommits.delete(key));
+  firstCommits.set(key, made);
+  return made;
+}
+
+async function firstCommit(dir: string, deps: FirstCommitDeps): Promise<void> {
   await ensureDir(dir);
   if (!(await needsFirstCommit(dir))) return;
   const dotGit = path.join(dir, ".git");
@@ -376,6 +395,7 @@ export async function ensureRepo(dir: string, deps: FirstCommitDeps = {}): Promi
   await git(dir, INIT_ARGS);
   deps.onStep?.(FirstCommitStep.Init);
   await releaseIndexLock(dotGit, deps);
+  await dropBrokenIndex(dotGit);
   await stagePublicChanges(dir, ONE_PACK_ENV);
   deps.onStep?.(FirstCommitStep.Add);
   if (!(await gitOrNull(dir, ["rev-parse", "--verify", "--quiet", "HEAD"])))
@@ -385,22 +405,52 @@ export async function ensureRepo(dir: string, deps: FirstCommitDeps = {}): Promi
 }
 
 /**
- * Wait for a first commit's index.lock to go: a git an earlier start left running holds it (Windows
- * refuses to remove an open file) until it ends; one nothing holds is a killed git's, removed once it
- * is old enough that no git of this start can own it. Throws, naming the lock, past {@link INDEX_LOCK_WAIT_MS}.
+ * Remove an index too short to be one (an interrupted first commit can leave it empty): git refuses
+ * every command on it ("index file smaller than expected"), and before the first commit the index
+ * holds nothing `git add` does not write again.
+ */
+async function dropBrokenIndex(dotGit: string): Promise<void> {
+  const index = path.join(dotGit, "index");
+  const found = await stat(index).catch(() => null);
+  if (found && found.size < INDEX_HEADER_BYTES) await rm(index, { force: true });
+}
+
+/**
+ * Wait for a first commit's index.lock to go: a git that is still running holds it until it ends (an
+ * earlier start's, or one over a folder so large its `add` takes minutes); one nothing holds is a
+ * killed git's, removed once neither it nor the repository's objects changed for
+ * {@link INDEX_LOCK_STALE_MS}. A lock's own time says only when its git began, so a git still writing
+ * objects is never taken for a dead one. Throws, naming the lock, once nothing changed for
+ * {@link INDEX_LOCK_WAIT_MS} and the lock still cannot be removed.
  */
 async function releaseIndexLock(dotGit: string, deps: FirstCommitDeps): Promise<void> {
   const clock = deps.clock ?? { now: Date.now, sleep: (ms: number) => sleep(ms) };
   const removeLock = deps.removeLock ?? ((file: string) => rm(file));
   const lock = path.join(dotGit, "index.lock");
-  const deadline = clock.now() + INDEX_LOCK_WAIT_MS;
+  let quietSince = clock.now();
   for (;;) {
     const found = await stat(lock).catch(() => null);
     if (!found) return;
-    if (clock.now() - found.mtimeMs >= INDEX_LOCK_STALE_MS && (await removed(lock, removeLock))) return;
-    if (clock.now() >= deadline) throw new Error(MESSAGE.IndexLockHeld(lock, INDEX_LOCK_WAIT_MS));
+    const lastWrite = Math.max(found.mtimeMs, await lastObjectWrite(dotGit));
+    quietSince = Math.max(quietSince, lastWrite);
+    if (clock.now() - lastWrite >= INDEX_LOCK_STALE_MS && (await removed(lock, removeLock))) return;
+    if (clock.now() - quietSince >= INDEX_LOCK_WAIT_MS)
+      throw new Error(MESSAGE.IndexLockHeld(lock, INDEX_LOCK_WAIT_MS));
     await clock.sleep(INDEX_LOCK_POLL_MS);
   }
+}
+
+/**
+ * When a git last wrote objects into the repository: the newest change among `objects`, its
+ * folders (a loose object lands in one) and the files of `objects/pack` (a pack being written grows there).
+ */
+async function lastObjectWrite(dotGit: string): Promise<number> {
+  const objects = path.join(dotGit, "objects");
+  const pack = path.join(objects, "pack");
+  const names = async (dir: string) => (await readdir(dir).catch(() => [])).map((name) => path.join(dir, name));
+  const files = [objects, ...(await names(objects)), ...(await names(pack))];
+  const times = await Promise.all(files.map(async (file) => (await stat(file).catch(() => null))?.mtimeMs ?? 0));
+  return Math.max(0, ...times);
 }
 
 /** Whether `lock` could be removed; false while a running process holds it open. */
