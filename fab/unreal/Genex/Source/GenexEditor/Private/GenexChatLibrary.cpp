@@ -11,6 +11,11 @@
 #include "Windows/WindowsPlatformMisc.h"
 #endif
 
+#if PLATFORM_MAC
+#include "Apple/ScopeAutoreleasePool.h"
+#include "Mac/MacSystemIncludes.h"
+#endif
+
 namespace
 {
 	/** The start of the link the Genex app answers for an editor's project. */
