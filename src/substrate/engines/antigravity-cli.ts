@@ -10,9 +10,10 @@
  * the models the account can run and its plan, or refuses with ACP's sign-in code
  * (`AcpErrorCode.AuthRequired`). The sign-in itself is the CLI's: `agy acp --login` in a terminal,
  * kept in the Keychain when the CLI reaches it and else in its own file in `~/.gemini`; the studio
- * reads neither.
+ * reads neither. Genex's `agy` keeps to an app data folder of its own (`ANTIGRAVITY_SESSION_ARGV`).
  */
 import { CatalogError } from "./model-catalog.ts";
+import { AntigravityAppData } from "../credential-homes.ts";
 import type { EngineModel } from "./types.ts";
 import { ModelContextSource } from "./types.ts";
 import { ModelCatalogProblemCode } from "../../shared/model-catalog.ts";
@@ -32,11 +33,18 @@ export const AntigravityCommand = {
 } as const;
 export type AntigravityCommand = (typeof AntigravityCommand)[keyof typeof AntigravityCommand];
 
+/**
+ * Every Genex `agy acp` keeps to Genex's own app data folder (`~/.gemini/antigravity-genex`): its
+ * sign-in file, conversations and logs. In the CLI's default folder an `agy` outside Genex deletes
+ * Genex's sign-in file whenever it renews its own Keychain sign-in (`AntigravityAppData`).
+ */
+const GENEX_APP_DATA = ["--app-data-dir", AntigravityAppData.Genex] as const;
+
 /** `agy acp --login`: sign in with Google in the terminal it runs in, then exit. */
-export const ANTIGRAVITY_LOGIN_ARGV = [AntigravityCommand.Acp, "--login"] as const;
+export const ANTIGRAVITY_LOGIN_ARGV = [AntigravityCommand.Acp, "--login", ...GENEX_APP_DATA] as const;
 
 /** One session's command line: the ACP server alone; the session's folder, model and prompt go over the protocol. */
-export const ANTIGRAVITY_SESSION_ARGV = [AntigravityCommand.Acp] as const;
+export const ANTIGRAVITY_SESSION_ARGV = [AntigravityCommand.Acp, ...GENEX_APP_DATA] as const;
 
 /**
  * Where a session reaches Google: its model and account servers (`*.googleapis.com`, which holds

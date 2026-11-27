@@ -209,10 +209,36 @@ export function sandboxedCliHomes(
 /**
  * Where Antigravity CLI keeps its settings, conversations, its MCP servers' sign-ins and, when the
  * operating system's store is out of its reach, its own Google sign-in
- * (`antigravity-cli/antigravity-oauth-token`): `~/.gemini`, the folder it took over from Gemini CLI.
+ * (`<app data>/antigravity-oauth-token`, `AntigravityAppData`): `~/.gemini`, the folder it took over
+ * from Gemini CLI.
  */
 export function antigravityHome(home: string = os.homedir()): string {
   return path.join(home, ".gemini");
+}
+
+/**
+ * The CLI's app data folders, by their names under `~/.gemini` (`agy acp --app-data-dir <name>`):
+ * its default one, which every `agy` outside Genex uses, and Genex's own. A separate folder keeps
+ * Genex's sign-in file apart from the CLI's default one: an `agy` outside Genex that renews its
+ * Keychain sign-in deletes the sign-in file of its own folder as stale (1.5.15, issue #870).
+ */
+export const AntigravityAppData = {
+  /** The CLI's default: `agy` in a terminal, another ACP client. */
+  Cli: "antigravity-cli",
+  /** Genex's sign-in, sessions and logs. */
+  Genex: "antigravity-genex",
+} as const;
+export type AntigravityAppData = (typeof AntigravityAppData)[keyof typeof AntigravityAppData];
+
+/** The file the CLI keeps its Google sign-in in, inside an app data folder, when it uses no system store. */
+export const ANTIGRAVITY_SIGN_IN_FILE = "antigravity-oauth-token";
+
+/** One of the CLI's app data folders: Genex's own unless another is named. */
+export function antigravityAppData(
+  home: string = os.homedir(),
+  name: AntigravityAppData = AntigravityAppData.Genex,
+): string {
+  return path.join(antigravityHome(home), name);
 }
 
 /**

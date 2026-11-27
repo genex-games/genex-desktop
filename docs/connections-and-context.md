@@ -469,9 +469,19 @@ signed-in account is asked a second time before one refusal reads as signed out:
 chat ask a working build for a sign-in. The row's status names the CLI's version and the plan. First launch's "or use" lines offer it beside Grok Build and Cursor on the first line (plans a person may already pay for; local models, OpenRouter and OpenCode on the second), with its Beta tag and the same Install and Sign in on its own screen. The model list is the account's (`session/new`'s `availableModels`, so a paid plan's newer Gemini shows by itself). The CLI lists each thinking level as a model of its own (`gemini-3.8-flash-high`, `-medium`, `-low`): a model listed at two levels or more is one row whose levels are the composer's effort dial (`byThinkingLevel`), and a turn picks the CLI's id for the model at the picked effort (`antigravityModelId`); a pick saved as a level's own id still runs, and opens on the model at that level (`savedLevel`). The picker starts with the newest Gemini generation it lists, each family at its newest version (`googleLatest` in `renderer/model-lineup.ts`), and the other vendors' models Google's plan runs (Claude, GPT-OSS) and older Gemini wait under More models.
 
 Antigravity keeps its Google sign-in in the operating system's own store (the Keychain, Windows'
-Credential Manager, the Secret Service) when it can reach it, and in
-`~/.gemini/antigravity-cli/antigravity-oauth-token` when it cannot or when it believes it runs over
-SSH. Genex never reads either. Its sign-in runs in the session's box, so the sign-in lands in the
+Credential Manager, the Secret Service) when it can reach it, and in `antigravity-oauth-token` in
+its app data folder when it cannot or when it believes it runs over SSH. Every `agy acp` Genex
+starts names an app data folder of Genex's own, `~/.gemini/antigravity-genex`
+(`--app-data-dir antigravity-genex`, a name under `~/.gemini`, never a path), for its sign-in,
+conversations and logs: an `agy` outside Genex keeps the default `~/.gemini/antigravity-cli`, and
+when it renews its Keychain sign-in it deletes that folder's sign-in file as stale, which once
+signed Genex out an hour after each sign-in (#870). Before its first session the engine copies a
+sign-in file from the default folder into Genex's, only while Genex's folder does not exist yet and
+never through a link, checked after each open (`carryOverAntigravitySignIn`), so a person signed in
+before the change stays signed in. A chat from before the change continues in a fresh session: the
+CLI cannot load a session saved in the default folder, and a session it will not load is reported
+as not found, which the chat answers with a new one.
+Genex never parses either store. Its sign-in runs in the session's box, so the sign-in lands in the
 file every session reads: every box sets `SSH_CONNECTION` and `SSH_CLIENT` (`antigravityBoxEnv`;
 a Mac's box denies the Keychain anyway), because on Windows the boxed CLI otherwise saved the
 sign-in in the sandbox user's Credential Manager, which every Windows sandbox runs as. A Bypass
@@ -505,8 +515,8 @@ and ends the turn as finished. A reply that is nothing but the notice of Google'
 (`PERMISSION_DENIED` with `VALIDATION_REQUIRED`; `antigravityNotice`, `AntigravityNotice`) fails
 the turn and a one-shot answer, so a game is never named by it; any other reply, one starting with
 the sign included, stays the model's. The engine reads the page Google named from the CLI's newest
-logs since the turn began (`verificationPage`, only `https://accounts.google.com`), opens it in the
-browser once (`openPage`), and the turn says to verify there and send again. Stop sends `session/cancel` and
+logs since the turn began (`log/` in Genex's app data folder; `verificationPage`, only
+`https://accounts.google.com`), opens it in the browser once (`openPage`), and the turn says to verify there and send again. Stop sends `session/cancel` and
 gives the CLI five seconds to answer before it is stopped; a turn that says nothing for 10 minutes
 (30 while a tool call is open) is stopped with its process group. Compact now is refused.
 A live run on a signed-in Mac (CLI 1.5.7, free plan) reads the sign-in, builds in the game and
