@@ -3006,7 +3006,7 @@ function answerGameLinks(): void {
   // A fixture launch may name one link (`STUDIO_FIXTURE_GAME_LINK`), so what a link opens can be
   // checked through dev control on any system without touching the system's handler.
   if (isSmoke || (dev && !fixtureGameLink)) return;
-  // A fixture's link arrives once its game is open (`handFixtureLink`): the page that would take
+  // A fixture's link arrives once its game is open: the page that would take
   // it at start is replaced by the fixture's reload, and the link is handed over only once.
   if (!dev) {
     // An unpackaged Mac build is Electron's own app, which declares no scheme: it would take the
