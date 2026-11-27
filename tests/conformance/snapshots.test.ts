@@ -386,7 +386,8 @@ describe("snapshot engine", () => {
     await writeFile(lock, "");
     const stale = new Date(Date.now() - 10 * 60_000);
     await utimes(lock, stale, stale);
-    await ensureRepo(dir);
+    // A minute on: the repository this test just made is as quiet as the killed start left it.
+    await ensureRepo(dir, { clock: movedClock(Date.now() + 60_000) });
     assert.match((await git(dir, ["rev-parse", "HEAD"])).trim(), /^[0-9a-f]{40}$/);
     assert.equal((await git(dir, ["status", "--porcelain"])).trim(), "");
     assert.deepEqual((await git(dir, ["ls-files"])).trim().split("\n").sort(), ["README.md", "loop/main.ts"]);
@@ -410,6 +411,57 @@ describe("snapshot engine", () => {
     });
     assert.equal(clock.slept.length, 3);
     assert.match((await git(dir, ["rev-parse", "HEAD"])).trim(), /^[0-9a-f]{40}$/);
+  });
+
+  it("leaves the lock of a git that is still writing the first commit's pack, however old the lock", async () => {
+    // A first commit of a folder of many gigabytes holds index.lock for minutes while its pack grows.
+    // A second Open took the lock for a dead start's, removed it and ran a second `add` over the first.
+    const dir = await unfinishedFirstCommit();
+    const lock = path.join(dir, ".git", "index.lock");
+    const pack = path.join(dir, ".git", "objects", "pack", "tmp_pack_Ab12Cd");
+    await mkdir(path.dirname(pack), { recursive: true });
+    await writeFile(lock, "");
+    await writeFile(pack, "");
+    const old = new Date(Date.now() - 10 * 60_000);
+    await utimes(lock, old, old);
+    const removals: string[] = [];
+    let sleeps = 0;
+    const clock = movedClock(Date.now(), async () => {
+      // The other git: its pack grows on every look, and past the plain wait it ends.
+      const stillWriting = ++sleeps * 2_000 <= INDEX_LOCK_WAIT_MS + 60_000;
+      const written = new Date(clock.now());
+      if (stillWriting) return utimes(pack, written, written);
+      await Promise.all([rm(lock, { force: true }), rm(pack, { force: true })]);
+    });
+    await ensureRepo(dir, {
+      clock,
+      removeLock: async (file) => {
+        removals.push(file);
+        await rm(file);
+      },
+    });
+    assert.deepEqual(removals, [], "the lock of a running git was removed");
+    assert.match((await git(dir, ["rev-parse", "HEAD"])).trim(), /^[0-9a-f]{40}$/);
+  });
+
+  it("finishes a first commit whose index an earlier start left empty", async () => {
+    // Two gits over one first commit: the first to end renamed the other's still-empty index.lock
+    // into place, and every later `git add` died on "index file smaller than expected".
+    const dir = await unfinishedFirstCommit();
+    await writeFile(path.join(dir, ".git", "index"), "");
+    await ensureRepo(dir);
+    assert.deepEqual((await git(dir, ["ls-files"])).trim().split("\n").sort(), ["README.md", "loop/main.ts"]);
+    assert.equal(await needsFirstCommit(dir), false);
+  });
+
+  it("makes one first commit when the same folder is opened twice at once", async () => {
+    const dir = await tmpDir();
+    await writeFile(path.join(dir, "README.md"), "game\n");
+    const steps: string[] = [];
+    const onStep = (step: string) => void steps.push(step);
+    await Promise.all([ensureRepo(dir, { onStep }), ensureRepo(dir, { onStep })]);
+    assert.deepEqual(steps, ["init", "add", "commit"]);
+    assert.equal((await git(dir, ["rev-list", "--count", "HEAD"])).trim(), "1");
   });
 
   it("names the held lock when it never goes away, instead of waiting forever", async () => {
