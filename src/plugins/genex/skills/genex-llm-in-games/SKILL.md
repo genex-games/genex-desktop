@@ -310,7 +310,7 @@ player text) is `play-time-models` in the `genex-recommendations` plugin.
 
 Other commands map onto Studio tools as the `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-llm-in-games/SKILL.md v1.46.5 sha256 37bf08622702adbf0efba8a764dc4b36128dae5a71cf3e08e876dc481b2f222e -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-llm-in-games/SKILL.md v1.46.6 sha256 37bf08622702adbf0efba8a764dc4b36128dae5a71cf3e08e876dc481b2f222e -->
 ---
 name: genex-llm-in-games
 description: Call a language model from a running game — NPCs that answer in their own words, AI opponents, teammates and agents that plan and act, a narrator or game master, a judge of what the player typed, quests written per save — and let players talk to characters that answer aloud. The PLAYER pays and approves on a Genex surface. Covers one-time calls and standing budgets, the ceiling, streaming, the judge, voice and every refusal.
